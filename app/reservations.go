@@ -191,14 +191,20 @@ func (s reservationsService) availability(ctx context.Context, venue, date strin
 	return result, rows.Err()
 }
 func pickReservationTable(ctx context.Context, tx *sql.Tx, outlet int64, start string, partySize int) (string, error) {
+	label, _, err := pickReservationTableWithCapacity(ctx, tx, outlet, start, partySize)
+	return label, err
+}
+
+func pickReservationTableWithCapacity(ctx context.Context, tx *sql.Tx, outlet int64, start string, partySize int) (string, int, error) {
 	var table string
-	err := tx.QueryRowContext(ctx, `SELECT t.label FROM reservation_slots s
+	var capacity int
+	err := tx.QueryRowContext(ctx, `SELECT t.label,t.capacity FROM reservation_slots s
         JOIN reservation_tables t ON t.outlet_id=s.outlet_id WHERE s.outlet_id=$1 AND s.start_at=$2
-        AND t.capacity>=$3 AND `+availableReservationTable+` ORDER BY t.capacity,t.label LIMIT 1`, outlet, start, partySize).Scan(&table)
+        AND t.capacity>=$3 AND `+availableReservationTable+` ORDER BY t.capacity,t.label LIMIT 1`, outlet, start, partySize).Scan(&table, &capacity)
 	if errors.Is(err, sql.ErrNoRows) {
 		err = reservationConflict
 	}
-	return table, err
+	return table, capacity, err
 }
 func (s reservationsService) request(ctx context.Context, venue string, in reservationInput, now time.Time) (reservationResult, error) {
 	start, err := reservationStart(in.StartAt, now)
@@ -284,7 +290,11 @@ func reservationChange(ctx context.Context, tx *sql.Tx, outlet int64, id, action
 	if err != nil {
 		return reservationResult{}, err
 	}
-	updated, err := tx.ExecContext(ctx, `UPDATE reservation_requests SET status='confirmed',table_label=$1 WHERE outlet_id=$2 AND id=$3 AND status='pending'`, label, outlet, id)
+	return confirmReservationTable(ctx, tx, outlet, id, start, partySize, label)
+}
+
+func confirmReservationTable(ctx context.Context, tx *sql.Tx, outlet int64, id, start string, partySize int, label string) (reservationResult, error) {
+	updated, err := tx.ExecContext(ctx, `UPDATE reservation_requests SET status='confirmed',table_label=$1 WHERE outlet_id=$2 AND id=$3 AND status='pending' AND start_at=$4 AND party_size=$5`, label, outlet, id, start, partySize)
 	if err != nil {
 		if reservationConflictError(err) {
 			return reservationResult{}, reservationConflict
