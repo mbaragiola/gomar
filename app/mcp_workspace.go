@@ -21,6 +21,7 @@ func (a *app) registerMCPWorkspace(add func(string, string, http.HandlerFunc)) {
 	}
 	if a.enableDelivery {
 		add(mcpWorkspaceBase+"/delivery-orders", http.MethodGet, a.mcpRead(mcpDelivery))
+		add(mcpWorkspaceBase+"/delivery-status-summary", http.MethodGet, a.mcpRead(mcpDeliveryStatusSummary))
 	}
 	add(mcpWorkspaceBase+"/payables-summary", http.MethodGet, a.mcpRead(a.mcpPayablesSummary))
 }
@@ -188,6 +189,33 @@ type mcpDeliveryOrder struct {
 	Status     string `json:"status"`
 	ReceivedAt string `json:"received_at"`
 	UpdatedAt  string `json:"updated_at"`
+}
+
+func mcpDeliveryStatusSummary(r *http.Request, tx *sql.Tx, s mcpTokenScope) (any, error) {
+	if r.URL.RawQuery != "" || r.URL.ForceQuery {
+		return nil, badInput
+	}
+	outlet, err := mcpWorkspaceOutlet(r, tx, s)
+	if err != nil {
+		return nil, err
+	}
+	var result struct {
+		WindowLimit int `json:"window_limit"`
+		Received    int `json:"received"`
+		Accepted    int `json:"accepted"`
+		Cancelled   int `json:"cancelled"`
+	}
+	result.WindowLimit = deliveryInboxLimit
+	// Use the same snapshot window as the native inbox, without reading any
+	// order identifiers, provider details or item data into the response.
+	err = tx.QueryRowContext(r.Context(), `SELECT count(*) FILTER (WHERE NOT cancelled AND provider='rappi'),
+ count(*) FILTER (WHERE NOT cancelled AND provider<>'rappi'),count(*) FILTER (WHERE cancelled)
+ FROM (SELECT provider,cancelled FROM delivery_orders WHERE outlet_id=$1`+deliveryInboxOrder+` LIMIT $2) inbox`,
+		outlet, deliveryInboxLimit).Scan(&result.Received, &result.Accepted, &result.Cancelled)
+	if err != nil {
+		return nil, err
+	}
+	return result, nil
 }
 
 func mcpDelivery(r *http.Request, tx *sql.Tx, s mcpTokenScope) (any, error) {
