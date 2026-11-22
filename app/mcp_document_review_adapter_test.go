@@ -108,7 +108,7 @@ func TestPostgresDocumentReviewAdapter(t *testing.T) {
 		t.Fatal(payable, err)
 	}
 	if _, err := db.ExecContext(ctx, `INSERT INTO documents(id,entity_id,outlet_id,supplier_id,issuer_cuit,document_type,letter,point_of_sale,number,issue_date,currency,total_minor,description,status,revision,created_at,updated_at)
- SELECT 2,entity_id,outlet_id,supplier_id,issuer_cuit,document_type,letter,point_of_sale,2,issue_date,currency,total_minor,description,'draft',1,created_at,updated_at FROM documents WHERE id=1`); err != nil {
+ SELECT 2,entity_id,outlet_id,supplier_id,issuer_cuit,document_type,letter,point_of_sale,2,issue_date,currency,total_minor,description,'draft',0,created_at,updated_at FROM documents WHERE id=1`); err != nil {
 		t.Fatal(err)
 	}
 	handler := a.routes()
@@ -147,7 +147,9 @@ func TestPostgresDocumentReviewAdapter(t *testing.T) {
 	call("POST", tokenPath, `{"entity_id":1,"outlet_id":1,"actions":["document_draft_review","pos_product_rename"]}`, "", cookies, 422)
 	const mcp = "/api/v1/mcp/entities/1/outlets/1/document-review-proposals"
 	const browser = "/api/v1/entities/1/outlets/1/document-review-proposals"
-	body := `{"request_id":"44444444-0000-4000-8000-000000000001","review":{"document_id":2,"expected_revision":1,"reason":"Otra revisión de prueba"}}`
+	body := `{"request_id":"44444444-0000-4000-8000-000000000001","review":{"document_id":2,"expected_revision":0,"reason":"Otra revisión de prueba"}}`
+	call("POST", mcp, strings.Replace(body, `"expected_revision":0,`, "", 1), minted.Token, nil, 422)
+	call("POST", mcp, strings.Replace(body, `"expected_revision":0`, `"expected_revision":null`, 1), minted.Token, nil, 422)
 	created := call("POST", mcp, body, minted.Token, nil, 201)
 	duplicate := call("POST", mcp, body, minted.Token, nil, 200)
 	if created.Body.String() != duplicate.Body.String() || strings.Contains(created.Body.String(), "document_id") {
@@ -159,7 +161,7 @@ func TestPostgresDocumentReviewAdapter(t *testing.T) {
 	}
 	path := fmt.Sprintf("%s/%d", browser, receipt.ID)
 	var view documentReviewWireDetails
-	if err := json.Unmarshal(call("GET", path, "", "", cookies, 200).Body.Bytes(), &view); err != nil || view.Review == nil || view.Review.ID != 2 || view.Review.TotalMinor != 123456 {
+	if err := json.Unmarshal(call("GET", path, "", "", cookies, 200).Body.Bytes(), &view); err != nil || view.Review == nil || view.Review.ID != 2 || view.Review.Revision != 0 || view.Review.TotalMinor != 123456 {
 		t.Fatal(view, err)
 	}
 	otherLogin := postgresTestCookies(t, handler, "review-fixture", pw)
@@ -168,8 +170,9 @@ func TestPostgresDocumentReviewAdapter(t *testing.T) {
 	call("POST", path+"/decision", decision, "", cookies, 200)
 	call("POST", path+"/decision", decision, "", cookies, 409)
 	var documentState string
-	if err := db.QueryRowContext(ctx, `SELECT status FROM documents WHERE id=2`).Scan(&documentState); err != nil || documentState != "reviewed" {
-		t.Fatal(documentState, err)
+	var reviewedRevision int64
+	if err := db.QueryRowContext(ctx, `SELECT status,revision FROM documents WHERE id=2`).Scan(&documentState, &reviewedRevision); err != nil || documentState != "reviewed" || reviewedRevision != 1 {
+		t.Fatal(documentState, reviewedRevision, err)
 	}
 
 }

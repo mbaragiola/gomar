@@ -29,7 +29,7 @@ type documentReviewSnapshot struct {
 
 func normalizeDocumentReview(in documentReviewInput) (documentReviewInput, error) {
 	in.Reason = trimDraftText(in.Reason)
-	if in.ID < 1 || in.Revision < 1 || in.Revision == 1<<63-1 || !utf8.ValidString(in.Reason) ||
+	if in.ID < 1 || in.Revision < 0 || in.Revision == 1<<63-1 || !utf8.ValidString(in.Reason) ||
 		in.Reason == "" || len(in.Reason) > 1024 || strings.ContainsRune(in.Reason, 0) {
 		return in, badInput
 	}
@@ -114,9 +114,18 @@ func decodeDocumentReview(raw []byte) (documentReviewInput, error) {
 	if len(raw) > 2048 {
 		return in, badInput
 	}
-	if err := decodeWikiProposalJSON(raw, &in, "document_id", "expected_revision", "reason"); err != nil {
+	var wire struct {
+		documentReviewInput
+		Revision *int64 `json:"expected_revision"`
+	}
+	if err := decodeWikiProposalJSON(raw, &wire, "document_id", "expected_revision", "reason"); err != nil {
 		return in, err
 	}
+	if wire.Revision == nil {
+		return in, badInput
+	}
+	in = wire.documentReviewInput
+	in.Revision = *wire.Revision
 	return normalizeDocumentReview(in)
 }
 
