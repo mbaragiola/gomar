@@ -66,6 +66,8 @@ func (a *app) registerMCP(add func(string, string, http.HandlerFunc)) {
 		add("/api/v1/mcp/entities/{entity}/sales-summary", http.MethodGet, a.mcpRead(a.mcpSalesSummary))
 	}
 	a.registerMCPWorkspace(add)
+	a.registerMCPAccountingReads(add)
+	a.registerMCPBookingReads(add)
 }
 
 func (a *app) issueMCPToken(w http.ResponseWriter, r *http.Request, u user) error {

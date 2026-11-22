@@ -12,6 +12,14 @@ delivery provider, writes a record, sends a message, or accesses a receipt.
 | `gomar_list_stock` | Tracked products, balances, minimums and alerts | Requires POS and stock enabled and a qualifying role. Use `next_product_id` to continue. |
 | `gomar_list_recent_delivery` | Internal order IDs, provider, recorded status and times | Requires delivery enabled. Up to 30; no customer data, provider order IDs, items, or amounts. |
 | `gomar_payables_summary` | Outstanding and overdue balances by currency, in minor units | Uses the existing accounting role and outlet checks. No supplier details, invoices or payments. |
+| `gomar_list_documents` | Document metadata for the selected outlet | No attachments or tax identifiers. Up to 30 per page. |
+| `gomar_list_suppliers` | Active supplier names and IDs for the business | Requires an authorized selected outlet. No contact or tax details. Up to 30 per page. |
+| `gomar_payment_status_summary` | Recorded payment counts by status | No amounts, account details or receipts. |
+| `gomar_reconciliation_status_summary` | Accessible reconciliation counts by status | Do not sum across outlets. No movements, accounts or files. |
+| `gomar_reservation_status` | Daily reservation and guest counts by status | One Buenos Aires date. No identifying details. |
+| `gomar_published_menu` | Whether a menu is published and its file metadata | No file or download link. |
+| `gomar_pos_catalog` | Products and ARS prices in minor units | Up to 30 per page. |
+| `gomar_stock_movements` | Counts and net units by movement type | One product and up to 31 Buenos Aires days, with no actor or order IDs. |
 
 Sales still means recorded POS sales, not delivery or invoices. The tools
 can be listed even when an app feature is off or the user lacks permission;
@@ -19,11 +27,9 @@ the server denies the call in either case. A denied call is not an empty report.
 
 ## Not available through MCP yet
 
-The app still has business actions and reads without MCP tools: document
-and supplier detail, private files and intake, payment workflows, detailed
-stock and reconciliation, reservations and menu management, and access
-administration. No payment, booking, stock, publication or account change
-can be made through these tools.
+See the [coverage matrix](MCP-COVERAGE.md) for work still needed. No
+payment, booking, stock, publication or account change can be made through
+these tools.
 
 For future writes, give each workflow its own typed operation. Show the
 operator the exact proposed change in Gomar, then require a fresh

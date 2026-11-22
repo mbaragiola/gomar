@@ -47,6 +47,8 @@ func liveServer(client *mcpclient.Client) *mcp.Server {
 		return client.Sales(ctx, in.EntityID, in.OutletID, in.Period)
 	})
 	addWorkspaceTools(server, client)
+	addAccountingReadTools(server, client)
+	addBookingReadTools(server, client)
 	return server
 }
 
