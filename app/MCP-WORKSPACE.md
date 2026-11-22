@@ -54,3 +54,8 @@ an assistant's claim of confirmation, or a client-side flag as approval.
 `gomar_delivery_status_summary` counts received, accepted, and cancelled orders
 in the latest 100 records of the selected branch inbox. It reads Gomar only
 and returns no individual orders, items, or customer details.
+
+`gomar_stock_alert_summary` counts tracked products by stock alert for the
+selected branch without listing products or balances. Negative takes priority;
+nonnegative balances at or below the minimum count separately. An inactive
+branch stock feature returns no counted products.

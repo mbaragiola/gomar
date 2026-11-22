@@ -113,6 +113,41 @@ func (c *Client) Article(ctx context.Context, entity, outlet, article int64) (Ar
 	return result, err
 }
 
+type StockAlertSummary struct {
+	Enabled          bool  `json:"enabled"`
+	Tracked          int64 `json:"tracked"`
+	Negative         int64 `json:"negative"`
+	AtOrBelowMinimum int64 `json:"at_or_below_minimum"`
+	Healthy          int64 `json:"healthy"`
+}
+
+func (c *Client) StockAlerts(ctx context.Context, entity, outlet int64) (StockAlertSummary, error) {
+	var w struct {
+		Enabled          *bool  `json:"enabled"`
+		Tracked          *int64 `json:"tracked"`
+		Negative         *int64 `json:"negative"`
+		AtOrBelowMinimum *int64 `json:"at_or_below_minimum"`
+		Healthy          *int64 `json:"healthy"`
+	}
+	if err := c.getWorkspace(ctx, entity, outlet, "/stock-alert-summary", nil, &w); err != nil {
+		return StockAlertSummary{}, err
+	}
+	if w.Enabled == nil || w.Tracked == nil || w.Negative == nil || w.AtOrBelowMinimum == nil || w.Healthy == nil || *w.Tracked < 0 || (!*w.Enabled && *w.Tracked != 0) {
+		return StockAlertSummary{}, invalidResponse
+	}
+	remaining := *w.Tracked
+	for _, count := range []int64{*w.Negative, *w.AtOrBelowMinimum, *w.Healthy} {
+		if count < 0 || count > remaining {
+			return StockAlertSummary{}, invalidResponse
+		}
+		remaining -= count
+	}
+	if remaining != 0 {
+		return StockAlertSummary{}, invalidResponse
+	}
+	return StockAlertSummary{Enabled: *w.Enabled, Tracked: *w.Tracked, Negative: *w.Negative, AtOrBelowMinimum: *w.AtOrBelowMinimum, Healthy: *w.Healthy}, nil
+}
+
 func (c *Client) Stock(ctx context.Context, entity, outlet int64, after *int64) (Stock, error) {
 	var result Stock
 	query := url.Values{}

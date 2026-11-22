@@ -18,6 +18,7 @@ func (a *app) registerMCPWorkspace(add func(string, string, http.HandlerFunc)) {
 	add(mcpWorkspaceBase+"/knowledge/{article}", http.MethodGet, a.mcpRead(mcpKnowledgeDetail))
 	if a.enablePOS && a.enableStock {
 		add(mcpWorkspaceBase+"/stock", http.MethodGet, a.mcpRead(mcpStock))
+		add(mcpWorkspaceBase+"/stock-alert-summary", http.MethodGet, a.mcpRead(mcpStockAlertSummary))
 	}
 	if a.enableDelivery {
 		add(mcpWorkspaceBase+"/delivery-orders", http.MethodGet, a.mcpRead(mcpDelivery))
@@ -122,6 +123,45 @@ type mcpStockItem struct {
 	Minimum int64  `json:"minimum"`
 	Balance int64  `json:"balance"`
 	Alert   string `json:"alert,omitempty"`
+}
+
+func mcpStockAlertSummary(r *http.Request, tx *sql.Tx, s mcpTokenScope) (any, error) {
+	if !slices.Contains([]string{"administration", "purchasing", "accounting"}, s.role) {
+		return nil, forbiddenRole
+	}
+	if r.URL.RawQuery != "" || r.URL.ForceQuery {
+		return nil, badInput
+	}
+	outlet, err := mcpWorkspaceOutlet(r, tx, s)
+	if err != nil {
+		return nil, err
+	}
+	enabled, err := stockOutletActive(r.Context(), tx, outlet)
+	if err != nil {
+		return nil, err
+	}
+	result := struct {
+		Enabled          bool  `json:"enabled"`
+		Tracked          int64 `json:"tracked"`
+		Negative         int64 `json:"negative"`
+		AtOrBelowMinimum int64 `json:"at_or_below_minimum"`
+		Healthy          int64 `json:"healthy"`
+	}{Enabled: enabled}
+	if !enabled {
+		return result, nil
+	}
+	err = tx.QueryRowContext(r.Context(), `SELECT count(*),count(*) FILTER(WHERE balance<0),
+  count(*) FILTER(WHERE balance>=0 AND balance<=minimum),count(*) FILTER(WHERE balance>minimum)
+  FROM (SELECT t.minimum,COALESCE((SELECT CAST(SUM(delta) AS BIGINT) FROM stock_movements x
+    WHERE x.outlet_id=t.outlet_id AND x.product_id=t.product_id),0) AS balance
+  FROM stock_products t JOIN pos_products p ON p.id=t.product_id AND p.outlet_id=t.outlet_id
+  JOIN pos_product_versions v ON v.product_id=p.id AND v.outlet_id=p.outlet_id AND v.revision=p.current_revision
+  WHERE t.outlet_id=$1 AND t.enabled) selected`, outlet).
+		Scan(&result.Tracked, &result.Negative, &result.AtOrBelowMinimum, &result.Healthy)
+	if err != nil {
+		return nil, err
+	}
+	return result, nil
 }
 
 func mcpStock(r *http.Request, tx *sql.Tx, s mcpTokenScope) (any, error) {

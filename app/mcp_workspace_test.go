@@ -141,6 +141,52 @@ func TestPostgresMCPWorkspaceReadsKeepOutletAndRoleScope(t *testing.T) {
 	if len(stock.Products) != 0 {
 		t.Fatal("cursor included previous page")
 	}
+	if _, err := db.ExecContext(ctx, `
+ INSERT INTO pos_products(id,outlet_id,current_revision) SELECT i,1,1 FROM generate_series(2,33) i;
+ INSERT INTO pos_product_versions(product_id,outlet_id,revision,name,price_minor,active)
+ SELECT i,1,1,'private stock sentinel '||i,100,true FROM generate_series(2,33) i;
+ INSERT INTO stock_products(outlet_id,product_id,enabled,minimum)
+ SELECT 1,i,i<>33,0 FROM generate_series(2,33) i;
+ INSERT INTO stock_movements(outlet_id,product_id,actor_id,kind,quantity,delta,recorded_at,request_id)
+ VALUES(1,2,1,'merma',1,-1,'2026-11-01T00:00:00Z','11111111-0000-4000-8000-000000000002'),
+       (1,4,1,'recepcion',1,1,'2026-11-01T00:00:00Z','11111111-0000-4000-8000-000000000004')`); err != nil {
+		t.Fatal(err)
+	}
+	rawStocks := read("/stock-alert-summary", 200)
+	var alert mcpclient.StockAlertSummary
+	decode(rawStocks, &alert)
+	if alert != (mcpclient.StockAlertSummary{Enabled: true, Tracked: 32, Negative: 1, AtOrBelowMinimum: 30, Healthy: 1}) || strings.Contains(rawStocks, "sentinel") {
+		t.Fatal(alert)
+	}
+	var nativeStock struct {
+		Enabled  bool           `json:"activo"`
+		Products []stockProduct `json:"productos"`
+	}
+	decode(invoke(mux, "GET", "/api/v1/entities/1/outlets/1/pos/stock", "", "", true, 200).Body.String(), &nativeStock)
+	compare := mcpclient.StockAlertSummary{Enabled: nativeStock.Enabled}
+	for _, product := range nativeStock.Products {
+		if !product.Enabled {
+			continue
+		}
+		compare.Tracked++
+		switch product.Warning {
+		case "negativo":
+			compare.Negative++
+		case "bajo":
+			compare.AtOrBelowMinimum++
+		case "":
+			compare.Healthy++
+		}
+	}
+	if alert != compare || len(nativeStock.Products) != 33 {
+		t.Fatal(compare)
+	}
+	decode(invoke(mux, "GET", "/api/v1/mcp/entities/1/outlets/2/stock-alert-summary", "", broader, false, 200).Body.String(), &alert)
+	if alert != (mcpclient.StockAlertSummary{}) {
+		t.Fatal(alert)
+	}
+	read("/stock-alert-summary?limit=30", 422)
+
 	delivery := read("/delivery-orders", 200)
 	var orders mcpclient.Delivery
 	decode(delivery, &orders)
@@ -187,13 +233,14 @@ func TestPostgresMCPWorkspaceReadsKeepOutletAndRoleScope(t *testing.T) {
 		ap.Totals[0].OverdueMinor != 10250 || ap.Totals[1].OutstandingMinor != 275 || ap.Totals[1].OverdueMinor != 0 || strings.Contains(report, "supplier") {
 		t.Fatal("unexpected scoped payables")
 	}
-	for _, suffix := range []string{"/knowledge", "/knowledge/1", "/stock", "/delivery-orders", "/delivery-status-summary", "/payables-summary"} {
+	for _, suffix := range []string{"/knowledge", "/knowledge/1", "/stock", "/stock-alert-summary", "/delivery-orders", "/delivery-status-summary", "/payables-summary"} {
 		invoke(mux, "GET", "/api/v1/mcp/entities/1/outlets/2"+suffix, "", token, false, 404)
 		invoke(mux, "GET", "/api/v1/mcp/entities/1/outlets/3"+suffix, "", broader, false, 404)
 		invoke(mux, "GET", "/api/v1/mcp/entities/2/outlets/4"+suffix, "", token, false, 404)
 	}
 	noFeature := (&app{db: db, host: "example.com", enableMCP: true, mcpClock: a.mcpClock}).routes()
 	invoke(noFeature, "GET", base+"/stock", "", token, false, 404)
+	invoke(noFeature, "GET", base+"/stock-alert-summary", "", token, false, 404)
 	invoke(noFeature, "GET", base+"/delivery-orders", "", token, false, 404)
 	invoke(noFeature, "GET", base+"/delivery-status-summary", "", token, false, 404)
 	if _, err := db.ExecContext(ctx, `UPDATE memberships SET role='read_only' WHERE id=1`); err != nil {
@@ -201,10 +248,12 @@ func TestPostgresMCPWorkspaceReadsKeepOutletAndRoleScope(t *testing.T) {
 	}
 	read("/knowledge", 200)
 	read("/stock", 403)
+	read("/stock-alert-summary", 403)
 	read("/payables-summary", 403)
 	if _, err := db.ExecContext(ctx, `DELETE FROM outlet_grants WHERE membership_id=1 AND outlet_id=1`); err != nil {
 		t.Fatal(err)
 	}
 	read("/knowledge", 404)
 	read("/delivery-status-summary", 404)
+	read("/stock-alert-summary", 404)
 }
