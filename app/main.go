@@ -29,9 +29,13 @@ func main() {
 	enableWikiProposals := flag.Bool("enable-mcp-wiki-proposals", false, "allow administrators to propose new wiki articles for browser approval")
 	enableDocumentProposals := flag.Bool("enable-mcp-document-proposals", false, "allow staff to propose document drafts for browser approval")
 	enableWikiEditProposals := flag.Bool("enable-mcp-wiki-edit-proposals", false, "allow administrators to propose wiki edits for browser approval")
+	enableStockReceiptProposals := flag.Bool("enable-mcp-stock-receipt-proposals", false, "allow staff to propose stock receipts for browser approval")
 	enableStock := flag.Bool("enable-stock", false, "enable optional finished-item stock for the prototype POS")
 	publicReservations := flag.Bool("public-reservations", false, "enable the guest reservation routes for explicitly enabled venues")
 	flag.Parse()
+	if *enableStockReceiptProposals && (!*enablePOS || !*enableStock) {
+		log.Fatal("-enable-mcp-stock-receipt-proposals requires -enable-pos and -enable-stock")
+	}
 	if *enableStock && !*enablePOS {
 		log.Fatal("-enable-stock requires -enable-pos")
 	}
@@ -46,7 +50,7 @@ func main() {
 			modes++
 		}
 	}
-	if *state == "" || flag.NArg() != 0 || modes > 1 || modes != 0 && (explicitTCP || unixMode || *publicReservations || *enablePOS || *enableDelivery || *enableMCP || *enableWikiProposals || *enableDocumentProposals || *enableWikiEditProposals) {
+	if *state == "" || flag.NArg() != 0 || modes > 1 || modes != 0 && (explicitTCP || unixMode || *publicReservations || *enablePOS || *enableDelivery || *enableMCP || *enableWikiProposals || *enableDocumentProposals || *enableWikiEditProposals || *enableStockReceiptProposals) {
 		log.Fatal("provide -state; choose at most one of -init, -check and -create-admin without server flags")
 	}
 	var addr netip.AddrPort
@@ -122,7 +126,7 @@ func main() {
 		IdleTimeout:       60 * time.Second,
 	}
 	application := &app{db: db, privateRoot: privateRoot, publicReservations: *publicReservations, enablePOS: *enablePOS,
-		enableDelivery: *enableDelivery, enableStock: *enableStock, enableMCP: *enableMCP, enableMCPWikiProposals: *enableWikiProposals, enableMCPDocumentProposals: *enableDocumentProposals, enableMCPWikiEditProposals: *enableWikiEditProposals}
+		enableDelivery: *enableDelivery, enableStock: *enableStock, enableMCP: *enableMCP, enableMCPWikiProposals: *enableWikiProposals, enableMCPDocumentProposals: *enableDocumentProposals, enableMCPWikiEditProposals: *enableWikiEditProposals, enableMCPStockReceiptProposals: *enableStockReceiptProposals}
 	if ingress != nil {
 		listener = ingress.listener
 		server.DisableGeneralOptionsHandler = true

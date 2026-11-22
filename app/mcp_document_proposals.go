@@ -211,6 +211,16 @@ func (a *app) beginTypedProposalReview(r *http.Request, u user, purpose string, 
 		return nil, s, nil, err
 	}
 	password, err := lockWikiProposalBrowser(r, tx, u.id)
+	if err == nil && decision && purpose == stockReceiptKeyPurpose {
+		// Stock shares the POS outlet lock, not the accounting entity lock.
+		// Acquire it before the generic scope check takes an outlet share.
+		err = a.lockStockReceiptScope(r.Context(), tx, stockReceiptScopeFrom(s))
+		if err == nil {
+			return tx, s, password, nil
+		}
+		tx.Rollback()
+		return nil, s, nil, err
+	}
 	if err == nil && decision {
 		// Acquire the native exclusive entity lock before taking any shared
 		// scope locks. Native document writes use this same lock.
