@@ -148,6 +148,13 @@ in order, rehearse recovery locally with both cookie directions denied, and
 agree on how existing permitted people get explicit Gomar access. Before
 an explicit cutover, confirm the authorized pilot for every offered account
 type against the provider itself. Startup checks are offline and cannot
-prove that a real client registration or provider is reachable. This branch
-did not enroll anyone, switch sign-in modes in a running deployment, or
-contact providers.
+prove that a real client registration or provider is reachable.
+
+Plan how to let existing MCP links expire or revoke them before switching.
+Rejecting password cookies on ordinary app routes does not immediately revoke
+every previously issued MCP key. Test any offline POS queue with the chosen
+session transition before applying it. An older binary refuses an unknown
+schema version, so keep a schema-compatible rollback or a restore plan.
+
+This branch did not enroll anyone, switch sign-in modes in a running
+deployment, or contact providers.
