@@ -161,22 +161,10 @@ func mcpReconciliationStatusCounts(r *http.Request, tx *sql.Tx, s mcpTokenScope)
 		Review int64 `json:"review"`
 		Closed int64 `json:"closed"`
 	}
-	// An entity token may include a run involving multiple outlets, as long
-	// as the selected outlet participates and every outlet is still granted.
-	// An outlet-bound token must not reveal runs involving any other outlet.
 	err = tx.QueryRowContext(r.Context(), `SELECT
 		COUNT(*) FILTER(WHERE r.state='draft'),
 		COUNT(*) FILTER(WHERE r.state='review'),
-		COUNT(*) FILTER(WHERE r.state='closed')
-		FROM reconciliation_read_runs r WHERE r.entity_id=$1 AND r.state<>'deleted'
-		AND EXISTS(SELECT 1 FROM reconciliation_read_outlets ro WHERE ro.run_id=r.id AND ro.outlet_id=$2)
-		AND NOT EXISTS(
-			SELECT 1 FROM reconciliation_read_outlets ro WHERE ro.run_id=r.id AND (
-				($4 AND ro.outlet_id<>$2) OR NOT EXISTS(
-					SELECT 1 FROM outlets o JOIN outlet_grants g ON g.outlet_id=o.id
-					WHERE o.id=ro.outlet_id AND o.entity_id=r.entity_id AND o.active=TRUE AND g.membership_id=$3
-				)
-			)
-		)`, s.ID, outlet, s.id, s.outlet.Valid).Scan(&counts.Draft, &counts.Review, &counts.Closed)
+		COUNT(*) FILTER(WHERE r.state='closed')`+mcpReconciliationRunScope,
+		s.ID, outlet, s.id, s.outlet.Valid).Scan(&counts.Draft, &counts.Review, &counts.Closed)
 	return counts, err
 }
