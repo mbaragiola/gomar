@@ -1,0 +1,11 @@
+{
+  "token": "demo-middleware-token-01",
+  "code": "demo-platform-order-01",
+  "test": false,
+  "expeditionType": "delivery",
+  "products": [
+    {"name": "Sándwich de prueba", "quantity": "2", "paidPrice": "16000.00"},
+    {"name": "Agua sin gas", "quantity": "1", "paidPrice": "2500.00"}
+  ],
+  "price": {"grandTotal": "18500.00"}
+}

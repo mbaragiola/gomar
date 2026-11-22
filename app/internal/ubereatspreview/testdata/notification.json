@@ -1,0 +1,1 @@
+{"event_type":"orders.notification","event_id":"00000000-0000-4000-8000-000000000301","event_time":1700000000,"meta":{"resource_id":"00000000-0000-4000-8000-000000000101","user_id":"00000000-0000-4000-8000-000000000201","status":"pos"},"resource_href":"https://test-api.uber.com/v2/eats/order/00000000-0000-4000-8000-000000000101"}

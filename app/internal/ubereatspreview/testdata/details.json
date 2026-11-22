@@ -1,0 +1,1 @@
+{"id":"00000000-0000-4000-8000-000000000101","brand":"UBER_EATS","current_state":"ACCEPTED","store":{"id":"00000000-0000-4000-8000-000000000201"},"cart":{"items":[{"title":"Tostado de prueba","quantity":2,"price":{"unit_price":1500}}],"special_instructions":"Texto de prueba descartado"},"eater":{"first_name":"Ejemplo sintético"},"payment":{"charges":{"total":{"amount":3000}}}}

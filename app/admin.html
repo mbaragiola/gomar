@@ -1,0 +1,190 @@
+<!doctype html>
+<html lang="es-AR">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>{{if and .PasswordForm .PasswordForm.ErrorCount}}Error: {{end}}{{.Title}} | Gomar</title>
+    <style>
+        body { font: 1rem/1.5 system-ui, sans-serif; color: #172235; background: #f5f7fa; margin: 0; }
+        header { background: #18384a; color: white; padding: 1rem max(1.25rem, calc((100% - 64rem) / 2)); }
+        header a { color: inherit; font-size: 1.125rem; }
+        main { max-width: 64rem; margin: 2rem auto; padding: 0 1.25rem; }
+        label { display: block; margin: 0.75rem 0; }
+        input, button { font: inherit; }
+        a { color: #145484; }
+        nav ul { padding-left: 1.25rem; }
+        table { border-collapse: collapse; width: 100%; background: white; }
+        .audit-scroll { max-width: 100%; overflow-x: auto; }
+        .audit-scroll th { text-align: left; padding: 0.65rem; }
+        .audit-detail { background: white; padding: 1rem; }
+        .audit-detail dt { font-weight: bold; }
+        .audit-detail dd { margin: 0 0 0.75rem; overflow-wrap: anywhere; }
+        .admin-pages { display: flex; gap: 1rem; align-items: center; margin-top: 1rem; }
+        td { text-align: left; padding: 0.65rem; border-bottom: 1px solid #ddd; }
+        [role="alert"] { color: #922; }
+        #password-change-form { max-width: 38rem; padding: 1rem; background: white; }
+        #password-change-form label { margin-top: 1rem; }
+        #password-change-form input[type="password"] { display: block; max-width: 100%; }
+    </style>
+</head>
+<body>
+<header><a href="/admin/">Administración de Gomar</a></header>
+<main>
+    <p>Versión experimental</p>
+    <h1>{{.Title}}</h1>
+    {{if .Login}}
+    {{if .Error}}<p role="alert">{{.Error}}</p>{{end}}
+    <form method="post" action="/admin/login/">
+        <input type="hidden" name="csrfmiddlewaretoken" value="{{.Token}}">
+        <input type="hidden" name="next" value="{{.Next}}">
+        <label>Usuario <input name="username" value="{{.Username}}" autocomplete="username" required></label>
+        <label>Contraseña <input name="password" type="password" autocomplete="current-password" required></label>
+        <button>Iniciar sesión</button>
+    </form>
+    {{else if .LoggedOut}}
+    <p><a href="/admin/login/">Iniciar sesión</a></p>
+    {{else}}
+    <form method="post" action="/admin/logout/">
+        <input type="hidden" name="csrfmiddlewaretoken" value="{{.Token}}">
+        <span>{{.Username}}</span>
+        {{if or .PasswordForm .PasswordDone}}Cambiar contraseña{{else}}<a href="/admin/password_change/">Cambiar contraseña</a>{{end}}
+        <button>Cerrar sesión</button>
+    </form>
+    {{if or .PasswordForm .PasswordDone}}
+    <p><a href="/admin/">Inicio</a> › Cambio de contraseña</p>
+    {{with .PasswordForm}}
+    <form id="password-change-form" method="post" action="/admin/password_change/">
+        <input type="hidden" name="csrfmiddlewaretoken" value="{{$.Token}}">
+        {{if .ErrorCount}}<p role="alert">{{if eq .ErrorCount 1}}Por favor, corrija el siguiente error.{{else}}Por favor, corrija los siguientes errores.{{end}}</p>{{end}}
+        <p>Por favor, por razones de seguridad, introduzca primero su contraseña antigua y luego introduzca la nueva contraseña dos veces para verificar que la ha escrito correctamente.</p>
+        <label for="id_old_password">Contraseña antigua</label>
+        {{if .Old}}<ul id="old_password_errors" role="alert">{{range .Old}}<li>{{.}}</li>{{end}}</ul>{{end}}
+        <input type="password" name="old_password" id="id_old_password" autocomplete="current-password" autofocus required {{if .Old}}aria-invalid="true" aria-describedby="old_password_errors"{{end}}>
+        <label for="id_new_password1">Contraseña nueva</label>
+        {{if .New}}<ul id="new_password1_errors" role="alert">{{range .New}}<li>{{.}}</li>{{end}}</ul>{{end}}
+        <input type="password" name="new_password1" id="id_new_password1" autocomplete="new-password" required aria-describedby="{{if .New}}new_password1_errors {{end}}id_new_password1_helptext" {{if .New}}aria-invalid="true"{{end}}>
+        <ul id="id_new_password1_helptext">
+            <li>Su contraseña no puede ser similar a otros componentes de su información personal.</li>
+            <li>Su contraseña debe contener por lo menos 8 caracteres.</li>
+            <li>Su contraseña no puede ser una contraseña usada muy comúnmente.</li>
+            <li>Su contraseña no puede estar formada exclusivamente por números.</li>
+        </ul>
+        <label for="id_new_password2">Confirmación de contraseña nueva</label>
+        {{if .Confirm}}<ul id="new_password2_errors" role="alert">{{range .Confirm}}<li>{{.}}</li>{{end}}</ul>{{end}}
+        <input type="password" name="new_password2" id="id_new_password2" autocomplete="new-password" required aria-describedby="{{if .Confirm}}new_password2_errors {{end}}id_new_password2_helptext" {{if .Confirm}}aria-invalid="true"{{end}}>
+        <p id="id_new_password2_helptext">Introduzca la misma contraseña nuevamente, para poder verificar la misma.</p>
+        <button>Cambiar mi contraseña</button>
+    </form>
+    {{else}}
+    <p>Su contraseña ha sido cambiada.</p>
+    {{end}}
+    {{else}}
+    <nav aria-label="Configuración">
+        <ul>{{range .Links}}<li><a href="{{.Path}}">{{.Label}}</a></li>{{end}}</ul>
+    </nav>
+    {{if .AddCatalogPath}}<p><a href="{{.AddCatalogPath}}">{{.AddCatalogLabel}}</a></p>{{end}}
+    {{with .CatalogAdd}}
+    <form id="{{.FormID}}" method="post" action="{{.FormPath}}">
+        <input type="hidden" name="csrfmiddlewaretoken" value="{{$.Token}}">
+        {{if .Problem}}<p role="alert">{{.Problem}}</p>{{end}}
+        {{if not .Legal}}<label>Entidad <select id="id_entity" name="entity" required>
+            <option value="">---------</option>
+            {{range .Entities}}<option value="{{.ID}}" {{if eq .ID $.CatalogAdd.EntityID}}selected{{end}}>{{.Name}}</option>{{end}}
+        </select></label>{{end}}
+        <label>{{.NameLabel}} <input name="{{.NameField}}" id="id_{{.NameField}}" value="{{.Name}}" maxlength="{{.MaxName}}" required></label>
+        {{if or .Supplier .Legal}}<label>CUIT <input name="cuit" id="id_cuit" value="{{.CUIT}}" maxlength="{{if .Legal}}11{{else}}14{{end}}" required></label>{{end}}
+        <label><input type="checkbox" name="active" id="id_active" {{if .Active}}checked{{end}}> Activo</label>
+        <button name="_save" value="Guardar">Guardar</button>
+    </form>
+    {{end}}
+    {{if .Rows}}<table aria-label="{{.Title}}"><tbody>{{range .Rows}}<tr><td>{{if .Href}}<a href="{{.Href}}">{{.First}}</a>{{else}}{{.First}}{{end}}</td>{{if not $.SingleColumn}}<td>{{.Second}}</td>{{end}}</tr>{{end}}</tbody></table>{{end}}
+    {{with .CatalogPager}}
+    {{if or .Previous .Next}}<nav class="admin-pages" aria-label="Páginas de {{$.Title}}">
+        {{if .Previous}}<a href="?p={{.Previous}}" rel="prev">Anterior</a>{{end}}
+        <span>Página {{.Number}}</span>
+        {{if .Next}}<a href="?p={{.Next}}" rel="next">Siguiente</a>{{end}}
+    </nav>{{end}}
+    {{end}}
+    {{with .CatalogDetail}}
+    {{if .SupplierEdit}}
+    <p><a href="{{.HistoryPath}}" class="history-link">Historial</a></p>
+    <form id="supplier_form" method="post" action="{{.Action}}">
+        <input type="hidden" name="csrfmiddlewaretoken" value="{{$.Token}}">
+        <p>Entidad: <span class="supplier-entity">{{.Entity}}</span></p>
+        <p>CUIT: <span class="supplier-cuit">{{.CUIT}}</span></p>
+        <label><input type="checkbox" name="active" id="id_active" {{if .Active}}checked{{end}}> Activo</label>
+        {{if .Problem}}<p role="alert">{{.Problem}}</p>{{end}}
+        <label>Razón social <input name="business_name" id="id_business_name" value="{{.Name}}" maxlength="160" required></label>
+        <button name="_save" value="Guardar">Guardar</button>
+    </form>
+    {{else if .Action}}
+    <p><a href="{{.HistoryPath}}" class="history-link">Historial</a></p>
+    <form id="outlet_form" method="post" action="{{.Action}}">
+        <input type="hidden" name="csrfmiddlewaretoken" value="{{$.Token}}">
+        <p>Entidad: <span class="outlet-entity">{{.Entity}}</span></p>
+        {{if .Problem}}<p role="alert">{{.Problem}}</p>{{end}}
+        <label>Nombre <input name="name" id="id_name" value="{{.Name}}" maxlength="120" required></label>
+        <label><input type="checkbox" name="active" id="id_active" {{if .Active}}checked{{end}}> Activo</label>
+        <button name="_save" value="Guardar">Guardar</button>
+    </form>
+    {{else}}
+    <dl class="catalog-detail" aria-label="{{$.Title}}">
+        {{if .Entity}}<dt>Entidad</dt><dd>{{.Entity}}</dd>{{end}}
+        <dt>{{.NameLabel}}</dt><dd>{{.Name}}</dd>
+        {{if .CUIT}}<dt>CUIT</dt><dd>{{.CUIT}}</dd>{{end}}
+        {{if .Role}}<dt>Rol</dt><dd>{{.Role}}</dd>{{end}}
+        <dt>Activo</dt><dd>{{if .Active}}Sí{{else}}No{{end}}</dd>
+    </dl>
+    {{if .HistoryPath}}<p><a href="{{.HistoryPath}}">Historial</a></p>{{end}}
+    {{end}}
+    <p><a href="{{.ListPath}}">Volver a {{.ListLabel}}</a></p>
+    {{end}}
+    {{with .OutletHistory}}
+    <div id="change-history">
+        {{if .Rows}}
+        <table>
+          <thead><tr><th>Fecha y hora</th><th>Usuario</th><th>Acción</th></tr></thead>
+          <tbody>{{range .Rows}}<tr><th><time datetime="{{.Timestamp}}">{{.DateDisplay}}</time></th><td>{{.Actor}}</td><td>{{.Action}}</td></tr>{{end}}</tbody>
+        </table>
+        <p>{{.Total}} registro{{if ne .Total 1}}s{{end}}</p>
+        {{if or .Previous .Next}}<nav class="admin-pages" aria-label="Páginas de historial">
+            {{if .Previous}}<a href="?p={{.Previous}}" rel="prev">Anterior</a>{{end}}
+            <span>Página {{.Number}}</span>
+            {{if .Next}}<a href="?p={{.Next}}" rel="next">Siguiente</a>{{end}}
+        </nav>{{end}}
+        {{else}}<p>No hay historial de cambios para este registro.</p>{{end}}
+    </div>
+    <p><a href="{{.DetailPath}}">Volver al registro</a></p>
+    {{end}}
+    {{with .AuditDetail}}
+    <dl class="audit-detail">
+        <dt>Comprobante</dt><dd>{{.Document}}</dd>
+        <dt>Acción</dt><dd>{{.Action}}</dd>
+        <dt>Usuario</dt><dd>{{.Actor}}</dd>
+        <dt>Fecha y hora</dt><dd><time datetime="{{.Timestamp}}">{{.DateDisplay}}</time></dd>
+        <dt>Motivo</dt><dd>{{.Reason}}</dd>
+    </dl>
+    <p><a href="/admin/purchases/auditevent/">Volver a eventos de auditoría</a></p>
+    {{end}}
+    {{with .Audit}}
+    {{if .Rows}}
+    <div class="audit-scroll" tabindex="0" role="region" aria-label="Tabla de auditoría">
+        <table aria-label="Eventos de auditoría">
+            <thead><tr><th scope="col">Comprobante</th><th scope="col">Acción</th><th scope="col">Usuario</th><th scope="col">Fecha y hora</th><th scope="col">Motivo</th></tr></thead>
+            <tbody>{{range .Rows}}
+                <tr><td><a href="/admin/purchases/auditevent/{{.ID}}/change/">{{.Document}}</a></td><td>{{.Action}}</td><td>{{.Actor}}</td><td><time datetime="{{.Timestamp}}">{{.DateDisplay}}</time></td><td>{{.Reason}}</td></tr>
+            {{end}}</tbody>
+        </table>
+    </div>
+    {{else}}<p>No hay eventos de auditoría.</p>{{end}}
+    {{if or .Previous .Next}}<nav class="admin-pages" aria-label="Páginas de auditoría">
+        {{if .Previous}}<a href="?p={{.Previous}}" rel="prev">Anterior</a>{{end}}
+        <span>Página {{.Number}}</span>
+        {{if .Next}}<a href="?p={{.Next}}" rel="next">Siguiente</a>{{end}}
+    </nav>{{end}}
+    {{end}}
+    {{end}}
+    {{end}}
+</main>
+</body>
+</html>
