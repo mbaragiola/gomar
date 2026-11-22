@@ -69,3 +69,8 @@ draft and reviewed documents, omit deleted records, and subtract credit
 notes. ARS and USD are separate. Each `total_minor` is a signed integer
 string in minor units. There is no date filter, and these are not sales,
 payables, or payments.
+
+An optional stock minimum proposal changes only the warning threshold for
+one actively tracked item at one branch. Zero is a valid threshold. The
+issuing browser login reviews the prior and proposed minimum. This does not
+change tracking, inventory quantity, product availability, or sales.

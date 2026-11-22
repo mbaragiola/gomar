@@ -40,7 +40,7 @@ func decodeStockMinimum(raw []byte) (stockMinimumInput, error) {
 }
 
 func validateStockMinimum(in stockMinimumInput) error {
-	if in.Product <= 0 || in.Revision <= 0 || in.Minimum == nil || *in.Minimum < 0 || *in.Minimum > stockQuantityMax {
+	if in.Product <= 0 || in.Revision <= 0 || in.Revision == 1<<63-1 || in.Minimum == nil || *in.Minimum < 0 || *in.Minimum > stockQuantityMax {
 		return badInput
 	}
 	return nil
