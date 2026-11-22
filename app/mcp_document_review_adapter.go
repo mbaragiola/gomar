@@ -130,6 +130,10 @@ func decodeDocumentReview(raw []byte) (documentReviewInput, error) {
 }
 
 func lockDocumentReviewScope(ctx context.Context, tx *sql.Tx, s documentReviewScope) error {
+	return lockScopedDocumentCapability(ctx, tx, s, "review_documents")
+}
+
+func lockScopedDocumentCapability(ctx context.Context, tx *sql.Tx, s documentReviewScope, capability string) error {
 	var member int64
 	var role string
 	err := tx.QueryRowContext(ctx, `SELECT m.id,m.role FROM memberships m JOIN entities e ON e.id=m.entity_id AND e.active
@@ -140,7 +144,7 @@ func lockDocumentReviewScope(ctx context.Context, tx *sql.Tx, s documentReviewSc
 	if err != nil {
 		return err
 	}
-	if !slices.Contains(capabilities[role], "review_documents") {
+	if !slices.Contains(capabilities[role], capability) {
 		return forbiddenRole
 	}
 	var outlet int64

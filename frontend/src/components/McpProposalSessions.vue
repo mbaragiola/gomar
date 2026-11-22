@@ -3,7 +3,7 @@ import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { ApiError, request } from '../api'
 
 type Status = 'pending' | 'approved' | 'rejected' | 'expired' | 'revoked'
-type Proposal = { id: number; status: Status; expires_at: string; product_id?: number; product_revision?: number; rename?: Rename; document_id?: number; document_revision?: number; review?: Review; run_id?: number; draft?: Draft; digest?: string }
+type Proposal = { id: number; status: Status; expires_at: string; product_id?: number; product_revision?: number; rename?: Rename; document_id?: number; document_revision?: number; review?: Review; run_id?: number; draft?: Draft; edit?: DocumentEdit; digest?: string }
 type Rename = {
   product_id: number; expected_revision: number; name: string; current_name: string
   unchanged_price_minor: number; unchanged_active: boolean
@@ -11,17 +11,23 @@ type Rename = {
 type Review = {
   document_id: number; expected_revision: number; reason: string; type: string; currency: 'ARS' | 'USD'; total_minor: number
 }
+type DocumentValues = { issue_date: string; due_date: string | null; net_minor: number | null; tax_minor: number | null; total_minor: number }
+type DocumentEdit = {
+  document_id: number; expected_revision: number; reason: string; currency: 'ARS' | 'USD'; before: DocumentValues; after: DocumentValues
+}
 type Draft = { match_reference: boolean }
-type Action = 'pos_product_rename' | 'document_draft_review' | 'reconciliation_draft_create'
+type Action = 'pos_product_rename' | 'document_draft_review' | 'reconciliation_draft_create' | 'document_draft_edit'
 type ScopedProposal = Proposal & { kind: Action }
 type Session = { id: number; expires_at: string; actions: string[] }
 const actionName = 'pos_product_rename'
 const reviewAction = 'document_draft_review'
 const draftAction = 'reconciliation_draft_create'
+const editAction = 'document_draft_edit'
 const actionLabels: Record<Action, string> = {
   pos_product_rename: 'Cambiar el nombre de un producto de caja',
   document_draft_review: 'Marcar un comprobante como revisado',
   reconciliation_draft_create: 'Crear un borrador vacío de conciliación',
+  document_draft_edit: 'Editar fechas e importes de un borrador',
 }
 const actionUI: Record<Action, {
   path: string; previewSuffix: string; proceed: string; approve: string; confirm: string; rejectConfirm: string
@@ -40,6 +46,13 @@ const actionUI: Record<Action, {
     rejectConfirm: '¿Querés rechazar sin modificar el comprobante?',
     stale: 'No se marcó como revisado. La propuesta o la versión del comprobante cambiaron.',
     approved: 'Comprobante marcado como revisado.', rejected: 'Propuesta rechazada. No se modificó el comprobante.',
+  },
+  document_draft_edit: {
+    path: '/document-edit-proposals', previewSuffix: ' de edición', proceed: 'Continuar con la edición',
+    approve: 'Guardar fechas e importes', confirm: '¿Querés guardar estas fechas e importes en el borrador?',
+    rejectConfirm: '¿Querés rechazar sin modificar el borrador?',
+    stale: 'No se guardó la edición. La propuesta o la versión del borrador cambiaron.',
+    approved: 'Fechas e importes del borrador guardados.', rejected: 'Propuesta rechazada. No se modificó el borrador.',
   },
   reconciliation_draft_create: {
     path: '/reconciliation-draft-proposals', previewSuffix: ' de conciliación', proceed: 'Continuar con el borrador',
@@ -63,20 +76,35 @@ function isReview(value: Review | undefined): value is Review {
     (value.currency === 'ARS' || value.currency === 'USD') &&
     Number.isSafeInteger(value.total_minor) && value.total_minor >= 0
 }
+const date = (value: unknown) => typeof value === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(value)
+const minor = (value: number) => Number.isSafeInteger(value) && value >= 0 && value <= 99_999_999_999_999
+function isDocumentValues(value: DocumentValues | undefined): value is DocumentValues {
+  return !!value && date(value.issue_date) && (value.due_date === null || date(value.due_date)) &&
+    minor(value.total_minor) && (value.net_minor === null || minor(value.net_minor)) &&
+    (value.tax_minor === null || minor(value.tax_minor))
+}
+function isDocumentEdit(value: DocumentEdit | undefined): value is DocumentEdit {
+  return !!value && positive(value.document_id) && Number.isSafeInteger(value.expected_revision) && value.expected_revision >= 0 &&
+    typeof value.reason === 'string' && !!value.reason && (value.currency === 'ARS' || value.currency === 'USD') &&
+    isDocumentValues(value.before) && isDocumentValues(value.after)
+}
 const prices = new Intl.NumberFormat('es-AR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+const amount = (value: number | null) => value === null ? 'No informado' : prices.format(value / 100)
 type Decision = 'approve' | 'reject'
-const props = defineProps<{ entity: number; outlet: number; outletName: string; canRename: boolean; canReviewDocuments?: boolean; canCreateReconciliationDraft?: boolean }>()
+const props = defineProps<{ entity: number; outlet: number; outletName: string; canRename: boolean; canReviewDocuments?: boolean; canCreateReconciliationDraft?: boolean; canEditDocuments?: boolean }>()
 const scopePath = `/entities/${props.entity}/outlets/${props.outlet}`
 const base = (kind: Action) => scopePath + actionUI[kind].path
-const allowed = (kind: Action) => kind === draftAction ? !!props.canCreateReconciliationDraft
+const allowed = (kind: Action) => kind === editAction ? !!props.canEditDocuments
+  : kind === draftAction ? !!props.canCreateReconciliationDraft
   : kind === reviewAction ? !!props.canReviewDocuments : props.canRename
-const actionChoices = computed(() => ([actionName, reviewAction, draftAction] as const).filter(allowed))
+const actionChoices = computed(() => ([actionName, reviewAction, draftAction, editAction] as const).filter(allowed))
 const setSelected = (kind: Action, event: Event) => {
   if (event.target instanceof HTMLInputElement) selected.value = event.target.checked ? kind : null
 }
 const actionText = (action: string) => Object.hasOwn(actionLabels, action)
   ? actionLabels[action as Action] : 'Acción no reconocida'
-const validPreview = (kind: Action, proposal: Proposal) => kind === draftAction
+const validPreview = (kind: Action, proposal: Proposal) => kind === editAction ? isDocumentEdit(proposal.edit)
+  : kind === draftAction
   ? typeof proposal.draft?.match_reference === 'boolean'
   : kind === reviewAction ? isReview(proposal.review) : isRename(proposal.rename)
 
@@ -227,7 +255,9 @@ async function decide() {
       body: JSON.stringify({ decision: target.action, digest: target.digest, confirm: true }),
     })
     if (!active(run)) return
-    const validApproval = target.kind === draftAction ? positive(result.run_id ?? 0)
+    const validApproval = target.kind === editAction
+      ? result.document_id === proposed.edit?.document_id && result.document_revision === (proposed.edit?.expected_revision ?? -1) + 1
+      : target.kind === draftAction ? positive(result.run_id ?? 0)
       : target.kind === reviewAction
       ? result.document_id === proposed.review?.document_id && result.document_revision === (proposed.review?.expected_revision ?? -1) + 1
       : result.product_id === proposed.rename?.product_id && result.product_revision === (proposed.rename?.expected_revision ?? -1) + 1
@@ -373,7 +403,27 @@ onBeforeUnmount(() => {
     <section v-if="viewed && allowed(viewed.kind)" class="card subsection gomar-feature" aria-label="Vista previa de la propuesta">
       <h3>Vista previa</h3>
       <template v-if="viewed.status === 'pending'">
-        <div v-if="viewed.kind === draftAction && viewed.draft">
+        <div v-if="viewed.kind === editAction && viewed.edit">
+          <p>Local: <strong>{{ outletName }}</strong> · Comprobante {{ viewed.edit.document_id }} · Versión {{ viewed.edit.expected_revision }}</p>
+          <p>Moneda sin cambios: <strong>{{ viewed.edit.currency }}</strong></p>
+          <section
+            v-for="side in (['before', 'after'] as const)" :key="side"
+            :aria-label="side === 'before' ? 'Antes de la edición' : 'Después de la edición'"
+          >
+            <h4>{{ side === 'before' ? 'Antes' : 'Después' }}</h4>
+            <dl class="document-edit-values">
+              <dt>Emisión</dt><dd>{{ viewed.edit[side].issue_date }}</dd>
+              <dt>Vencimiento</dt><dd>{{ viewed.edit[side].due_date ?? 'No informado' }}</dd>
+              <dt>Neto</dt><dd>{{ amount(viewed.edit[side].net_minor) }}</dd>
+              <dt>Impuestos</dt><dd>{{ amount(viewed.edit[side].tax_minor) }}</dd>
+              <dt>Total</dt><dd>{{ viewed.edit.currency }} {{ amount(viewed.edit[side].total_minor) }}</dd>
+            </dl>
+          </section>
+          <p>Motivo:</p>
+          <pre class="gomar-feature-text proposal-body" aria-label="Motivo de la edición">{{ viewed.edit.reason }}</pre>
+          <p>Solo se guardan fechas e importes. El comprobante sigue en borrador. No se cambian archivos, no se elimina el comprobante ni se registra una deuda o un pago.</p>
+        </div>
+        <div v-else-if="viewed.kind === draftAction && viewed.draft">
           <p>Local: <strong>{{ outletName }}</strong></p>
           <p>Usar la referencia para buscar coincidencias: <strong>{{ viewed.draft.match_reference ? 'Sí' : 'No' }}</strong></p>
           <p>Solo se crea un borrador vacío. No se importan archivos ni movimientos y no se cierra una conciliación.</p>
@@ -424,4 +474,7 @@ onBeforeUnmount(() => {
 <style scoped>
 .mcp-session-action { display: flex; align-items: baseline; gap: .5rem; }
 .mcp-session-action input { width: auto; }
+.document-edit-values { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 2fr); gap: .25rem .75rem; }
+.document-edit-values dt { font-weight: 600; }
+.document-edit-values dd { margin: 0; overflow-wrap: anywhere; }
 </style>
