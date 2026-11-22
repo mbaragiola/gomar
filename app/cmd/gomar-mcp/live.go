@@ -50,6 +50,7 @@ func liveServer(client *mcpclient.Client) *mcp.Server {
 	addAccountingReadTools(server, client)
 	addBookingReadTools(server, client)
 	addDetailReadTools(server, client)
+	addFinanceStockReadTools(server, client)
 	return server
 }
 
