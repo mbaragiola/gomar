@@ -890,3 +890,99 @@ describe('Alta de un producto de caja', () => {
     expect(panel.find('[aria-label="Vista previa de la propuesta"]').exists()).toBe(false)
   })
 })
+
+describe('Mínimo de stock', () => {
+  const path = base + '/stock-minimum-proposals'
+  const minimumChange = { product_id: 4, expected_revision: 5, name: 'Producto local', current_minimum: 1_000_000, minimum: 0 }
+  function fakeFetch(decision: Response, change: unknown = minimumChange) {
+    return vi.fn((url: string) => {
+      if (url.endsWith('/proposal-sessions')) return Promise.resolve(result({ sessions: [] }))
+      if (url === path) return Promise.resolve(result({ proposals: [pending()] }))
+      if (url === path + '/8') return Promise.resolve(result({ ...pending(), digest, minimum_change: change }))
+      if (url === path + '/8/decision') return Promise.resolve(decision)
+      throw Error('unexpected test request')
+    })
+  }
+  async function show(fetch: unknown, canSetStockMinimum = true) {
+    vi.stubGlobal('fetch', fetch)
+    const panel = mount(McpProposalSessions, {
+      props: { entity: 2, outlet: 7, outletName: 'Centro de prueba', canRename: false, canSetStockMinimum },
+    })
+    await button(panel, 'Sesiones de propuestas').trigger('click')
+    await flushPromises()
+    return panel
+  }
+  async function read(panel: ReturnType<typeof mount>) {
+    await button(panel, 'Ver propuesta 8 de mínimo de stock').trigger('click')
+    await flushPromises()
+  }
+
+  it('previews the exact native-unit change and separately approves a zero threshold', async () => {
+    const fetch = fakeFetch(result({ ...pending(), status: 'approved', product_id: 4, minimum: 0 }))
+    const panel = await show(fetch)
+    const choice = panel.get('input[type=checkbox]')
+    expect((choice.element as HTMLInputElement).checked).toBe(false)
+    expect(button(panel, 'Crear sesión de propuestas').attributes()).toHaveProperty('disabled')
+    await choice.setValue(true)
+    expect(panel.text()).toContain('--proposal-session-action=stock_minimum_change')
+    await read(panel)
+    for (const text of ['Centro de prueba', 'Producto local', 'Versión 5', '1.000.000 unidades', '0 unidades', 'No se modifica el saldo, el seguimiento de stock ni la versión del catálogo']) {
+      expect(panel.text()).toContain(text)
+    }
+    await button(panel, 'Continuar con el mínimo de stock').trigger('click')
+    expect(fetch.mock.calls.some(([url]) => url.endsWith('/decision'))).toBe(false)
+    await button(panel, 'Confirmar nuevo mínimo').trigger('click')
+    await flushPromises()
+    expect(fetch).toHaveBeenLastCalledWith(path + '/8/decision', expect.objectContaining({
+      method: 'POST', body: JSON.stringify({ decision: 'approve', digest, confirm: true }),
+    }))
+    expect(panel.text()).toContain('Mínimo de stock actualizado.')
+    panel.unmount()
+  })
+
+  it('offers explicit rejection without a product or threshold in its receipt', async () => {
+    const fetch = fakeFetch(result({ ...pending(), status: 'rejected' }))
+    const panel = await show(fetch)
+    await read(panel)
+    await button(panel, 'Rechazar propuesta').trigger('click')
+    await button(panel, 'Sí, rechazar').trigger('click')
+    await flushPromises()
+    expect(fetch).toHaveBeenLastCalledWith(path + '/8/decision', expect.objectContaining({
+      method: 'POST', body: JSON.stringify({ decision: 'reject', digest, confirm: true }),
+    }))
+    expect(panel.text()).toContain('No se cambió el mínimo.')
+    panel.unmount()
+  })
+
+  it.each([null, -1, 1_000_001, 1.5, 1_000_000])('does not show an invalid preview threshold %s', async minimum => {
+    const fetch = fakeFetch(result({}), { ...minimumChange, minimum })
+    const panel = await show(fetch)
+    await read(panel)
+    expect(panel.get('[role=alert]').text()).toContain('No pude abrir la propuesta.')
+    expect(button(panel, 'Continuar con el mínimo de stock')).toBeUndefined()
+    panel.unmount()
+  })
+
+  it.each([409, 410, 200])('does not retry an unusable receipt or stale decision (%s)', async code => {
+    const fetch = fakeFetch(result({ ...pending(), status: 'approved', product_id: 4, minimum: 1 }, code))
+    const panel = await show(fetch)
+    await read(panel)
+    await button(panel, 'Continuar con el mínimo de stock').trigger('click')
+    await button(panel, 'Confirmar nuevo mínimo').trigger('click')
+    await flushPromises()
+    expect(panel.get('[role=alert]').text()).toMatch(/No se cambió|venció|No pude verificar/)
+    expect(panel.text()).not.toContain('Mínimo de stock actualizado.')
+    await read(panel)
+    expect(button(panel, 'Continuar con el mínimo de stock').attributes()).toHaveProperty('disabled')
+    expect(fetch.mock.calls.filter(([url]) => url.endsWith('/decision'))).toHaveLength(1)
+    panel.unmount()
+  })
+
+  it('does not offer or query stock minimum proposals without the capability', async () => {
+    const fetch = fakeFetch(result({}))
+    const panel = await show(fetch, false)
+    expect(fetch.mock.calls.some(([url]) => url === path)).toBe(false)
+    expect(panel.text()).not.toContain('Cambiar el mínimo de stock')
+    panel.unmount()
+  })
+})
