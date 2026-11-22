@@ -201,16 +201,21 @@ func (a *app) applyPOSRename(r *http.Request, tx *sql.Tx, u user, s posRenameSco
 		return empty, posChangedCatalog
 	}
 
+	return savePOSCatalogVersion(r, tx, m, s, input.Product, input.Revision, input.Name, fresh.PriceMinor, fresh.Active)
+}
+
+func savePOSCatalogVersion(r *http.Request, tx *sql.Tx, m entityMembership, s posRenameScope, product, revision int64, name string, price int64, active bool) (posProduct, error) {
+	var empty posProduct
 	write := r.Clone(r.Context())
 	write.Method = http.MethodPut
 	write.SetPathValue("outlet", strconv.FormatInt(s.Outlet, 10))
-	write.SetPathValue("product", strconv.FormatInt(input.Product, 10))
+	write.SetPathValue("product", strconv.FormatInt(product, 10))
 	raw, err := json.Marshal(struct {
 		Name     string `json:"nombre"`
 		Price    int64  `json:"precio_centavos"`
 		Active   bool   `json:"activo"`
 		Revision int64  `json:"revision"`
-	}{input.Name, fresh.PriceMinor, fresh.Active, input.Revision})
+	}{name, price, active, revision})
 	if err != nil {
 		return empty, err
 	}
