@@ -2,6 +2,7 @@
 import { computed, onMounted, ref } from 'vue'
 import { ApiError, request } from '../api'
 import { todayInBuenosAires } from '../format'
+import ThemeSelect from './ThemeSelect.vue'
 
 interface Venue {
   venue: string
@@ -101,6 +102,7 @@ onMounted(async () => {
 
 <template>
   <main class="workspace gomar-public" aria-label="Reservas">
+    <div class="appearance-toolbar"><ThemeSelect /></div>
     <section class="card gomar-feature">
       <div><p class="eyebrow">RESERVAS</p><h1>{{ venueData?.display_name || 'Reservá tu mesa' }}</h1></div>
       <p v-if="problem" class="error" role="alert">{{ problem }}</p>

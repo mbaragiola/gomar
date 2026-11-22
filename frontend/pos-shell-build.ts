@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto'
 import type { Plugin } from 'vite'
+import { themeBootstrap } from './theme-bootstrap'
 
 export function posShell(): Plugin {
   return {
@@ -9,7 +10,7 @@ export function posShell(): Plugin {
       const script = bundle['app.js']
       const style = bundle['style.css']
       if (script?.type !== 'chunk' || style?.type !== 'asset') this.error('Missing POS shell assets.')
-      const version = createHash('sha256').update(script.code).update(style.source).digest('hex')
+      const version = createHash('sha256').update(script.code).update(style.source).update(themeBootstrap).digest('hex')
       const assets = ['/static/pos-shell.html', `/static/app.js?pos=${version}`, `/static/style.css?pos=${version}`]
       this.emitFile({ type: 'asset', fileName: 'pos-shell.html', source: `<!doctype html>
 <html lang="es-AR">
@@ -17,6 +18,7 @@ export function posShell(): Plugin {
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Gomar · Caja</title>
+<script>${themeBootstrap}</script>
 <link rel="stylesheet" href="${assets[2]}">
 </head>
 <body><div id="app"></div><script type="module" src="${assets[1]}"></script></body>

@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import ThemeSelect from '../components/ThemeSelect.vue'
 import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { ApiError, request } from '../api'
 import { localDateTime, money } from '../format'
@@ -352,6 +353,7 @@ onUnmounted(() => {
   <main class="workspace pos-workspace">
     <header class="section-heading">
       <div><p class="eyebrow">GOMAR</p><h1>Caja</h1></div>
+      <ThemeSelect />
       <span role="status">{{ online ? 'Con conexión' : 'Sin conexión' }}</span>
     </header>
     <p v-if="error" class="error" role="alert">{{ error }}</p>

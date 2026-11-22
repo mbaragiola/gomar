@@ -9,7 +9,7 @@ if [[ ! -d "$frontend/node_modules" ]]; then
 fi
 npm --prefix "$frontend" run build
 dist="$repo/var/static"
-for name in index.html app.js style.css pos-shell.html pos-sw.js; do
+for name in index.html app.js style.css pos-shell.html pos-sw.js pwa/gomar.webmanifest pwa/gomar-192.png pwa/gomar-512.png; do
   if [[ ! -s "$dist/$name" ]]; then
     printf 'Missing Vite output: %s\n' "$name" >&2
     exit 1
@@ -18,7 +18,7 @@ done
 scratch="$(mktemp -d "$embed/.stage.XXXXXXXX")"
 trap 'rm -rf -- "$scratch"' EXIT
 mkdir "$scratch/web" "$scratch/web/static"
-cp -- "$embed/shell.html" "$scratch/web/index.html"
+cp -- "$dist/index.html" "$scratch/web/index.html"
 cp -R -- "$dist/." "$scratch/web/static/"
 if [[ -e "$embed/web" || -L "$embed/web" ]]; then
   mv -- "$embed/web" "$scratch/previous"

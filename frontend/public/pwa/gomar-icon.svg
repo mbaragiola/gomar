@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <title>Gomar</title>
+  <path fill="#1747a6" d="M0 0h512v512H0z"/>
+  <path fill="none" stroke="#fff" stroke-linecap="round" stroke-linejoin="round" stroke-width="32"
+    d="M322 191a91 91 0 1 0 17 99v-26h-75"/>
+  <circle fill="#a9ccff" cx="333" cy="183" r="19"/>
+</svg>

@@ -2,6 +2,8 @@
 import { computed, onMounted, reactive, ref } from 'vue'
 import { lockOfflinePOS } from './pos/storage'
 import { ApiError, download, request } from './api'
+import ThemeSelect from './components/ThemeSelect.vue'
+import InstallApp from './components/InstallApp.vue'
 import StockPanel from './components/StockPanel.vue'
 import DeliveryInbox from './components/DeliveryInbox.vue'
 import KnowledgePanel from './components/KnowledgePanel.vue'
@@ -984,6 +986,7 @@ onMounted(() => { if (!publicVenue) return initialize() })
 
   <main v-else-if="!authenticated" class="login-page">
     <section class="login-card">
+      <div class="appearance-toolbar"><ThemeSelect /><InstallApp /></div>
       <div class="brand-mark">G</div>
       <p class="eyebrow">GOMAR</p>
       <h1>Registro de compras</h1>
@@ -1000,7 +1003,7 @@ onMounted(() => { if (!publicVenue) return initialize() })
   <div v-else class="app-shell">
     <header class="topbar">
       <div><span class="brand-mark small">G</span><strong>Gomar · Compras</strong></div>
-      <div class="session"><span>{{ username }}</span><button class="text-button" @click="signOut">Cerrar sesión</button></div>
+      <div class="session"><span>{{ username }}</span><ThemeSelect /><InstallApp /><button class="text-button" @click="signOut">Cerrar sesión</button></div>
     </header>
 
     <main class="workspace">

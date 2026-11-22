@@ -16,7 +16,7 @@ import (
 //go:embed web/index.html web/static
 var web embed.FS
 
-// New serves the Django root page and Vite files under /static/.
+// New serves the Gomar root page and Vite files under /static/.
 func New() http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		name := "index.html"
@@ -64,6 +64,8 @@ func New() http.Handler {
 			w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		case ".js", ".mjs":
 			w.Header().Set("Content-Type", "text/javascript; charset=utf-8")
+		case ".webmanifest":
+			w.Header().Set("Content-Type", "application/manifest+json")
 		case ".css":
 			w.Header().Set("Content-Type", "text/css; charset=utf-8")
 		}
