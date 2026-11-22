@@ -288,3 +288,15 @@ a { color: var(--accent); }
 .mcp-connect details { line-height: 1.5; }
 .mcp-connect details p { margin-block-start: .65rem; }
 .mcp-connect-secret { overflow-wrap: anywhere; padding: .75rem; background: var(--panel); border: 1px solid var(--line); }
+
+.proposal-body {
+  min-width: 0;
+  margin: 0;
+  padding: .85rem;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: var(--panel);
+  font: inherit;
+}
+
+#wiki-proposals { min-width: 0; overflow-wrap: anywhere; }
