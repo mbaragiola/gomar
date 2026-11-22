@@ -91,6 +91,8 @@ func (c *ProposalClient) postProposal(ctx context.Context, entity, outlet int64,
 			return out, errors.New("la página o la propuesta cambió; volvé a leer la página y usá un request_id nuevo si cambia el contenido")
 		case "/stock-receipt-proposals":
 			return out, errors.New("revisá que el producto siga activo y con stock habilitado en esta sucursal; usá un request_id nuevo si cambia el contenido")
+		case "/pos-rename-proposals":
+			return out, errors.New("revisá la revisión y el nombre actual del producto; usá un request_id nuevo si cambia el contenido")
 		}
 		return out, errors.New("el request_id ya se usó con otro contenido")
 	case http.StatusUnprocessableEntity:

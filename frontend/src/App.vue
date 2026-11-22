@@ -4,6 +4,7 @@ import { lockOfflinePOS } from './pos/storage'
 import { ApiError, download, request } from './api'
 import ThemeSelect from './components/ThemeSelect.vue'
 import McpDocumentProposals from './components/McpDocumentProposals.vue'
+import McpProposalSessions from './components/McpProposalSessions.vue'
 import McpStockReceiptProposals from './components/McpStockReceiptProposals.vue'
 import McpWikiEditProposals from './components/McpWikiEditProposals.vue'
 import McpWikiProposals from './components/McpWikiProposals.vue'
@@ -96,6 +97,8 @@ const canManageSuppliers = computed(() => hasCapability('manage_suppliers'))
 const canReadStock = computed(() => hasCapability('read_pos_stock'))
 const canReadDelivery = computed(() => hasCapability('read_delivery_orders'))
 const canReviewDocumentProposals = computed(() => hasCapability('mcp_document_proposals'))
+const canRenameViaMcp = computed(() => hasCapability('mcp_pos_rename_proposals'))
+const canManageMcpProposalSessions = computed(() => hasCapability('mcp_proposal_session_management') || canRenameViaMcp.value)
 const canReviewStockReceiptProposals = computed(() => hasCapability('mcp_stock_receipt_proposals'))
 const canReviewWikiEditProposals = computed(() => hasCapability('mcp_wiki_edit_proposals'))
 const canReviewWikiProposals = computed(() => hasCapability('mcp_wiki_proposals'))
@@ -1082,6 +1085,14 @@ onMounted(() => { if (!publicVenue) return initialize() })
         <McpStockReceiptProposals
           v-if="canReviewStockReceiptProposals && selectedEntityId && selectedOutletId && outlets.some((item) => item.id === selectedOutletId)"
           :key="`stock-receipt-proposals-${selectedEntityId}-${selectedOutletId}`"
+          :entity="selectedEntityId"
+          :outlet="selectedOutletId"
+          :outlet-name="outlets.find((item) => item.id === selectedOutletId)?.nombre ?? 'este local'"
+        />
+        <McpProposalSessions
+          v-if="canManageMcpProposalSessions && selectedEntityId && selectedOutletId && outlets.some((item) => item.id === selectedOutletId)"
+          :key="`proposal-sessions-${selectedEntityId}-${selectedOutletId}`"
+          :can-rename="canRenameViaMcp"
           :entity="selectedEntityId"
           :outlet="selectedOutletId"
           :outlet-name="outlets.find((item) => item.id === selectedOutletId)?.nombre ?? 'este local'"

@@ -139,8 +139,13 @@ func (a *app) entities(w http.ResponseWriter, r *http.Request, u user) error {
 		RoleLabel    string   `json:"rol_nombre"`
 		Capabilities []string `json:"capacidades"`
 	}
-	rows, err := a.db.QueryContext(r.Context(), `SELECT e.id,e.name,e.cuit,m.role FROM memberships m
-		JOIN entities e ON e.id=m.entity_id WHERE m.user_id=$1 AND m.active=TRUE AND e.active=TRUE ORDER BY e.id`, u.id)
+	rows, err := a.db.QueryContext(r.Context(), `SELECT e.id,e.name,e.cuit,m.role,
+		$2 AND EXISTS(SELECT 1 FROM mcp_proposal_sessions k
+			JOIN sessions s ON s.token_hash=k.login_hash AND s.user_id=k.actor_id AND s.password_digest=k.password_digest
+			WHERE k.actor_id=m.user_id AND k.entity_id=e.id AND k.expires_at>$3 AND k.revoked_at IS NULL AND s.expires>$4)
+		FROM memberships m JOIN entities e ON e.id=m.entity_id
+		WHERE m.user_id=$1 AND m.active=TRUE AND e.active=TRUE ORDER BY e.id`,
+		u.id, a.posRenameProposalsEnabled(), a.tokenTime().Unix(), time.Now().Unix())
 	if err != nil {
 		return err
 	}
@@ -148,7 +153,8 @@ func (a *app) entities(w http.ResponseWriter, r *http.Request, u user) error {
 	result := []item{}
 	for rows.Next() {
 		var entry item
-		if err := rows.Scan(&entry.ID, &entry.Name, &entry.CUIT, &entry.Role); err != nil {
+		var manageProposalSessions bool
+		if err := rows.Scan(&entry.ID, &entry.Name, &entry.CUIT, &entry.Role, &manageProposalSessions); err != nil {
 			return err
 		}
 		entry.Capabilities = capabilities[entry.Role]
@@ -170,6 +176,14 @@ func (a *app) entities(w http.ResponseWriter, r *http.Request, u user) error {
 		}
 		if a.stockReceiptProposalsEnabled() && hasStockReceiptRole(entry.Role) {
 			entry.Capabilities = append(slices.Clone(entry.Capabilities), "mcp_stock_receipt_proposals")
+			slices.Sort(entry.Capabilities)
+		}
+		if a.posRenameProposalsEnabled() && entry.Role == "administration" && slices.Contains(entry.Capabilities, "manage_entity_access") {
+			entry.Capabilities = append(slices.Clone(entry.Capabilities), "mcp_pos_rename_proposals")
+			slices.Sort(entry.Capabilities)
+		}
+		if manageProposalSessions {
+			entry.Capabilities = append(slices.Clone(entry.Capabilities), "mcp_proposal_session_management")
 			slices.Sort(entry.Capabilities)
 		}
 		if a.enableDelivery && slices.Contains(entry.Capabilities, "read_business_data") {

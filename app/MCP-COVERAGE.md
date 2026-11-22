@@ -8,7 +8,7 @@ applied change. Features disabled in the app are not available via MCP.
 | Workflow | MCP coverage now | Work still needed |
 | --- | --- | --- |
 | Identity and business scope | Current user, businesses, and outlets | Management views; changes to access stay in Gomar |
-| POS | Recorded sales totals and product catalog | Shift reads; register operations and review |
+| POS | Recorded sales totals, product catalog, and name-only proposals for confirmation in Gomar | Remaining catalog changes and register operations; Gomar does not expose shift management |
 | Inventory | Tracked balances, thresholds, and movement totals; propose a positive receipt for confirmation in Gomar | Movement detail; catalog, other adjustments, and BOM workflows |
 | Wiki | Search and read by ID; propose new pages and versioned edits for confirmation in Gomar | Gomar does not offer deletion |
 | Delivery | Recent order status with limited fields | Confirmed local actions; credentials and provider calls stay outside the read interface |

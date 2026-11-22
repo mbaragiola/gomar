@@ -219,20 +219,8 @@ func (a *app) issueProposalToken(w http.ResponseWriter, r *http.Request, u user,
 		return err
 	}
 	now := a.tokenTime()
-	var active, activePurpose, recent int64
-	err = tx.QueryRowContext(r.Context(), `SELECT
-		COUNT(*) FILTER(WHERE expires_at>$2 AND revoked_at IS NULL),
-		COUNT(*) FILTER(WHERE expires_at>$2 AND revoked_at IS NULL AND purpose=$4),
-		COUNT(*)
-		FROM mcp_wiki_proposal_tokens WHERE actor_id=$1 AND expires_at>$3`,
-		u.id, now.Unix(), now.Add(-wikiProposalRetention).Unix(), purpose).Scan(&active, &activePurpose, &recent)
-	if err != nil {
+	if err := checkProposalCredentialQuota(r.Context(), tx, u.id, purpose, now); err != nil {
 		return err
-	}
-	// One credential per opt-in purpose can coexist without raising the
-	// existing active limit for any one purpose or the daily issuance cap.
-	if active >= 4 || activePurpose >= 3 || recent >= 48 {
-		return wikiProposalLimit
 	}
 	secret := make([]byte, 32)
 	rand.Read(secret)
@@ -760,6 +748,9 @@ func (a *app) pruneWikiProposals(ctx context.Context) error {
 	) UPDATE mcp_stock_receipt_proposals p SET status='expired',receipt_preview=NULL,decided_at=$1
 		FROM expired WHERE p.id=expired.id`, now.Unix())
 	if err != nil {
+		return err
+	}
+	if err := a.prunePOSRenameProposals(ctx, now); err != nil {
 		return err
 	}
 	_, err = a.db.ExecContext(ctx, `WITH old AS (
