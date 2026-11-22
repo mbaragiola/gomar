@@ -1,12 +1,14 @@
 package main
 
 import (
+	"context"
 	"crypto/sha256"
 	"crypto/subtle"
 	"database/sql"
 	"encoding/json"
 	"errors"
 	"net/http"
+	"slices"
 	"strings"
 	"unicode/utf8"
 )
@@ -98,4 +100,45 @@ func (a *app) applyDocumentReviewApproval(r *http.Request, tx *sql.Tx, u user, s
 		return err
 	}
 	return applyNativeDraftReview(tx, m, p.Input.ID, p.Input.Revision, p.Input.Reason)
+}
+
+const documentReviewSessionAction = "document_draft_review"
+const documentReviewProposalPurpose = "document_review.v1"
+
+func (a *app) documentReviewProposalsEnabled() bool {
+	return a.enableMCPDocumentReviewProposals
+}
+
+func decodeDocumentReview(raw []byte) (documentReviewInput, error) {
+	var in documentReviewInput
+	if len(raw) > 2048 {
+		return in, badInput
+	}
+	if err := decodeWikiProposalJSON(raw, &in, "document_id", "expected_revision", "reason"); err != nil {
+		return in, err
+	}
+	return normalizeDocumentReview(in)
+}
+
+func lockDocumentReviewScope(ctx context.Context, tx *sql.Tx, s documentReviewScope) error {
+	var member int64
+	var role string
+	err := tx.QueryRowContext(ctx, `SELECT m.id,m.role FROM memberships m JOIN entities e ON e.id=m.entity_id AND e.active
+ WHERE m.entity_id=$1 AND m.user_id=$2 AND m.active FOR SHARE OF m,e`, s.Entity, s.Actor).Scan(&member, &role)
+	if errors.Is(err, sql.ErrNoRows) {
+		return missingEntity
+	}
+	if err != nil {
+		return err
+	}
+	if !slices.Contains(capabilities[role], "review_documents") {
+		return forbiddenRole
+	}
+	var outlet int64
+	err = tx.QueryRowContext(ctx, `SELECT o.id FROM outlets o JOIN outlet_grants g ON g.outlet_id=o.id AND g.membership_id=$1
+ WHERE o.entity_id=$2 AND o.id=$3 AND o.active FOR SHARE OF o,g`, member, s.Entity, s.Outlet).Scan(&outlet)
+	if errors.Is(err, sql.ErrNoRows) {
+		return missingOutlet
+	}
+	return err
 }

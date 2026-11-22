@@ -145,7 +145,7 @@ func (a *app) entities(w http.ResponseWriter, r *http.Request, u user) error {
 			WHERE k.actor_id=m.user_id AND k.entity_id=e.id AND k.expires_at>$3 AND k.revoked_at IS NULL AND s.expires>$4)
 		FROM memberships m JOIN entities e ON e.id=m.entity_id
 		WHERE m.user_id=$1 AND m.active=TRUE AND e.active=TRUE ORDER BY e.id`,
-		u.id, a.posRenameProposalsEnabled(), a.tokenTime().Unix(), time.Now().Unix())
+		u.id, a.posRenameProposalsEnabled() || a.documentReviewProposalsEnabled(), a.tokenTime().Unix(), time.Now().Unix())
 	if err != nil {
 		return err
 	}
@@ -180,6 +180,10 @@ func (a *app) entities(w http.ResponseWriter, r *http.Request, u user) error {
 		}
 		if a.posRenameProposalsEnabled() && entry.Role == "administration" && slices.Contains(entry.Capabilities, "manage_entity_access") {
 			entry.Capabilities = append(slices.Clone(entry.Capabilities), "mcp_pos_rename_proposals")
+			slices.Sort(entry.Capabilities)
+		}
+		if a.documentReviewProposalsEnabled() && slices.Contains(entry.Capabilities, "review_documents") {
+			entry.Capabilities = append(slices.Clone(entry.Capabilities), "mcp_document_review_proposals")
 			slices.Sort(entry.Capabilities)
 		}
 		if manageProposalSessions {

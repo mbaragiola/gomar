@@ -2,8 +2,11 @@ package main
 
 import (
 	"database/sql"
+	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 )
 
@@ -26,7 +29,7 @@ func TestPostgresDocumentReviewAdapter(t *testing.T) {
  VALUES(1,1,1,1,'30711111111','invoice','A',1,1,'2026-11-22','ARS',123456,'Test','draft',1,'2026-11-22T12:00:00Z','2026-11-22T12:00:00Z')`); err != nil {
 		t.Fatal(err)
 	}
-	a := app{db: db, host: "example.com"}
+	a := app{db: db, host: "example.com", enableMCPDocumentReviewProposals: true}
 	cookies := postgresTestCookies(t, a.routes(), "review-fixture", pw)
 	req := func() *http.Request {
 		r := httptest.NewRequestWithContext(ctx, http.MethodPost, "http://example.com/", nil)
@@ -104,4 +107,69 @@ func TestPostgresDocumentReviewAdapter(t *testing.T) {
 	if err := db.QueryRowContext(ctx, `SELECT count(*) FROM ap_payables WHERE source_document_id=1`).Scan(&payable); err != nil || payable != 0 {
 		t.Fatal(payable, err)
 	}
+	if _, err := db.ExecContext(ctx, `INSERT INTO documents(id,entity_id,outlet_id,supplier_id,issuer_cuit,document_type,letter,point_of_sale,number,issue_date,currency,total_minor,description,status,revision,created_at,updated_at)
+ SELECT 2,entity_id,outlet_id,supplier_id,issuer_cuit,document_type,letter,point_of_sale,2,issue_date,currency,total_minor,description,'draft',1,created_at,updated_at FROM documents WHERE id=1`); err != nil {
+		t.Fatal(err)
+	}
+	handler := a.routes()
+	call := func(method, path, body, bearer string, login []*http.Cookie, want int) *httptest.ResponseRecorder {
+		t.Helper()
+		r := httptest.NewRequestWithContext(ctx, method, "http://example.com"+path, strings.NewReader(body))
+		r.Header.Set("Content-Type", "application/json")
+		if bearer != "" {
+			r.Header.Set("Authorization", "Bearer "+bearer)
+		}
+		if login != nil {
+			r.Header.Set("Origin", "http://example.com")
+			for _, c := range login {
+				r.AddCookie(c)
+				if c.Name == "csrftoken" {
+					r.Header.Set("X-CSRFToken", c.Value)
+				}
+			}
+		}
+		w := httptest.NewRecorder()
+		handler.ServeHTTP(w, r)
+		if w.Code != want {
+			t.Fatalf("%s %s status=%d want=%d", method, path, w.Code, want)
+		}
+		return w
+	}
+	tokenPath := proposalSessionsAuthPath
+	res := call("POST", tokenPath, `{"entity_id":1,"outlet_id":1,"actions":["document_draft_review"]}`, "", cookies, 201)
+	var minted struct {
+		ID    int64  `json:"id"`
+		Token string `json:"token"`
+	}
+	if err := json.Unmarshal(res.Body.Bytes(), &minted); err != nil || minted.ID < 1 || len(minted.Token) != 43 {
+		t.Fatal("missing synthetic session")
+	}
+	call("POST", tokenPath, `{"entity_id":1,"outlet_id":1,"actions":["document_draft_review","pos_product_rename"]}`, "", cookies, 422)
+	const mcp = "/api/v1/mcp/entities/1/outlets/1/document-review-proposals"
+	const browser = "/api/v1/entities/1/outlets/1/document-review-proposals"
+	body := `{"request_id":"44444444-0000-4000-8000-000000000001","review":{"document_id":2,"expected_revision":1,"reason":"Otra revisión de prueba"}}`
+	created := call("POST", mcp, body, minted.Token, nil, 201)
+	duplicate := call("POST", mcp, body, minted.Token, nil, 200)
+	if created.Body.String() != duplicate.Body.String() || strings.Contains(created.Body.String(), "document_id") {
+		t.Fatal("synthetic replay changed or disclosed document")
+	}
+	var receipt documentReviewWireReceipt
+	if err := json.Unmarshal(created.Body.Bytes(), &receipt); err != nil || receipt.Status != "pending" {
+		t.Fatal(receipt, err)
+	}
+	path := fmt.Sprintf("%s/%d", browser, receipt.ID)
+	var view documentReviewWireDetails
+	if err := json.Unmarshal(call("GET", path, "", "", cookies, 200).Body.Bytes(), &view); err != nil || view.Review == nil || view.Review.ID != 2 || view.Review.TotalMinor != 123456 {
+		t.Fatal(view, err)
+	}
+	otherLogin := postgresTestCookies(t, handler, "review-fixture", pw)
+	call("GET", path, "", "", otherLogin, 404)
+	decision := fmt.Sprintf(`{"decision":"approve","digest":%q,"confirm":true}`, view.Digest)
+	call("POST", path+"/decision", decision, "", cookies, 200)
+	call("POST", path+"/decision", decision, "", cookies, 409)
+	var documentState string
+	if err := db.QueryRowContext(ctx, `SELECT status FROM documents WHERE id=2`).Scan(&documentState); err != nil || documentState != "reviewed" {
+		t.Fatal(documentState, err)
+	}
+
 }

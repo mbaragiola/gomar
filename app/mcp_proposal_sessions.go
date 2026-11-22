@@ -62,6 +62,15 @@ func proposalLoginHash(r *http.Request) ([32]byte, error) {
 	return sha256.Sum256([]byte(key)), nil
 }
 
+func (a *app) registerNamedProposalSessions(add func(string, string, http.HandlerFunc)) {
+	if !a.posRenameProposalsEnabled() && !a.documentReviewProposalsEnabled() {
+		return
+	}
+	add(proposalSessionsAuthPath, http.MethodPost, a.protectedWikiProposal(a.issueNamedProposalSession))
+	add(proposalSessionsAuthPath+"/{session}", http.MethodDelete, a.protectedWikiProposal(a.revokeNamedProposalSession))
+	add(proposalSessionListPath, http.MethodGet, a.protectedWikiProposal(a.listNamedProposalSessions))
+}
+
 func (a *app) issueNamedProposalSession(w http.ResponseWriter, r *http.Request, u user) error {
 	raw, err := readJSONBody(w, r)
 	if err != nil {
@@ -76,7 +85,7 @@ func (a *app) issueNamedProposalSession(w http.ResponseWriter, r *http.Request, 
 		return err
 	}
 	// No wildcard, configurable grant names, or empty action sets.
-	if input.Entity <= 0 || input.Outlet <= 0 || len(input.Actions) != 1 || input.Actions[0] != posRenameSessionAction {
+	if input.Entity <= 0 || input.Outlet <= 0 || len(input.Actions) != 1 {
 		return badInput
 	}
 	ctx := r.Context()
@@ -93,7 +102,22 @@ func (a *app) issueNamedProposalSession(w http.ResponseWriter, r *http.Request, 
 	if err != nil {
 		return err
 	}
-	if _, err = a.lockPOSRenameScope(ctx, tx, posRenameScope{u.id, input.Entity, input.Outlet}); err != nil {
+	action := input.Actions[0]
+	switch action {
+	case posRenameSessionAction:
+		if !a.posRenameProposalsEnabled() {
+			return badInput
+		}
+		_, err = a.lockPOSRenameScope(ctx, tx, posRenameScope{u.id, input.Entity, input.Outlet})
+	case documentReviewSessionAction:
+		if !a.documentReviewProposalsEnabled() {
+			return badInput
+		}
+		err = lockDocumentReviewScope(ctx, tx, documentReviewScope{u.id, input.Entity, input.Outlet})
+	default:
+		return badInput
+	}
+	if err != nil {
 		return err
 	}
 	var loginExpiry int64
@@ -105,7 +129,7 @@ func (a *app) issueNamedProposalSession(w http.ResponseWriter, r *http.Request, 
 	if deadline <= now.Unix() || loginExpiry <= time.Now().Unix() {
 		return unauthenticated
 	}
-	if err = checkProposalCredentialQuota(ctx, tx, u.id, posRenameSessionAction, now); err != nil {
+	if err = checkProposalCredentialQuota(ctx, tx, u.id, action, now); err != nil {
 		return err
 	}
 	secret := make([]byte, 32)
@@ -118,7 +142,7 @@ func (a *app) issueNamedProposalSession(w http.ResponseWriter, r *http.Request, 
 	if err != nil {
 		return err
 	}
-	if _, err = tx.ExecContext(ctx, `INSERT INTO mcp_proposal_session_actions(session_id,action) VALUES($1,$2)`, id, posRenameSessionAction); err != nil {
+	if _, err = tx.ExecContext(ctx, `INSERT INTO mcp_proposal_session_actions(session_id,action) VALUES($1,$2)`, id, action); err != nil {
 		return err
 	}
 	if err = tx.Commit(); err != nil {
@@ -127,7 +151,7 @@ func (a *app) issueNamedProposalSession(w http.ResponseWriter, r *http.Request, 
 	jsonResponse(w, http.StatusCreated, struct {
 		namedProposalSession
 		Token string `json:"token"`
-	}{namedProposalSession{id, time.Unix(deadline, 0).UTC().Format(time.RFC3339), []string{posRenameSessionAction}}, base64.RawURLEncoding.EncodeToString(secret)})
+	}{namedProposalSession{id, time.Unix(deadline, 0).UTC().Format(time.RFC3339), []string{action}}, base64.RawURLEncoding.EncodeToString(secret)})
 	return nil
 }
 
@@ -151,6 +175,10 @@ func (a *app) revokeNamedProposalSession(w http.ResponseWriter, r *http.Request,
 	}
 	if _, err = tx.ExecContext(ctx, `UPDATE mcp_pos_rename_proposals SET status='revoked',rename_preview=NULL,decided_at=$1
 		WHERE session_id=$2 AND actor_id=$3 AND status='pending'`, now, id, u.id); err != nil {
+		return err
+	}
+	if _, err = tx.ExecContext(ctx, `UPDATE mcp_document_review_proposals SET status='revoked',review_preview=NULL,decided_at=$1
+  WHERE session_id=$2 AND actor_id=$3 AND status='pending'`, now, id, u.id); err != nil {
 		return err
 	}
 	if err = tx.Commit(); err != nil {
@@ -209,7 +237,10 @@ func (a *app) listNamedProposalSessions(w http.ResponseWriter, r *http.Request, 
 	return nil
 }
 
-func (a *app) loadPOSRenameSession(ctx context.Context, tx *sql.Tx, hash []byte, s *wikiProposalScope) (id, expiry int64, err error) {
+func (a *app) loadPOSRenameSession(ctx context.Context, tx *sql.Tx, hash []byte, s *wikiProposalScope) (int64, int64, error) {
+	return a.loadNamedProposalSession(ctx, tx, hash, s, posRenameSessionAction)
+}
+func (a *app) loadNamedProposalSession(ctx context.Context, tx *sql.Tx, hash []byte, s *wikiProposalScope, action string) (id, expiry int64, err error) {
 	err = tx.QueryRowContext(ctx, `SELECT actor_id FROM mcp_proposal_sessions WHERE bearer_hash=$1`, hash).Scan(&s.actor)
 	if errors.Is(err, sql.ErrNoRows) {
 		err = unauthenticated
@@ -232,7 +263,7 @@ func (a *app) loadPOSRenameSession(ctx context.Context, tx *sql.Tx, hash []byte,
 		JOIN mcp_proposal_session_actions a ON a.session_id=k.id AND a.action=$4
 		JOIN sessions l ON l.token_hash=k.login_hash AND l.user_id=k.actor_id AND l.password_digest=k.password_digest
 		WHERE k.bearer_hash=$1 AND k.actor_id=$2 AND k.issued_at<=$3 AND k.expires_at>$3 AND k.revoked_at IS NULL
-			AND l.expires>$5 FOR SHARE OF k,l`, hash, s.actor, a.tokenTime().Unix(), posRenameSessionAction, time.Now().Unix()).
+			AND l.expires>$5 FOR SHARE OF k,l`, hash, s.actor, a.tokenTime().Unix(), action, time.Now().Unix()).
 		Scan(&id, &expiry, &entity, &outlet, &saved)
 	if errors.Is(err, sql.ErrNoRows) {
 		err = unauthenticated

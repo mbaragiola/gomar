@@ -50,9 +50,6 @@ func (a *app) registerMCPPOSRenameProposals(add func(string, string, http.Handle
 	if !a.posRenameProposalsEnabled() {
 		return
 	}
-	add(proposalSessionsAuthPath, http.MethodPost, a.protectedWikiProposal(a.issueNamedProposalSession))
-	add(proposalSessionsAuthPath+"/{session}", http.MethodDelete, a.protectedWikiProposal(a.revokeNamedProposalSession))
-	add(proposalSessionListPath, http.MethodGet, a.protectedWikiProposal(a.listNamedProposalSessions))
 	add(posRenameWireBrowser, http.MethodGet, a.protectedWikiProposal(a.listPOSRenameProposals))
 	add(posRenameWireBrowser+"/{proposal}", http.MethodGet, a.protectedWikiProposal(a.viewPOSRenameProposal))
 	add(posRenameWireBrowser+"/{proposal}/decision", http.MethodPost, a.protectedWikiProposal(a.decidePOSRenameProposal))
