@@ -65,6 +65,29 @@ func parseReportDate(raw string) (time.Time, error) {
 	return d, nil
 }
 
+type ReservationSetup struct {
+	VenueConfigured      bool   `json:"venue_configured"`
+	VenueEnabled         bool   `json:"venue_enabled"`
+	PublicFeatureEnabled bool   `json:"public_feature_enabled"`
+	Timezone             string `json:"timezone"`
+}
+
+func (c *Client) ReservationSetup(ctx context.Context, entity, outlet int64) (ReservationSetup, error) {
+	var w struct {
+		VenueConfigured      *bool  `json:"venue_configured"`
+		VenueEnabled         *bool  `json:"venue_enabled"`
+		PublicFeatureEnabled *bool  `json:"public_feature_enabled"`
+		Timezone             string `json:"timezone"`
+	}
+	if err := c.getWorkspace(ctx, entity, outlet, "/reservation-setup", nil, &w); err != nil {
+		return ReservationSetup{}, err
+	}
+	if w.VenueConfigured == nil || w.VenueEnabled == nil || w.PublicFeatureEnabled == nil || w.Timezone != "America/Argentina/Buenos_Aires" || (!*w.VenueConfigured && *w.VenueEnabled) {
+		return ReservationSetup{}, invalidResponse
+	}
+	return ReservationSetup{VenueConfigured: *w.VenueConfigured, VenueEnabled: *w.VenueEnabled, PublicFeatureEnabled: *w.PublicFeatureEnabled, Timezone: w.Timezone}, nil
+}
+
 func (c *Client) ReservationStatus(ctx context.Context, entity, outlet int64, date string) (ReservationStatus, error) {
 	var result ReservationStatus
 	if _, err := parseReportDate(date); err != nil {
