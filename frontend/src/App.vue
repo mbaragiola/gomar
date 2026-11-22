@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref } from 'vue'
+import { computed, nextTick, onMounted, reactive, ref } from 'vue'
 import { lockOfflinePOS } from './pos/storage'
 import { ApiError, download, request } from './api'
 import ThemeSelect from './components/ThemeSelect.vue'
@@ -39,6 +39,11 @@ const paymentDraft = ref<Payment | null>(null)
 const showAccountsPayable = ref(false)
 const showReconciliation = ref(false)
 const paymentReceipt = ref<File | null>(null)
+type StaffView = 'documents' | 'payables' | 'reconciliation' | 'stock' | 'delivery' | 'reservations' | 'knowledge' | 'chat' | 'suppliers' | 'access'
+const staffView = ref<StaffView>('documents')
+const staffHeading = ref<HTMLHeadingElement | null>(null)
+const documentHeading = ref<HTMLHeadingElement | null>(null)
+const mobileDetail = ref(false)
 const showCreate = ref(false)
 const showSupplier = ref(false)
 const showSupplierManagement = ref(false)
@@ -114,6 +119,43 @@ const canManageAccess = computed(() => hasCapability('manage_entity_access'))
 const canRecordPayments = computed(() => hasCapability('record_supplier_payments'))
 const canReversePayments = computed(() => hasCapability('reverse_supplier_payments'))
 const canReconcile = computed(() => hasCapability('reconcile_financial_data'))
+const showDocumentDetail = computed(() => mobileDetail.value && !!selectedDocument.value)
+const hasOutlet = computed(() => !!selectedOutletId.value && outlets.value.some(item => item.id === selectedOutletId.value))
+const canUseChat = computed(() => hasOutlet.value && (canConnectMCP.value || canReviewWikiProposals.value ||
+  canReviewWikiEditProposals.value || canReviewDocumentProposals.value || canReviewStockReceiptProposals.value || canManageMcpProposalSessions.value))
+const viewNames: Record<StaffView, string> = {
+  documents: 'Comprobantes', payables: 'Cuentas a pagar', reconciliation: 'Conciliación financiera',
+  stock: 'Stock del local', delivery: 'Bandeja de delivery', reservations: 'Reservas del local', knowledge: 'Manual del local',
+  chat: 'Chat y propuestas', suppliers: 'Proveedores', access: 'Accesos y locales',
+}
+function focusStaffHeading() {
+  void nextTick(() => staffHeading.value?.focus())
+}
+function selectStaffView(view: StaffView) {
+  if (staffView.value === view) return
+  staffView.value = view
+  mobileDetail.value = false
+  if (view === 'access' && !showManagement.value) void toggleManagement()
+  if (view !== 'access') showManagement.value = false
+  if (view === 'payables' && !showAccountsPayable.value) void toggleAccountsPayable()
+  if (view !== 'payables') showAccountsPayable.value = false
+  showReconciliation.value = view === 'reconciliation'
+  showStock.value = view === 'stock'
+  showDelivery.value = view === 'delivery'
+  showReservations.value = view === 'reservations'
+  showKnowledge.value = view === 'knowledge'
+  showSupplierManagement.value = view === 'suppliers'
+  focusStaffHeading()
+}
+function showMobileDocument() {
+  if (!window.matchMedia?.('(max-width: 850px)').matches || staffView.value !== 'documents' || !selectedDocument.value) return
+  mobileDetail.value = true
+  void nextTick(() => documentHeading.value?.focus())
+}
+function returnToDocuments() {
+  mobileDetail.value = false
+  focusStaffHeading()
+}
 const canManageSelectedDocument = computed(() => selectedDocument.value?.estado === 'reviewed'
   ? hasCapability('manage_reviewed_documents')
   : canManageDrafts.value)
@@ -180,6 +222,8 @@ function clearDocumentState(resetBusy = true) {
 }
 
 function clearContextState(resetBusy = true) {
+  staffView.value = 'documents'
+  mobileDetail.value = false
   outlets.value = []
   suppliers.value = []
   selectedOutletId.value = null
@@ -474,6 +518,7 @@ async function changeEntity() {
 }
 
 async function changeOutlet() {
+  selectStaffView('documents')
   const contextToken = ++contextGeneration
   clearDocumentState()
   documentForm.supplier_id = suppliers.value[0]?.id ?? 0
@@ -496,7 +541,10 @@ async function openDocument(id: number) {
   error.value = ''
   try {
     const detail = await request<Document>(`/entities/${entityId}/documents/${id}`)
-    if (contextIsCurrent(sessionToken, contextToken, entityId) && detailToken === detailGeneration) selectedDocument.value = detail
+    if (contextIsCurrent(sessionToken, contextToken, entityId) && detailToken === detailGeneration) {
+      selectedDocument.value = detail
+      showMobileDocument()
+    }
   } catch (value) {
     if (contextIsCurrent(sessionToken, contextToken, entityId) && detailToken === detailGeneration) showError(value)
   }
@@ -1026,89 +1074,100 @@ onMounted(() => { if (!publicVenue) return initialize() })
     </header>
 
     <main class="workspace">
-      <section class="context card">
+      <section v-if="entities.length" class="context card staff-context" aria-label="Lugar de trabajo">
         <label>Entidad
           <select v-model="selectedEntityId" @change="changeEntity">
             <option v-for="entity in entities" :key="entity.id" :value="entity.id">{{ entity.nombre }}</option>
           </select>
         </label>
         <label>Local
-          <select v-model="selectedOutletId" @change="changeOutlet">
+          <select v-model="selectedOutletId" :disabled="!outlets.length" @change="changeOutlet">
+            <option v-if="!outlets.length" :value="null">Sin locales asignados</option>
             <option v-for="outlet in outlets" :key="outlet.id" :value="outlet.id">{{ outlet.nombre }}</option>
           </select>
         </label>
-        <div class="context-meta"><span>{{ currentEntity?.rol_nombre }}</span><small>CUIT {{ currentEntity?.cuit }}</small>
-          <button v-if="canManageAccess" class="text-button" @click="toggleManagement">{{ showManagement ? 'Cerrar accesos' : 'Gestionar accesos' }}</button>
-        </div>
+        <span v-if="currentEntity" class="staff-role">{{ currentEntity.rol_nombre }} · CUIT {{ currentEntity.cuit }}</span>
       </section>
 
       <p v-if="error" class="error banner" role="alert">{{ error }} <button @click="error = ''">Cerrar</button></p>
       <p v-if="entities.length === 0" class="empty card">No tenés accesos a entidades asignados.</p>
 
       <template v-else>
-        <div v-if="selectedEntityId && selectedOutletId && (canReadBusiness || canManageAccess || canReadDelivery || canReadStock)" class="gomar-feature-actions">
-          <button v-if="canReadBusiness" type="button" :aria-expanded="showKnowledge" @click="showKnowledge = !showKnowledge">
-            {{ showKnowledge ? 'Cerrar manual del local' : 'Abrir manual del local' }}
+        <nav class="staff-nav" aria-label="Tareas del local">
+          <button type="button" :aria-current="staffView === 'documents' ? 'page' : undefined" @click="selectStaffView('documents')">Comprobantes</button>
+          <button v-if="canRecordPayments" type="button" :aria-current="staffView === 'payables' ? 'page' : undefined" @click="selectStaffView('payables')">Cuentas a pagar</button>
+          <button v-if="canReconcile" type="button" :aria-current="staffView === 'reconciliation' ? 'page' : undefined" @click="selectStaffView('reconciliation')">Conciliación financiera</button>
+          <button v-if="hasOutlet && canReadStock" type="button" :aria-current="staffView === 'stock' ? 'page' : undefined" @click="selectStaffView(staffView === 'stock' ? 'documents' : 'stock')">{{ staffView === 'stock' ? 'Cerrar stock del local' : 'Ver stock del local' }}</button>
+          <button v-if="hasOutlet && canReadDelivery" type="button" :aria-current="staffView === 'delivery' ? 'page' : undefined" @click="selectStaffView(staffView === 'delivery' ? 'documents' : 'delivery')">{{ staffView === 'delivery' ? 'Cerrar bandeja de delivery' : 'Abrir bandeja de delivery' }}</button>
+          <button v-if="hasOutlet && canManageAccess" type="button" :aria-current="staffView === 'reservations' ? 'page' : undefined" @click="selectStaffView(staffView === 'reservations' ? 'documents' : 'reservations')">{{ staffView === 'reservations' ? 'Cerrar reservas' : 'Ver reservas del local' }}</button>
+          <button v-if="hasOutlet && canReadBusiness" type="button" :aria-current="staffView === 'knowledge' ? 'page' : undefined" @click="selectStaffView(staffView === 'knowledge' ? 'documents' : 'knowledge')">{{ staffView === 'knowledge' ? 'Cerrar manual del local' : 'Abrir manual del local' }}</button>
+          <button v-if="canUseChat" type="button" :aria-current="staffView === 'chat' ? 'page' : undefined" @click="selectStaffView('chat')">Chat y propuestas</button>
+          <details v-if="canManageAccess || canManageSuppliers" class="staff-admin">
+            <summary>Administración</summary>
+            <div class="staff-admin-items">
+              <button v-if="canManageAccess" type="button" :aria-current="staffView === 'access' ? 'page' : undefined" @click="staffView === 'access' ? selectStaffView('documents') : selectStaffView('access')">{{ staffView === 'access' ? 'Cerrar accesos' : 'Gestionar accesos' }}</button>
+              <button v-if="canManageSuppliers" type="button" :aria-current="staffView === 'suppliers' ? 'page' : undefined" @click="staffView === 'suppliers' ? selectStaffView('documents') : selectStaffView('suppliers')">{{ staffView === 'suppliers' ? 'Cerrar proveedores' : 'Gestionar proveedores' }}</button>
+            </div>
+          </details>
+        </nav>
+        <header class="staff-view-heading" :class="{ 'staff-mobile-detail': showDocumentDetail }">
+          <h1 ref="staffHeading" tabindex="-1">{{ viewNames[staffView] }}</h1>
+          <button v-if="staffView === 'documents' && canManageDrafts" class="new-button" :class="showCreate ? 'secondary' : 'primary'" :disabled="busy" @click="toggleCreate">
+            {{ showCreate ? 'Cancelar alta' : 'Nuevo comprobante' }}
           </button>
-          <button v-if="canManageAccess" type="button" :aria-expanded="showReservations" @click="showReservations = !showReservations">
-            {{ showReservations ? 'Cerrar reservas' : 'Ver reservas del local' }}
-          </button>
-          <button v-if="canReadDelivery" type="button" :aria-expanded="showDelivery" @click="showDelivery = !showDelivery">
-            {{ showDelivery ? 'Cerrar bandeja de delivery' : 'Abrir bandeja de delivery' }}
-          </button>
-          <button v-if="canReadStock" type="button" :aria-expanded="showStock" @click="showStock = !showStock">
-            {{ showStock ? 'Cerrar stock del local' : 'Ver stock del local' }}
-          </button>
-        </div>
-        <McpConnect
-          v-if="canConnectMCP && selectedEntityId && selectedOutletId && outlets.some((item) => item.id === selectedOutletId)"
-          :key="`mcp-${selectedEntityId}-${selectedOutletId}`"
-          :entity="selectedEntityId"
-          :outlet="selectedOutletId"
-          :outlet-name="outlets.find((item) => item.id === selectedOutletId)?.nombre ?? 'este local'"
-        />
-        <McpWikiProposals
-          v-if="canReviewWikiProposals && selectedEntityId && selectedOutletId && outlets.some((item) => item.id === selectedOutletId)"
-          :key="`wiki-proposals-${selectedEntityId}-${selectedOutletId}`"
-          :entity="selectedEntityId"
-          :outlet="selectedOutletId"
-          :outlet-name="outlets.find((item) => item.id === selectedOutletId)?.nombre ?? 'este local'"
-        />
-        <McpWikiEditProposals
-          v-if="canReviewWikiEditProposals && selectedEntityId && selectedOutletId && outlets.some((item) => item.id === selectedOutletId)"
-          :key="`wiki-edit-proposals-${selectedEntityId}-${selectedOutletId}`"
-          :entity="selectedEntityId"
-          :outlet="selectedOutletId"
-          :outlet-name="outlets.find((item) => item.id === selectedOutletId)?.nombre ?? 'este local'"
-        />
-        <McpDocumentProposals
-          v-if="canReviewDocumentProposals && selectedEntityId && selectedOutletId && outlets.some((item) => item.id === selectedOutletId)"
-          :key="`document-proposals-${selectedEntityId}-${selectedOutletId}`"
-          :entity="selectedEntityId"
-          :outlet="selectedOutletId"
-          :outlet-name="outlets.find((item) => item.id === selectedOutletId)?.nombre ?? 'este local'"
-        />
-        <McpStockReceiptProposals
-          v-if="canReviewStockReceiptProposals && selectedEntityId && selectedOutletId && outlets.some((item) => item.id === selectedOutletId)"
-          :key="`stock-receipt-proposals-${selectedEntityId}-${selectedOutletId}`"
-          :entity="selectedEntityId"
-          :outlet="selectedOutletId"
-          :outlet-name="outlets.find((item) => item.id === selectedOutletId)?.nombre ?? 'este local'"
-        />
-        <McpProposalSessions
-          v-if="canManageMcpProposalSessions && selectedEntityId && selectedOutletId && outlets.some((item) => item.id === selectedOutletId)"
-          :key="`proposal-sessions-${selectedEntityId}-${selectedOutletId}`"
-          :can-rename="canRenameViaMcp"
-          :can-review-documents="canReviewDocViaMcp"
-          :can-create-reconciliation-draft="canCreateReconciliationViaMcp"
-          :can-edit-documents="canEditDocViaMcp"
-          :can-adjust-stock="canAdjustStockViaMcp"
-          :can-change-catalog="canChangeCatalogViaMcp"
-          :can-confirm-reservations="canConfirmReservationsViaMcp"
-          :entity="selectedEntityId"
-          :outlet="selectedOutletId"
-          :outlet-name="outlets.find((item) => item.id === selectedOutletId)?.nombre ?? 'este local'"
-        />
+        </header>
+
+        <section v-if="staffView === 'chat' && canUseChat" class="card staff-chat" aria-label="Accesos y propuestas de chat">
+          <McpConnect
+            v-if="canConnectMCP && selectedEntityId && selectedOutletId && outlets.some((item) => item.id === selectedOutletId)"
+            :key="`mcp-${selectedEntityId}-${selectedOutletId}`"
+            :entity="selectedEntityId"
+            :outlet="selectedOutletId"
+            :outlet-name="outlets.find((item) => item.id === selectedOutletId)?.nombre ?? 'este local'"
+          />
+          <McpWikiProposals
+            v-if="canReviewWikiProposals && selectedEntityId && selectedOutletId && outlets.some((item) => item.id === selectedOutletId)"
+            :key="`wiki-proposals-${selectedEntityId}-${selectedOutletId}`"
+            :entity="selectedEntityId"
+            :outlet="selectedOutletId"
+            :outlet-name="outlets.find((item) => item.id === selectedOutletId)?.nombre ?? 'este local'"
+          />
+          <McpWikiEditProposals
+            v-if="canReviewWikiEditProposals && selectedEntityId && selectedOutletId && outlets.some((item) => item.id === selectedOutletId)"
+            :key="`wiki-edit-proposals-${selectedEntityId}-${selectedOutletId}`"
+            :entity="selectedEntityId"
+            :outlet="selectedOutletId"
+            :outlet-name="outlets.find((item) => item.id === selectedOutletId)?.nombre ?? 'este local'"
+          />
+          <McpDocumentProposals
+            v-if="canReviewDocumentProposals && selectedEntityId && selectedOutletId && outlets.some((item) => item.id === selectedOutletId)"
+            :key="`document-proposals-${selectedEntityId}-${selectedOutletId}`"
+            :entity="selectedEntityId"
+            :outlet="selectedOutletId"
+            :outlet-name="outlets.find((item) => item.id === selectedOutletId)?.nombre ?? 'este local'"
+          />
+          <McpStockReceiptProposals
+            v-if="canReviewStockReceiptProposals && selectedEntityId && selectedOutletId && outlets.some((item) => item.id === selectedOutletId)"
+            :key="`stock-receipt-proposals-${selectedEntityId}-${selectedOutletId}`"
+            :entity="selectedEntityId"
+            :outlet="selectedOutletId"
+            :outlet-name="outlets.find((item) => item.id === selectedOutletId)?.nombre ?? 'este local'"
+          />
+          <McpProposalSessions
+            v-if="canManageMcpProposalSessions && selectedEntityId && selectedOutletId && outlets.some((item) => item.id === selectedOutletId)"
+            :key="`proposal-sessions-${selectedEntityId}-${selectedOutletId}`"
+            :can-rename="canRenameViaMcp"
+            :can-review-documents="canReviewDocViaMcp"
+            :can-create-reconciliation-draft="canCreateReconciliationViaMcp"
+            :can-edit-documents="canEditDocViaMcp"
+            :can-adjust-stock="canAdjustStockViaMcp"
+            :can-change-catalog="canChangeCatalogViaMcp"
+            :can-confirm-reservations="canConfirmReservationsViaMcp"
+            :entity="selectedEntityId"
+            :outlet="selectedOutletId"
+            :outlet-name="outlets.find((item) => item.id === selectedOutletId)?.nombre ?? 'este local'"
+          />
+        </section>
         <StockPanel
           v-if="showStock && selectedEntityId && selectedOutletId && canReadStock"
           :key="`stock-${selectedEntityId}-${selectedOutletId}`"
@@ -1178,15 +1237,9 @@ onMounted(() => { if (!publicVenue) return initialize() })
           </div>
         </section>
 
-        <section class="summary-grid">
+        <section v-show="staffView === 'documents'" class="summary-grid staff-totals" :class="{ 'staff-mobile-detail': showDocumentDetail || showCreate }">
           <article class="metric card"><span>Comprobantes</span><strong>{{ total.cantidad }}</strong></article>
           <article v-for="row in total.totales" :key="row.moneda" class="metric card"><span>Total {{ row.moneda }}</span><strong>{{ money(row.total, row.moneda) }}</strong></article>
-          <button v-if="canManageDrafts" class="primary new-button" :disabled="busy" @click="toggleCreate">
-            {{ showCreate ? 'Cancelar alta' : 'Nuevo comprobante' }}
-          </button>
-          <button v-if="canManageSuppliers" class="secondary" @click="showSupplierManagement = !showSupplierManagement">{{ showSupplierManagement ? 'Cerrar proveedores' : 'Gestionar proveedores' }}</button>
-          <button v-if="canRecordPayments" class="secondary" @click="toggleAccountsPayable">{{ showAccountsPayable ? 'Cerrar cuentas a pagar' : 'Cuentas a pagar' }}</button>
-          <button v-if="canReconcile" class="secondary" @click="showReconciliation = !showReconciliation">{{ showReconciliation ? 'Cerrar conciliación' : 'Conciliación financiera' }}</button>
         </section>
 
         <ReconciliationPanel
@@ -1260,7 +1313,7 @@ onMounted(() => { if (!publicVenue) return initialize() })
           <p v-if="!suppliers.length" class="empty">No hay proveedores para administrar.</p>
         </section>
 
-        <section v-if="showCreate" class="card form-card">
+        <section v-if="showCreate" v-show="staffView === 'documents'" class="card form-card">
           <div class="section-heading"><div><p class="eyebrow">ALTA</p><h2>Nuevo comprobante</h2></div></div>
           <section class="ocr-intake" aria-label="Carga asistida por OCR">
             <div><h3>Cargar PDF o foto</h3><p class="muted">PDF, PNG o JPEG. Máximo 10 MB y 8 páginas. La carga queda privada y no inicia OCR.</p></div>
@@ -1316,7 +1369,7 @@ onMounted(() => { if (!publicVenue) return initialize() })
           </form>
         </section>
 
-        <div class="content-grid">
+        <div v-show="staffView === 'documents' && !showCreate" class="content-grid" :class="{ 'staff-has-document': showDocumentDetail }">
           <section class="card list-card">
             <div class="section-heading"><div><p class="eyebrow">REGISTRO</p><h2>Comprobantes</h2></div><span>{{ outlets.find((o) => o.id === selectedOutletId)?.nombre }}</span></div>
             <div v-if="documents.length" class="document-list">
@@ -1331,7 +1384,8 @@ onMounted(() => { if (!publicVenue) return initialize() })
 
           <aside class="card detail-card">
             <template v-if="selectedDocument">
-              <div class="section-heading"><div><p class="eyebrow">DETALLE</p><h2>{{ selectedDocument.tipo_nombre }}</h2></div><span class="status" :class="selectedDocument.estado">{{ selectedDocument.estado_nombre }}</span></div>
+              <button type="button" class="text-button staff-back" @click="returnToDocuments">Volver a comprobantes</button>
+              <div class="section-heading"><div><p class="eyebrow">DETALLE</p><h2 ref="documentHeading" tabindex="-1">{{ selectedDocument.tipo_nombre }}</h2></div><span class="status" :class="selectedDocument.estado">{{ selectedDocument.estado_nombre }}</span></div>
               <dl class="details">
                 <div><dt>Proveedor</dt><dd>{{ selectedDocument.supplier.razon_social }}</dd></div>
                 <div><dt>CUIT</dt><dd>{{ selectedDocument.supplier.cuit }}</dd></div>
