@@ -12,7 +12,7 @@ applied change. Features disabled in the app are not available via MCP.
 | Inventory | Tracked balances, thresholds, movement totals and bounded movement detail; propose a positive receipt for confirmation in Gomar | Catalog and other adjustments; bills of materials are not implemented |
 | Wiki | Search and read by ID; propose new pages and versioned edits for confirmation in Gomar | Gomar does not offer deletion |
 | Delivery | Recent order status with limited fields | No native staff write workflow; provider calls and credentials stay outside the read interface |
-| Documents and intake | Outlet-scoped list and detail; propose creating or reviewing a draft for confirmation in Gomar | Guarded draft edits and safe handoff for files; app OCR and intake confirmation parity |
+| Documents and intake | Outlet-scoped list and detail; propose draft creation, review, or date and amount edits for confirmation in Gomar | Other draft changes and safe handoff for files; app OCR and intake confirmation parity |
 | Suppliers | Active supplier names and IDs in the business | Guarded create and edit |
 | Payables and payment records | Outstanding and overdue totals, counts by status, and outlet-only payable and payment record details | Guarded accounting entries and reviews, not movement of money |
 | Reconciliation | Scoped run counts by status, paged run list, and metadata by ID | Workflow for source handling, matches, decisions, and review |
