@@ -750,6 +750,9 @@ func (a *app) pruneWikiProposals(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	if err := a.pruneReconciliationDraftProposals(ctx, now); err != nil {
+		return err
+	}
 	if err := a.pruneDocumentReviewProposals(ctx, now); err != nil {
 		return err
 	}

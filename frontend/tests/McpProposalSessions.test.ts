@@ -221,3 +221,92 @@ describe('Propuestas para revisar comprobantes', () => {
     panel.unmount()
   })
 })
+
+describe('Borradores vacíos de conciliación', () => {
+  const draftPath = base + '/reconciliation-draft-proposals'
+  const action = 'reconciliation_draft_create'
+  async function openDraft(fetch: unknown, otherActions = false) {
+    vi.stubGlobal('fetch', fetch)
+    const panel = mount(McpProposalSessions, { props: { entity: 2, outlet: 7, outletName: 'Centro de prueba', canRename: otherActions, canReviewDocuments: otherActions, canCreateReconciliationDraft: true } })
+    await button(panel, 'Sesiones de propuestas').trigger('click')
+    await flushPromises()
+    return panel
+  }
+
+  it('starts unchecked and issues only the explicitly chosen reconciliation action', async () => {
+    const fetch = vi.fn()
+      .mockResolvedValueOnce(result({ sessions: [] }))
+      .mockResolvedValueOnce(result({ proposals: [] }))
+      .mockResolvedValueOnce(result({ proposals: [] }))
+      .mockResolvedValueOnce(result({ proposals: [] }))
+      .mockResolvedValueOnce(result({ ...session(), actions: [action], token }, 201))
+    const panel = await openDraft(fetch, true)
+    const [pos, review, draft] = panel.findAll<HTMLInputElement>('input[type=checkbox]')
+    expect([pos, review, draft].map(option => option.element.checked)).toEqual([false, false, false])
+    expect(button(panel, 'Crear sesión de propuestas').attributes()).toHaveProperty('disabled')
+    await pos.setValue(true)
+    await review.setValue(true)
+    await draft.setValue(true)
+    expect([pos, review, draft].map(option => option.element.checked)).toEqual([false, false, true])
+    expect(panel.text()).toContain('--proposal-session-action=reconciliation_draft_create')
+    await button(panel, 'Crear sesión de propuestas').trigger('click')
+    await flushPromises()
+    expect(panel.text()).toContain('--proposal-session-action=reconciliation_draft_create')
+    expect(panel.text()).not.toContain(token)
+    expect(fetch).toHaveBeenLastCalledWith(keyPath, expect.objectContaining({
+      method: 'POST', body: JSON.stringify({ entity_id: 2, outlet_id: 7, actions: [action] }),
+    }))
+    panel.unmount()
+  })
+
+  it.each([
+    { match_reference: false, outcome: 'approve' },
+    { match_reference: true, outcome: 'reject' },
+    { match_reference: false, outcome: 'stale' },
+  ])('shows exact match-reference $match_reference and handles $outcome deliberately', async ({ match_reference, outcome }) => {
+    const approved = outcome === 'approve'
+    const rejected = outcome === 'reject'
+    const fetch = vi.fn()
+      .mockResolvedValueOnce(result({ sessions: [] }))
+      .mockResolvedValueOnce(result({ proposals: [pending()] }))
+      .mockResolvedValueOnce(result({ ...pending(), draft: { match_reference }, digest }))
+      .mockResolvedValueOnce(outcome === 'stale'
+        ? result({ detail: token }, 409)
+        : result({ ...pending(), status: approved ? 'approved' : 'rejected', ...(approved ? { run_id: 42 } : {}) }))
+      .mockResolvedValueOnce(result({ sessions: [] }))
+      .mockResolvedValueOnce(result({ proposals: [pending()] }))
+    const panel = await openDraft(fetch)
+    await button(panel, 'Ver propuesta 8 de conciliación').trigger('click')
+    await flushPromises()
+    expect(panel.text()).toContain('Local: Centro de prueba')
+    expect(panel.text()).toContain('Usar la referencia para buscar coincidencias: ' + (match_reference ? 'Sí' : 'No'))
+    expect(panel.text()).toContain('No se importan archivos ni movimientos')
+    const begin = rejected ? 'Rechazar propuesta' : 'Continuar con el borrador'
+    await button(panel, begin).trigger('click')
+    await button(panel, 'Volver sin cambios').trigger('click')
+    expect(fetch).toHaveBeenCalledTimes(3)
+    await button(panel, begin).trigger('click')
+    await button(panel, rejected ? 'Sí, rechazar' : 'Crear borrador vacío').trigger('click')
+    await flushPromises()
+    expect(fetch.mock.calls[3]).toEqual([draftPath + '/8/decision', expect.objectContaining({
+      method: 'POST', body: JSON.stringify({ decision: rejected ? 'reject' : 'approve', digest, confirm: true }),
+    })])
+    expect(fetch.mock.calls.filter(call => call[1].method === 'POST')).toHaveLength(1)
+    expect(panel.text()).toContain(approved ? 'Borrador vacío de conciliación creado' : rejected ? 'No se creó un borrador' : 'No se creó el borrador')
+    expect(panel.text()).not.toContain(token)
+    panel.unmount()
+  })
+
+  it.each([null, undefined, 'false'])('refuses a non-boolean match-reference %s', async match_reference => {
+    const fetch = vi.fn()
+      .mockResolvedValueOnce(result({ sessions: [] }))
+      .mockResolvedValueOnce(result({ proposals: [pending()] }))
+      .mockResolvedValueOnce(result({ ...pending(), draft: { match_reference }, digest }))
+    const panel = await openDraft(fetch)
+    await button(panel, 'Ver propuesta 8 de conciliación').trigger('click')
+    await flushPromises()
+    expect(panel.get('[role=alert]').text()).toBe('No pude abrir la propuesta.')
+    expect(button(panel, 'Continuar con el borrador')).toBeUndefined()
+    panel.unmount()
+  })
+})

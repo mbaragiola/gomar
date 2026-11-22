@@ -3,7 +3,7 @@ import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { ApiError, request } from '../api'
 
 type Status = 'pending' | 'approved' | 'rejected' | 'expired' | 'revoked'
-type Proposal = { id: number; status: Status; expires_at: string; product_id?: number; product_revision?: number; rename?: Rename; document_id?: number; document_revision?: number; review?: Review; digest?: string }
+type Proposal = { id: number; status: Status; expires_at: string; product_id?: number; product_revision?: number; rename?: Rename; document_id?: number; document_revision?: number; review?: Review; run_id?: number; draft?: Draft; digest?: string }
 type Rename = {
   product_id: number; expected_revision: number; name: string; current_name: string
   unchanged_price_minor: number; unchanged_active: boolean
@@ -11,14 +11,43 @@ type Rename = {
 type Review = {
   document_id: number; expected_revision: number; reason: string; type: string; currency: 'ARS' | 'USD'; total_minor: number
 }
-type Action = 'pos_product_rename' | 'document_draft_review'
+type Draft = { match_reference: boolean }
+type Action = 'pos_product_rename' | 'document_draft_review' | 'reconciliation_draft_create'
 type ScopedProposal = Proposal & { kind: Action }
 type Session = { id: number; expires_at: string; actions: string[] }
 const actionName = 'pos_product_rename'
 const reviewAction = 'document_draft_review'
+const draftAction = 'reconciliation_draft_create'
 const actionLabels: Record<Action, string> = {
   pos_product_rename: 'Cambiar el nombre de un producto de caja',
   document_draft_review: 'Marcar un comprobante como revisado',
+  reconciliation_draft_create: 'Crear un borrador vacío de conciliación',
+}
+const actionUI: Record<Action, {
+  path: string; previewSuffix: string; proceed: string; approve: string; confirm: string; rejectConfirm: string
+  stale: string; approved: string; rejected: string
+}> = {
+  pos_product_rename: {
+    path: '/pos-rename-proposals', previewSuffix: '', proceed: 'Continuar con este cambio',
+    approve: 'Confirmar cambio de nombre', confirm: '¿Querés cambiar solo el nombre de este producto?',
+    rejectConfirm: '¿Querés rechazar la propuesta sin modificar el producto?',
+    stale: 'No se cambió el nombre. La propuesta o la versión del producto cambiaron.',
+    approved: 'Nombre del producto actualizado.', rejected: 'Propuesta rechazada. No se modificó el producto.',
+  },
+  document_draft_review: {
+    path: '/document-review-proposals', previewSuffix: ' de revisión', proceed: 'Continuar con la revisión',
+    approve: 'Marcar como revisado', confirm: '¿Querés marcar este comprobante como revisado?',
+    rejectConfirm: '¿Querés rechazar sin modificar el comprobante?',
+    stale: 'No se marcó como revisado. La propuesta o la versión del comprobante cambiaron.',
+    approved: 'Comprobante marcado como revisado.', rejected: 'Propuesta rechazada. No se modificó el comprobante.',
+  },
+  reconciliation_draft_create: {
+    path: '/reconciliation-draft-proposals', previewSuffix: ' de conciliación', proceed: 'Continuar con el borrador',
+    approve: 'Crear borrador vacío', confirm: '¿Querés crear este borrador vacío para el local indicado?',
+    rejectConfirm: '¿Querés rechazar sin crear el borrador?',
+    stale: 'No se creó el borrador. La propuesta cambió o ya se resolvió.',
+    approved: 'Borrador vacío de conciliación creado.', rejected: 'Propuesta rechazada. No se creó un borrador.',
+  },
 }
 const documentTypes: Record<string, string> = { invoice: 'Factura', credit_note: 'Nota de crédito', debit_note: 'Nota de débito' }
 const positive = (value: number) => Number.isSafeInteger(value) && value > 0
@@ -36,17 +65,20 @@ function isReview(value: Review | undefined): value is Review {
 }
 const prices = new Intl.NumberFormat('es-AR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
 type Decision = 'approve' | 'reject'
-const props = defineProps<{ entity: number; outlet: number; outletName: string; canRename: boolean; canReviewDocuments?: boolean }>()
+const props = defineProps<{ entity: number; outlet: number; outletName: string; canRename: boolean; canReviewDocuments?: boolean; canCreateReconciliationDraft?: boolean }>()
 const scopePath = `/entities/${props.entity}/outlets/${props.outlet}`
-const base = (kind: Action) => scopePath + (kind === reviewAction ? '/document-review-proposals' : '/pos-rename-proposals')
-const allowed = (kind: Action) => kind === reviewAction ? !!props.canReviewDocuments : props.canRename
-const actionChoices = computed(() => ([actionName, reviewAction] as const).filter(allowed))
+const base = (kind: Action) => scopePath + actionUI[kind].path
+const allowed = (kind: Action) => kind === draftAction ? !!props.canCreateReconciliationDraft
+  : kind === reviewAction ? !!props.canReviewDocuments : props.canRename
+const actionChoices = computed(() => ([actionName, reviewAction, draftAction] as const).filter(allowed))
 const setSelected = (kind: Action, event: Event) => {
   if (event.target instanceof HTMLInputElement) selected.value = event.target.checked ? kind : null
 }
 const actionText = (action: string) => Object.hasOwn(actionLabels, action)
   ? actionLabels[action as Action] : 'Acción no reconocida'
-const validPreview = (kind: Action, proposal: Proposal) => kind === reviewAction ? isReview(proposal.review) : isRename(proposal.rename)
+const validPreview = (kind: Action, proposal: Proposal) => kind === draftAction
+  ? typeof proposal.draft?.match_reference === 'boolean'
+  : kind === reviewAction ? isReview(proposal.review) : isRename(proposal.rename)
 
 const keyPath = '/auth/mcp-proposal-sessions'
 const sessionPath = `/entities/${props.entity}/outlets/${props.outlet}/proposal-sessions`
@@ -156,9 +188,7 @@ async function perform(message: string, action: (run: number) => Promise<void>, 
     if (!active(run)) return
     if (cause instanceof ApiError && (cause.status === 409 || cause.status === 410)) {
       clearPreview()
-      error.value = cause.status === 410 ? 'La propuesta venció o se revocó su clave.' : kind === reviewAction
-          ? 'No se marcó como revisado. La propuesta o la versión del comprobante cambiaron.'
-          : 'No se cambió el nombre. La propuesta o la versión del producto cambiaron.'
+      error.value = cause.status === 410 ? 'La propuesta venció o se revocó su clave.' : actionUI[kind].stale
       try { await list(run) } catch { /* Keep the decision error. */ }
     } else {
       error.value = message
@@ -197,7 +227,8 @@ async function decide() {
       body: JSON.stringify({ decision: target.action, digest: target.digest, confirm: true }),
     })
     if (!active(run)) return
-    const validApproval = target.kind === reviewAction
+    const validApproval = target.kind === draftAction ? positive(result.run_id ?? 0)
+      : target.kind === reviewAction
       ? result.document_id === proposed.review?.document_id && result.document_revision === (proposed.review?.expected_revision ?? -1) + 1
       : result.product_id === proposed.rename?.product_id && result.product_revision === (proposed.rename?.expected_revision ?? -1) + 1
     if (result.id !== target.id || result.status !== (target.action === 'approve' ? 'approved' : 'rejected') ||
@@ -206,9 +237,7 @@ async function decide() {
     }
     clearPreview()
     items.value = items.value.map(item => item.id === result.id && item.kind === target.kind ? { ...result, kind: target.kind } : item)
-    notice.value = target.kind === reviewAction
-      ? (result.status === 'approved' ? 'Comprobante marcado como revisado.' : 'Propuesta rechazada. No se modificó el comprobante.')
-      : (result.status === 'approved' ? 'Nombre del producto actualizado.' : 'Propuesta rechazada. No se modificó el producto.')
+    notice.value = result.status === 'approved' ? actionUI[target.kind].approved : actionUI[target.kind].rejected
   }, target.kind)
 }
 
@@ -338,13 +367,18 @@ onBeforeUnmount(() => {
     <ul v-else-if="actionChoices.length && items.length" class="gomar-feature-list">
       <li v-for="item in items" :key="`${item.kind}-${item.id}`" class="gomar-feature-article">
         <span>Propuesta {{ item.id }} · {{ actionLabels[item.kind] }} · {{ labels[item.status] }}</span>
-        <button type="button" class="text-button" :disabled="busy" @click="preview(item.id, item.kind)">Ver propuesta {{ item.id }}{{ item.kind === reviewAction ? ' de revisión' : '' }}</button>
+        <button type="button" class="text-button" :disabled="busy" @click="preview(item.id, item.kind)">Ver propuesta {{ item.id }}{{ actionUI[item.kind].previewSuffix }}</button>
       </li>
     </ul>
     <section v-if="viewed && allowed(viewed.kind)" class="card subsection gomar-feature" aria-label="Vista previa de la propuesta">
       <h3>Vista previa</h3>
       <template v-if="viewed.status === 'pending'">
-        <div v-if="viewed.kind === reviewAction && viewed.review">
+        <div v-if="viewed.kind === draftAction && viewed.draft">
+          <p>Local: <strong>{{ outletName }}</strong></p>
+          <p>Usar la referencia para buscar coincidencias: <strong>{{ viewed.draft.match_reference ? 'Sí' : 'No' }}</strong></p>
+          <p>Solo se crea un borrador vacío. No se importan archivos ni movimientos y no se cierra una conciliación.</p>
+        </div>
+        <div v-else-if="viewed.kind === reviewAction && viewed.review">
           <p>Local: <strong>{{ outletName }}</strong> · Comprobante {{ viewed.review.document_id }} · Versión {{ viewed.review.expected_revision }}</p>
           <p>Tipo: {{ documentTypes[viewed.review.type] }} · Total: {{ viewed.review.currency }} {{ prices.format(viewed.review.total_minor / 100) }}</p>
           <p>Motivo:</p>
@@ -362,16 +396,14 @@ onBeforeUnmount(() => {
           <p>Solo se cambia el nombre. No se modifican el stock ni las ventas.</p>
         </div>
         <div v-if="!deciding" class="gomar-feature-actions">
-          <button type="button" class="primary" :disabled="busy || !canDecide" @click="begin('approve')">{{ viewed.kind === reviewAction ? 'Continuar con la revisión' : 'Continuar con este cambio' }}</button>
+          <button type="button" class="primary" :disabled="busy || !canDecide" @click="begin('approve')">{{ actionUI[viewed.kind].proceed }}</button>
           <button type="button" class="secondary" :disabled="busy || !canDecide" @click="begin('reject')">Rechazar propuesta</button>
           <button type="button" class="text-button" :disabled="busy" @click="clearPreview">Cerrar vista previa</button>
         </div>
         <div v-else class="gomar-feature-actions" role="group" aria-label="Confirmar decisión">
-          <p>{{ viewed.kind === reviewAction
-            ? (deciding.action === 'approve' ? '¿Querés marcar este comprobante como revisado?' : '¿Querés rechazar sin modificar el comprobante?')
-            : (deciding.action === 'approve' ? '¿Querés cambiar solo el nombre de este producto?' : '¿Querés rechazar la propuesta sin modificar el producto?') }}</p>
+          <p>{{ deciding.action === 'approve' ? actionUI[viewed.kind].confirm : actionUI[viewed.kind].rejectConfirm }}</p>
           <button type="button" :class="deciding.action === 'approve' ? 'primary' : 'danger'" :disabled="busy" @click="decide">
-            {{ deciding.action === 'approve' ? (viewed.kind === reviewAction ? 'Marcar como revisado' : 'Confirmar cambio de nombre') : 'Sí, rechazar' }}
+            {{ deciding.action === 'approve' ? actionUI[viewed.kind].approve : 'Sí, rechazar' }}
           </button>
           <button type="button" class="secondary" :disabled="busy" @click="deciding = null">Volver sin cambios</button>
         </div>
@@ -380,6 +412,7 @@ onBeforeUnmount(() => {
         <p>{{ labels[viewed.status] }}</p>
         <p v-if="viewed.status === 'approved' && viewed.product_id">Producto {{ viewed.product_id }} · Versión {{ viewed.product_revision }}</p>
         <p v-if="viewed.status === 'approved' && viewed.document_id">Comprobante {{ viewed.document_id }} · Versión {{ viewed.document_revision }}</p>
+        <p v-if="viewed.status === 'approved' && viewed.run_id">Conciliación {{ viewed.run_id }}</p>
         <button type="button" class="text-button" @click="clearPreview">Cerrar vista previa</button>
       </template>
     </section>

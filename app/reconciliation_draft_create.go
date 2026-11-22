@@ -53,66 +53,74 @@ func (a *app) createReconciliationDraft(w http.ResponseWriter, r *http.Request, 
 	if len(allowed) != len(selected) {
 		return problem{403, "Solo podés conciliar locales autorizados."}
 	}
+	run, err := a.insertReconciliationDraft(tx, u, entity, allowed, *input.MatchReference)
+	if err != nil {
+		return err
+	}
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+	jsonResponse(w, http.StatusCreated, run)
+	return nil
+}
+
+func (a *app) insertReconciliationDraft(tx *sql.Tx, u user, entity int64, allowed []int64, matchReference bool) (reconciliationReadRun, error) {
 	now := time.Now().UTC().Format(time.RFC3339Nano)
 	var id int64
 	if err := tx.QueryRow(`INSERT INTO reconciliation_read_runs
 		(entity_id,state,revision,rules_version,match_reference,created_at,created_by_id,updated_at)
-		VALUES($1,'draft',1,1,$2,$3,$4,$5) RETURNING id`, entity, *input.MatchReference, now, u.id, a.reconciliationRowTime()).Scan(&id); err != nil {
-		return err
+		VALUES($1,'draft',1,1,$2,$3,$4,$5) RETURNING id`, entity, matchReference, now, u.id, a.reconciliationRowTime()).Scan(&id); err != nil {
+		return reconciliationReadRun{}, err
 	}
 	for _, outlet := range allowed {
 		linked, err := tx.Exec("INSERT INTO reconciliation_read_outlets(run_id,outlet_id) VALUES($1,$2)", id, outlet)
 		if err != nil {
-			return err
+			return reconciliationReadRun{}, err
 		}
 		n, err := linked.RowsAffected()
 		if err != nil {
-			return err
+			return reconciliationReadRun{}, err
 		}
 		if n != 1 {
-			return errors.New("native reconciliation outlet was not recorded")
+			return reconciliationReadRun{}, errors.New("native reconciliation outlet was not recorded")
 		}
 	}
 	if _, err := reconciliationWireTime(&now); err != nil {
-		return err
+		return reconciliationReadRun{}, err
 	}
 	event, err := json.Marshal(map[string]any{
 		"action": "create", "actor": u.name, "occurred_at": now, "run_revision": 1,
 		"source_id": nil, "payment_row_id": nil, "cash_flow_row_id": nil, "match_id": nil,
 	})
 	if err != nil {
-		return err
+		return reconciliationReadRun{}, err
 	}
 	audited, err := tx.Exec("INSERT INTO reconciliation_detail_events(run_id,ordinal,payload,actor_id) VALUES($1,1,$2,$3)", id, string(event), u.id)
 	if err != nil {
-		return err
+		return reconciliationReadRun{}, err
 	}
 	n, err := audited.RowsAffected()
 	if err != nil {
-		return err
+		return reconciliationReadRun{}, err
 	}
 	if n != 1 {
-		return errors.New("native reconciliation creation audit was not recorded")
+		return reconciliationReadRun{}, errors.New("native reconciliation creation audit was not recorded")
 	}
 	marked, err := tx.Exec("INSERT INTO reconciliation_native_v1_runs(run_id) VALUES($1)", id)
 	if err != nil {
-		return err
+		return reconciliationReadRun{}, err
 	}
 	n, err = marked.RowsAffected()
 	if err != nil {
-		return err
+		return reconciliationReadRun{}, err
 	}
 	if n != 1 {
-		return errors.New("native reconciliation origin was not recorded")
+		return reconciliationReadRun{}, errors.New("native reconciliation origin was not recorded")
 	}
-	if err := tx.Commit(); err != nil {
-		return err
-	}
-	jsonResponse(w, http.StatusCreated, reconciliationReadRun{
+	return reconciliationReadRun{
 		ID: id, EntityID: entity, Outlets: allowed, State: "draft", Revision: 1, Rules: 1,
-		MatchReference: *input.MatchReference, Created: now,
-	})
-	return nil
+		MatchReference: matchReference, Created: now,
+	}, nil
 }
 
 func reconciliationWritableOutlets(tx *sql.Tx, m entityMembership, selected map[int64]bool) ([]int64, error) {

@@ -31,3 +31,9 @@ applied change. Features disabled in the app are not available via MCP.
 Use an outlet-scoped key. A denied call is not an empty report. Keep
 files, customer contact details, secrets, and provider credentials out of
 the standard chat output. Use Gomar when the operator needs to view them.
+
+An opt-in, single-branch reconciliation draft proposal is separate from
+reconciliation reads. An issuing browser login can approve an empty native
+draft, including its native creation audit. The proposal fixes one active
+branch and an explicit match-by-reference setting. It cannot add statement
+files or rows, match transactions, close a run, or record a payment.
