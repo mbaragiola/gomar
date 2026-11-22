@@ -51,6 +51,7 @@ func liveServer(client *mcpclient.Client) *mcp.Server {
 	addBookingReadTools(server, client)
 	addDetailReadTools(server, client)
 	addFinanceStockReadTools(server, client)
+	addReservationQueueTools(server, client)
 	return server
 }
 
@@ -110,6 +111,26 @@ func runLive(ctx context.Context, args []string, in io.Reader, out io.Writer) er
 			return errors.New(liveUsage)
 		}
 		addSessionTool = addStockPhysicalCountProposalTool
+	case "pos_product_price_change":
+		if *proposalSessionFile == "" {
+			return errors.New(liveUsage)
+		}
+		addSessionTool = addPOSPriceProposalTool
+	case "pos_product_availability_change":
+		if *proposalSessionFile == "" {
+			return errors.New(liveUsage)
+		}
+		addSessionTool = addPOSAvailabilityProposalTool
+	case "reservation_confirm":
+		if *proposalSessionFile == "" {
+			return errors.New(liveUsage)
+		}
+		addSessionTool = addReservationConfirmProposalTool
+	case "reservation_cancel":
+		if *proposalSessionFile == "" {
+			return errors.New(liveUsage)
+		}
+		addSessionTool = addReservationCancelProposalTool
 	default:
 		return errors.New(liveUsage)
 	}

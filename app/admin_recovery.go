@@ -14,7 +14,7 @@ import (
 	"time"
 )
 
-const adminRecoveryMigration = "016_admin_recovery.sql"
+const adminRecoveryMigration = "019_admin_recovery.sql"
 const adminRecoveryCookie = "__Secure-gomar_admin"
 const adminRecoveryCSRF = "__Secure-gomar_admin_csrf"
 const adminRecoveryAge = 30 * time.Minute

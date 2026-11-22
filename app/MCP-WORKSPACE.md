@@ -22,6 +22,7 @@ delivery provider, writes a record, sends a message, or accesses a receipt.
 | `gomar_list_reconciliation_runs` | State, revision, dates and counts for eligible runs | Up to 30 per page by ID. Requires grants to every participating outlet; an outlet-scoped key sees only runs for that outlet alone. |
 | `gomar_read_reconciliation_run` | The same metadata for one run by ID | Same scope as the list; no bank details, source labels, CSV or individual rows. |
 | `gomar_reservation_status` | Daily reservation and guest counts by status | One Buenos Aires date. No identifying details. |
+| `gomar_list_reservation_requests` / `gomar_read_reservation_request` | Request ID, status, party size and local start time | Administration only. Select a Buenos Aires date and one granted outlet; use `next_id` on the same date and outlet for pages of 30. No guest or table data, and no changes. |
 | `gomar_published_menu` | Whether a menu is published and its file metadata | No file or download link. |
 | `gomar_pos_catalog` | Products and ARS prices in minor units | Up to 30 per page. |
 | `gomar_stock_movements` | Counts and net units by movement type | One product and up to 31 Buenos Aires days, with no actor or order IDs. |
@@ -32,7 +33,9 @@ can be listed even when an app feature is off or the user lacks permission;
 the server denies the call in either case. A denied call is not an empty report.
 The detailed payable and payment lists cover only records that do not depend
 on another outlet. Do not use them to reconstruct the broader accounting
-summaries or a bank statement.
+summaries or a bank statement. A reservation ID is a receipt reference,
+not an authorization credential. Never rely on it alone for a public
+reservation lookup or change.
 
 ## Not available through MCP yet
 

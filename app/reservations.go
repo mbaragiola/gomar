@@ -191,14 +191,20 @@ func (s reservationsService) availability(ctx context.Context, venue, date strin
 	return result, rows.Err()
 }
 func pickReservationTable(ctx context.Context, tx *sql.Tx, outlet int64, start string, partySize int) (string, error) {
+	label, _, err := pickReservationTableWithCapacity(ctx, tx, outlet, start, partySize)
+	return label, err
+}
+
+func pickReservationTableWithCapacity(ctx context.Context, tx *sql.Tx, outlet int64, start string, partySize int) (string, int, error) {
 	var table string
-	err := tx.QueryRowContext(ctx, `SELECT t.label FROM reservation_slots s
+	var capacity int
+	err := tx.QueryRowContext(ctx, `SELECT t.label,t.capacity FROM reservation_slots s
         JOIN reservation_tables t ON t.outlet_id=s.outlet_id WHERE s.outlet_id=$1 AND s.start_at=$2
-        AND t.capacity>=$3 AND `+availableReservationTable+` ORDER BY t.capacity,t.label LIMIT 1`, outlet, start, partySize).Scan(&table)
+        AND t.capacity>=$3 AND `+availableReservationTable+` ORDER BY t.capacity,t.label LIMIT 1`, outlet, start, partySize).Scan(&table, &capacity)
 	if errors.Is(err, sql.ErrNoRows) {
 		err = reservationConflict
 	}
-	return table, err
+	return table, capacity, err
 }
 func (s reservationsService) request(ctx context.Context, venue string, in reservationInput, now time.Time) (reservationResult, error) {
 	start, err := reservationStart(in.StartAt, now)
@@ -255,12 +261,12 @@ func requestReservationInTx(ctx context.Context, tx *sql.Tx, outlet int64, start
 }
 
 func reservationChange(ctx context.Context, tx *sql.Tx, outlet int64, id, action string, now time.Time) (reservationResult, error) {
-	var status, start string
+	var status, start, table string
 	var partySize int
 	if !reservationID.MatchString(id) {
 		return reservationResult{}, reservationMissing
 	}
-	err := tx.QueryRowContext(ctx, `SELECT status,start_at,party_size FROM reservation_requests WHERE outlet_id=$1 AND id=$2`, outlet, id).Scan(&status, &start, &partySize)
+	err := tx.QueryRowContext(ctx, `SELECT status,start_at,party_size,coalesce(table_label,'') FROM reservation_requests WHERE outlet_id=$1 AND id=$2`, outlet, id).Scan(&status, &start, &partySize, &table)
 	if errors.Is(err, sql.ErrNoRows) {
 		err = reservationMissing
 	}
@@ -268,10 +274,10 @@ func reservationChange(ctx context.Context, tx *sql.Tx, outlet int64, id, action
 		return reservationResult{}, err
 	}
 	if action == "cancel" {
-		if status != "cancelled" {
-			_, err = tx.ExecContext(ctx, `UPDATE reservation_requests SET status='cancelled',table_label=NULL WHERE outlet_id=$1 AND id=$2`, outlet, id)
+		if status == "cancelled" {
+			return reservationResult{ID: id, Status: "cancelled"}, nil
 		}
-		return reservationResult{ID: id, Status: "cancelled"}, err
+		return cancelReservationSnapshot(ctx, tx, outlet, id, status, start, partySize, table)
 	}
 	var enabled bool
 	if err := tx.QueryRowContext(ctx, `SELECT enabled FROM reservation_venues WHERE outlet_id=$1`, outlet).Scan(&enabled); err != nil {
@@ -284,7 +290,11 @@ func reservationChange(ctx context.Context, tx *sql.Tx, outlet int64, id, action
 	if err != nil {
 		return reservationResult{}, err
 	}
-	updated, err := tx.ExecContext(ctx, `UPDATE reservation_requests SET status='confirmed',table_label=$1 WHERE outlet_id=$2 AND id=$3 AND status='pending'`, label, outlet, id)
+	return confirmReservationTable(ctx, tx, outlet, id, start, partySize, label)
+}
+
+func confirmReservationTable(ctx context.Context, tx *sql.Tx, outlet int64, id, start string, partySize int, label string) (reservationResult, error) {
+	updated, err := tx.ExecContext(ctx, `UPDATE reservation_requests SET status='confirmed',table_label=$1 WHERE outlet_id=$2 AND id=$3 AND status='pending' AND start_at=$4 AND party_size=$5`, label, outlet, id, start, partySize)
 	if err != nil {
 		if reservationConflictError(err) {
 			return reservationResult{}, reservationConflict
@@ -299,4 +309,23 @@ func reservationChange(ctx context.Context, tx *sql.Tx, outlet int64, id, action
 		return reservationResult{}, reservationStateConflict
 	}
 	return reservationResult{ID: id, Status: "confirmed", TableLabel: label}, nil
+}
+
+func cancelReservationSnapshot(ctx context.Context, tx *sql.Tx, outlet int64, id, status, start string, party int, table string) (reservationResult, error) {
+	if status != "pending" && status != "confirmed" {
+		return reservationResult{}, reservationStateConflict
+	}
+	changed, err := tx.ExecContext(ctx, `UPDATE reservation_requests SET status='cancelled',table_label=NULL
+ WHERE outlet_id=$1 AND id=$2 AND status=$3 AND start_at=$4 AND party_size=$5 AND coalesce(table_label,'')=$6`, outlet, id, status, start, party, table)
+	if err != nil {
+		return reservationResult{}, err
+	}
+	n, err := changed.RowsAffected()
+	if err != nil {
+		return reservationResult{}, err
+	}
+	if n != 1 {
+		return reservationResult{}, reservationStateConflict
+	}
+	return reservationResult{ID: id, Status: "cancelled"}, nil
 }

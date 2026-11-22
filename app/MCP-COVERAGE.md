@@ -8,7 +8,7 @@ applied change. Features disabled in the app are not available via MCP.
 | Workflow | MCP coverage now | Work still needed |
 | --- | --- | --- |
 | Identity and business scope | Current user, businesses, and outlets | Management views; changes to access stay in Gomar |
-| POS | Recorded sales totals, product catalog, and name-only proposals for confirmation in Gomar | Remaining catalog changes and register operations; Gomar does not expose shift management |
+| POS | Recorded sales totals, product catalog, and separate name, price, and availability proposals for confirmation in Gomar | New catalog items and register operations; Gomar does not expose shift management |
 | Inventory | Tracked balances, thresholds and movements; propose receipts, waste, and physical counts for confirmation in Gomar | Catalog and tracking settings; bills of materials are not implemented |
 | Wiki | Search and read by ID; propose new pages and versioned edits for confirmation in Gomar | Gomar does not offer deletion |
 | Delivery | Recent order status with limited fields | No native staff write workflow; provider calls and credentials stay outside the read interface |
@@ -16,7 +16,7 @@ applied change. Features disabled in the app are not available via MCP.
 | Suppliers | Active supplier names and IDs in the business | Guarded create and edit |
 | Payables and payment records | Outstanding and overdue totals, counts by status, and outlet-only payable and payment record details | Guarded accounting entries and reviews, not movement of money |
 | Reconciliation | Scoped run counts by status, paged run list, and metadata by ID | Workflow for source handling, matches, decisions, and review |
-| Reservations and menus | Daily reservation totals by status and published menu metadata | Guarded staff booking and menu operations |
+| Reservations and menus | Daily reservation totals, scoped staff queue and detail, and published menu metadata | Guarded staff booking and menu operations |
 
 ## Verification levels
 
@@ -42,3 +42,27 @@ An optional document draft edit proposes dates and amounts only. It shows
 the old and new values, currency, and reason to the issuing browser login.
 Approval applies one native draft revision and audit entry. It cannot
 change supplier, branch, currency, files, review status, payables, or payments.
+
+Optional POS catalog proposals let a branch manager approve either a price
+change or an availability change. Each action preserves the other fields
+and adds a native catalog revision. A proposal does not make a sale, collect
+a payment, or rewrite prior sale items or stock movements.
+
+An optional reservation confirmation proposal lets the issuing browser
+login confirm one existing pending reservation for its branch. It shows
+the local start time, party size, and the exact available table. If that
+table changes or becomes unavailable, the approval fails rather than
+booking another table. There are no guest messages, cancellations, or
+changes to venue policy.
+
+The internal reservation cancellation adapter can preview only an existing
+future request for an authorized branch. It binds prior status and table
+allocation and uses native cancellation to release the table. It does not
+send messages or disclose guest or venue-policy data. There is no MCP
+cancellation tool or approval route in this adapter.
+
+With reservation cancellation proposals enabled, the issuing browser login
+can approve cancellation of one future pending or confirmed reservation.
+The preview shows the existing time, party size, status, and assigned table
+if there is one. Approval releases that table. It does not notify the guest
+or change venue settings or policy.

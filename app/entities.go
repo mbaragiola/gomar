@@ -198,6 +198,18 @@ func (a *app) entities(w http.ResponseWriter, r *http.Request, u user) error {
 			entry.Capabilities = append(slices.Clone(entry.Capabilities), "mcp_stock_adjustment_proposals")
 			slices.Sort(entry.Capabilities)
 		}
+		if a.posCatalogProposalsEnabled() && entry.Role == "administration" && slices.Contains(entry.Capabilities, "manage_entity_access") {
+			entry.Capabilities = append(slices.Clone(entry.Capabilities), "mcp_pos_catalog_proposals")
+			slices.Sort(entry.Capabilities)
+		}
+		if a.reservationConfirmProposalsEnabled() && entry.Role == "administration" {
+			entry.Capabilities = append(slices.Clone(entry.Capabilities), "mcp_reservation_confirm_proposals")
+			slices.Sort(entry.Capabilities)
+		}
+		if a.reservationCancelProposalsEnabled() && entry.Role == "administration" {
+			entry.Capabilities = append(slices.Clone(entry.Capabilities), "mcp_reservation_cancel_proposals")
+			slices.Sort(entry.Capabilities)
+		}
 		if manageProposalSessions {
 			entry.Capabilities = append(slices.Clone(entry.Capabilities), "mcp_proposal_session_management")
 			slices.Sort(entry.Capabilities)

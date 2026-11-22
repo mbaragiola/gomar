@@ -39,10 +39,10 @@ func TestSignInModeRequiresReadyRecoveryAndAllProviders(t *testing.T) {
 
 func TestPostgresAdminRecoveryAndProviderOnlyRealm(t *testing.T) {
 	ctx, db := testPostgresDB(t)
-	const publicMigrationCount = 14
+	const publicMigrationCount = 17
 	if len(postgresMigrationNames) < publicMigrationCount ||
-		postgresMigrationNames[publicMigrationCount-1] != "014_mcp_stock_adjustment_proposals.sql" {
-		t.Fatal("must rehearse the upgrade from public stock-adjustment schema 014")
+		postgresMigrationNames[publicMigrationCount-1] != "017_mcp_reservation_cancel_proposals.sql" {
+		t.Fatal("must rehearse the upgrade from public reservation-cancellation schema 017")
 	}
 	if err := migratePostgresThrough(ctx, db, postgresMigrationNames[:publicMigrationCount]); err != nil {
 		t.Fatal(err)
