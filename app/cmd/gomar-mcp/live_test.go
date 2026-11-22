@@ -66,6 +66,22 @@ func TestLiveStdioScopedTools(t *testing.T) {
 			_, _ = io.WriteString(w, `{"runs":[{"id":8,"revision":1,"status":"draft","created_at":"2026-11-01T03:00:00Z","counts":{"outlets":1,"sources":0,"rows":0,"confirmed":0,"rejected":0}}]}`)
 		case "/api/v1/mcp/entities/20/outlets/10/reconciliation-runs/8":
 			_, _ = io.WriteString(w, `{"id":8,"revision":1,"status":"draft","created_at":"2026-11-01T03:00:00Z","counts":{"outlets":1,"sources":1,"rows":5,"confirmed":0,"rejected":0},"private":"`+secret+`"}`)
+		case "/api/v1/mcp/entities/20/outlets/10/payable-records":
+			if r.URL.RawQuery != "after_id=4" {
+				t.Error("unexpected payable cursor")
+			}
+			_, _ = io.WriteString(w, `{"records":[{"id":5,"status":"partial","currency":"ARS","issue_date":"2026-11-01","posted_date":"2026-11-02","total_minor":100,"balance_minor":50}]}`)
+		case "/api/v1/mcp/entities/20/outlets/10/payable-records/5":
+			_, _ = io.WriteString(w, `{"id":5,"status":"partial","currency":"ARS","issue_date":"2026-11-01","posted_date":"2026-11-02","total_minor":100,"balance_minor":50,"supplier":"`+secret+`"}`)
+		case "/api/v1/mcp/entities/20/outlets/10/recorded-payments":
+			_, _ = io.WriteString(w, `{"records":[{"id":12,"status":"draft","currency":"USD","created_date":"2026-11-03","total_minor":100}]}`)
+		case "/api/v1/mcp/entities/20/outlets/10/recorded-payments/12":
+			_, _ = io.WriteString(w, `{"id":12,"status":"draft","currency":"USD","created_date":"2026-11-03","total_minor":100,"reference":"`+secret+`"}`)
+		case "/api/v1/mcp/entities/20/outlets/10/stock/products/3/movements":
+			if r.URL.RawQuery != "after_id=2&days=1&start_date=2026-11-01" {
+				t.Error("unexpected stock detail cursor and dates")
+			}
+			_, _ = io.WriteString(w, `{"timezone":"America/Argentina/Buenos_Aires","start_date":"2026-11-01","end_date_exclusive":"2026-11-02","movements":[{"kind":"merma","delta":-5,"recorded_at":"2026-11-01T00:00:01-03:00","actor":"`+secret+`"}]}`)
 		default:
 			w.WriteHeader(http.StatusNotFound)
 			_, _ = io.WriteString(w, secret)
@@ -94,7 +110,7 @@ func TestLiveStdioScopedTools(t *testing.T) {
 	}
 	defer session.Close()
 	metadata, err := session.ListTools(ctx, &mcp.ListToolsParams{})
-	if err != nil || len(metadata.Tools) != 20 {
+	if err != nil || len(metadata.Tools) != 25 {
 		t.Fatal(metadata, err)
 	}
 	for _, tool := range metadata.Tools {
@@ -125,6 +141,12 @@ func TestLiveStdioScopedTools(t *testing.T) {
 		{"gomar_list_reconciliation_runs", map[string]any{"entity_id": 20, "outlet_id": 10, "after_id": 5}, `"id":8`, false},
 		{"gomar_read_reconciliation_run", map[string]any{"entity_id": 20, "outlet_id": 10, "run_id": 8}, `"rows":5`, false},
 		{"gomar_read_reconciliation_run", map[string]any{"entity_id": 20, "outlet_id": 11, "run_id": 8}, "permisos", true},
+		{"gomar_list_payables", map[string]any{"entity_id": 20, "outlet_id": 10, "after_id": 4}, `"balance_minor":50`, false},
+		{"gomar_read_payable", map[string]any{"entity_id": 20, "outlet_id": 10, "payable_id": 5}, `"status":"partial"`, false},
+		{"gomar_list_recorded_payments", map[string]any{"entity_id": 20, "outlet_id": 10}, `"status":"draft"`, false},
+		{"gomar_read_recorded_payment", map[string]any{"entity_id": 20, "outlet_id": 10, "payment_id": 12}, `"total_minor":100`, false},
+		{"gomar_list_stock_movements", map[string]any{"entity_id": 20, "outlet_id": 10, "product_id": 3, "days": 1, "start_date": "2026-11-01", "after_id": 2}, `"delta":-5`, false},
+		{"gomar_read_recorded_payment", map[string]any{"entity_id": 20, "outlet_id": 11, "payment_id": 12}, "permisos", true},
 		{"gomar_sales_summary", map[string]any{"entity_id": 20, "period": "this_month", "path": "http://forged.invalid"}, "", true},
 	} {
 		result, err := session.CallTool(ctx, &mcp.CallToolParams{Name: test.name, Arguments: test.args})
@@ -141,7 +163,7 @@ func TestLiveStdioScopedTools(t *testing.T) {
 			t.Fatalf("unexpected result for %s: %s", test.name, wire)
 		}
 	}
-	if requests.Load() != 15 {
+	if requests.Load() != 21 {
 		t.Fatalf("wrong number of requests: %d", requests.Load())
 	}
 	if err := session.Close(); err != nil {

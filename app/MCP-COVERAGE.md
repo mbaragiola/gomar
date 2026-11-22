@@ -9,12 +9,12 @@ applied change. Features disabled in the app are not available via MCP.
 | --- | --- | --- |
 | Identity and business scope | Current user, businesses, and outlets | Management views; changes to access stay in Gomar |
 | POS | Recorded sales totals, product catalog, and name-only proposals for confirmation in Gomar | Remaining catalog changes and register operations; Gomar does not expose shift management |
-| Inventory | Tracked balances, thresholds, and movement totals; propose a positive receipt for confirmation in Gomar | Movement detail; catalog, other adjustments, and BOM workflows |
+| Inventory | Tracked balances, thresholds, movement totals and bounded movement detail; propose a positive receipt for confirmation in Gomar | Catalog and other adjustments; bills of materials are not implemented |
 | Wiki | Search and read by ID; propose new pages and versioned edits for confirmation in Gomar | Gomar does not offer deletion |
-| Delivery | Recent order status with limited fields | Confirmed local actions; credentials and provider calls stay outside the read interface |
-| Documents and intake | Outlet-scoped document list and accounting detail; propose a draft for confirmation in Gomar | Safe handoff for files; separate review; app OCR and confirmation parity |
+| Delivery | Recent order status with limited fields | No native staff write workflow; provider calls and credentials stay outside the read interface |
+| Documents and intake | Outlet-scoped list and detail; propose creating or reviewing a draft for confirmation in Gomar | Guarded draft edits and safe handoff for files; app OCR and intake confirmation parity |
 | Suppliers | Active supplier names and IDs in the business | Guarded create and edit |
-| Payables and payment records | Outstanding and overdue totals; counts by payment status | Recorded payment detail; guarded accounting entries and reviews, not movement of money |
+| Payables and payment records | Outstanding and overdue totals, counts by status, and outlet-only payable and payment record details | Guarded accounting entries and reviews, not movement of money |
 | Reconciliation | Scoped run counts by status, paged run list, and metadata by ID | Workflow for source handling, matches, decisions, and review |
 | Reservations and menus | Daily reservation totals by status and published menu metadata | Guarded staff booking and menu operations |
 

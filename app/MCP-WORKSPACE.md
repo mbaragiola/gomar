@@ -12,6 +12,8 @@ delivery provider, writes a record, sends a message, or accesses a receipt.
 | `gomar_list_stock` | Tracked products, balances, minimums and alerts | Requires POS and stock enabled and a qualifying role. Use `next_product_id` to continue. |
 | `gomar_list_recent_delivery` | Internal order IDs, provider, recorded status and times | Requires delivery enabled. Up to 30; no customer data, provider order IDs, items, or amounts. |
 | `gomar_payables_summary` | Outstanding and overdue balances by currency, in minor units | Uses the existing accounting role and outlet checks. No supplier details, invoices or payments. |
+| `gomar_list_payables` / `gomar_read_payable` | Internal payable ID, local dates, status, amount and balance by currency | 30 per page. No supplier or document identity. Excludes rows affected by another outlet. |
+| `gomar_list_recorded_payments` / `gomar_read_recorded_payment` | Internal payment record ID, local dates, status and amount | 30 per page. Excludes cross-outlet settlements and linked reversals, with no method, accounts, notes or receipts. Not confirmation that money moved. |
 | `gomar_list_documents` | Document metadata for the selected outlet | No attachments or tax identifiers. Up to 30 per page. |
 | `gomar_read_document` | One document’s status, revision, reference, dates and accounting totals | No supplier data, notes, audit, or attachments. |
 | `gomar_list_suppliers` | Active supplier names and IDs for the business | Requires an authorized selected outlet. No contact or tax details. Up to 30 per page. |
@@ -23,10 +25,14 @@ delivery provider, writes a record, sends a message, or accesses a receipt.
 | `gomar_published_menu` | Whether a menu is published and its file metadata | No file or download link. |
 | `gomar_pos_catalog` | Products and ARS prices in minor units | Up to 30 per page. |
 | `gomar_stock_movements` | Counts and net units by movement type | One product and up to 31 Buenos Aires days, with no actor or order IDs. |
+| `gomar_list_stock_movements` | Individual movement type, signed change and Buenos Aires timestamp | One authorized product, 1 to 31 days, up to 30 rows per page. No actor, movement ID, order or notes. |
 
 Sales still means recorded POS sales, not delivery or invoices. The tools
 can be listed even when an app feature is off or the user lacks permission;
 the server denies the call in either case. A denied call is not an empty report.
+The detailed payable and payment lists cover only records that do not depend
+on another outlet. Do not use them to reconstruct the broader accounting
+summaries or a bank statement.
 
 ## Not available through MCP yet
 
