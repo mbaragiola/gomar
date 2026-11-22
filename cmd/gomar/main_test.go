@@ -19,7 +19,7 @@ func (discardOutput) Close() error { return nil }
 func TestDemoFlagMustBeExplicitAndAlone(t *testing.T) {
 	for _, args := range [][]string{nil, {"--synthetic-demo", "/example"}, {"--synthetic-demo=true"}, {"--synthetic-demo", "--synthetic-demo"}} {
 		err := run(t.Context(), args, io.NopCloser(strings.NewReader("")), discardOutput{io.Discard})
-		if err == nil || err.Error() != "usage: gomar --synthetic-demo" {
+		if err == nil || err.Error() != "usage: gomar --synthetic-demo | --synthetic-whatsapp" {
 			t.Fatalf("%v: %v", args, err)
 		}
 	}

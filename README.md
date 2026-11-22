@@ -1,6 +1,6 @@
 # Gomar
 
-Gomar is a restaurant back-office project in Go. This first preview lets Codex read **invented** accounts-payable totals. It does not connect to an app, a database, a restaurant, or a user account. Claude and WhatsApp are not part of this preview.
+Gomar is a restaurant back-office project in Go. This first preview lets Codex read **invented** accounts-payable totals. It does not connect to an app, a database, a restaurant, or a user account. Claude is not supported. The WhatsApp example runs offline only.
 
 ## Try it in Codex
 
@@ -33,3 +33,22 @@ See [third-party notices](THIRD_PARTY_NOTICES.md) for dependency licenses.
 ```sh
 go test ./...
 ```
+
+## WhatsApp fixture replay
+
+This offline preview reads one generated event to EOF and prints a JSON
+reply to stdout. It does not connect to WhatsApp or send anything.
+
+```sh
+./bin/gomar --synthetic-whatsapp < examples/whatsapp-synthetic.json
+```
+
+“Cuánto debemos” returns the same generated payables totals as the Codex
+preview. Other text, statuses, non-text messages, and unknown senders get
+no reply. This is a one-event fixture, not a webhook server, provider
+integration, or persistent message journal.
+
+The example follows the [Meta WhatsApp envelope](https://developers.facebook.com/docs/whatsapp/guides/interactive-messages/).
+A real integration would require an approved provider and sender enrollment,
+verified provider signatures, durable duplicate handling, and authorization
+for which summaries it may send.
