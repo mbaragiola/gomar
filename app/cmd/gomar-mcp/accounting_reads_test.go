@@ -32,6 +32,11 @@ func TestAccountingReadToolsUseScopedGETAndTypedOutput(t *testing.T) {
 				t.Error("document cursor was not passed correctly")
 			}
 			response = `{"documents":[{"id":4,"type":"credit_note","status":"reviewed","supplier_id":1,"issue_date":"2026-11-01","currency":"ARS","total_minor":25,"attachment":"private sentinel"}]}`
+		case "/document-totals":
+			if r.URL.RawQuery != "" {
+				t.Error("totals passed a query")
+			}
+			response = `{"count":2,"totals":[{"currency":"ARS","count":1,"total_minor":"10000000000000000000","note":"private sentinel"},{"currency":"USD","count":1,"total_minor":"-125"}],"supplier":"private sentinel"}`
 		case "/suppliers":
 			response = `{"suppliers":[{"id":1,"name":"Synthetic supplier","cuit":"private sentinel"}]}`
 		case "/payments-summary":
@@ -65,7 +70,7 @@ func TestAccountingReadToolsUseScopedGETAndTypedOutput(t *testing.T) {
 	}
 	defer session.Close()
 	meta, err := session.ListTools(ctx, nil)
-	if err != nil || len(meta.Tools) != 4 {
+	if err != nil || len(meta.Tools) != 5 {
 		t.Fatal(meta, err)
 	}
 	for _, tool := range meta.Tools {
@@ -74,7 +79,8 @@ func TestAccountingReadToolsUseScopedGETAndTypedOutput(t *testing.T) {
 		}
 	}
 	for name, field := range map[string]string{
-		"gomar_list_documents": `"type":"credit_note"`, "gomar_list_suppliers": `"name":"Synthetic supplier"`,
+		"gomar_document_totals": `"total_minor":"10000000000000000000"`,
+		"gomar_list_documents":  `"type":"credit_note"`, "gomar_list_suppliers": `"name":"Synthetic supplier"`,
 		"gomar_payment_status_summary": `"posted":3`, "gomar_reconciliation_status_summary": `"review":1`,
 	} {
 		args := map[string]any{"entity_id": 14, "outlet_id": 16}

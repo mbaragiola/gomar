@@ -26,6 +26,17 @@ type DocumentList struct {
 	NextID    int64              `json:"next_id,omitempty"`
 }
 
+type DocumentCurrencyTotal struct {
+	Currency   string `json:"currency"`
+	Count      int64  `json:"count"`
+	TotalMinor string `json:"total_minor"`
+}
+
+type DocumentTotals struct {
+	Count  int64                   `json:"count"`
+	Totals []DocumentCurrencyTotal `json:"totals"`
+}
+
 type SupplierList struct {
 	Suppliers []Named `json:"suppliers"`
 	NextID    int64   `json:"next_id,omitempty"`
@@ -84,6 +95,49 @@ func (c *Client) Documents(ctx context.Context, entity, outlet int64, after *int
 		return DocumentList{}, invalidResponse
 	}
 	return result, nil
+}
+
+func validDocumentMinor(value string) bool {
+	if value == "0" {
+		return true
+	}
+	digits := strings.TrimPrefix(value, "-")
+	// A signed int64 count of int64 input amounts fits within 38 digits.
+	if len(digits) == 0 || len(digits) > 38 || digits[0] == '0' {
+		return false
+	}
+	for _, digit := range digits {
+		if digit < '0' || digit > '9' {
+			return false
+		}
+	}
+	return true
+}
+
+func (c *Client) DocumentTotals(ctx context.Context, entity, outlet int64) (DocumentTotals, error) {
+	var wire struct {
+		Count  *int64                  `json:"count"`
+		Totals []DocumentCurrencyTotal `json:"totals"`
+	}
+	if err := c.getWorkspace(ctx, entity, outlet, "/document-totals", nil, &wire); err != nil {
+		return DocumentTotals{}, err
+	}
+	if wire.Count == nil || *wire.Count < 0 || wire.Totals == nil || len(wire.Totals) > 2 {
+		return DocumentTotals{}, invalidResponse
+	}
+	remaining, previous := *wire.Count, ""
+	for _, bucket := range wire.Totals {
+		if (bucket.Currency != "ARS" && bucket.Currency != "USD") || bucket.Currency <= previous ||
+			bucket.Count <= 0 || bucket.Count > remaining || !validDocumentMinor(bucket.TotalMinor) {
+			return DocumentTotals{}, invalidResponse
+		}
+		remaining -= bucket.Count
+		previous = bucket.Currency
+	}
+	if remaining != 0 {
+		return DocumentTotals{}, invalidResponse
+	}
+	return DocumentTotals{Count: *wire.Count, Totals: wire.Totals}, nil
 }
 
 func (c *Client) Suppliers(ctx context.Context, entity, outlet int64, after *int64) (SupplierList, error) {

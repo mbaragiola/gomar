@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -127,6 +128,43 @@ func TestPostgresMCPAccountingReadsScopeAndProjection(t *testing.T) {
 		t.Fatal(docs)
 	}
 	read(base+"/documents?after_id=30&x=1", narrow, 422, nil)
+	if _, err := db.ExecContext(ctx, `INSERT INTO documents(id,entity_id,outlet_id,supplier_id,issuer_cuit,document_type,letter,point_of_sale,number,issue_date,due_date,
+  currency,total_minor,description,status,revision,created_at,updated_at,deleted_at) VALUES
+  (40,1,1,1,'00000000003','debit_note','A',1,40,'2025-11-01',NULL,'ARS',99999999999999,'private sentinel','reviewed',1,'time','time',NULL),
+  (41,1,1,1,'00000000003','credit_note','A',1,41,'2026-11-01',NULL,'ARS',99999999999999,'private sentinel','draft',1,'time','time',NULL),
+  (42,1,1,2,'00000000004','credit_note','A',1,42,'2026-11-01',NULL,'USD',125,'private sentinel','reviewed',1,'time','time',NULL)`); err != nil {
+		t.Fatal(err)
+	}
+	var totals mcpclient.DocumentTotals
+	read(base+"/document-totals", narrow, 200, &totals)
+	if !reflect.DeepEqual(totals, mcpclient.DocumentTotals{Count: 34, Totals: []mcpclient.DocumentCurrencyTotal{
+		{Currency: "ARS", Count: 33, TotalMinor: "775"}, {Currency: "USD", Count: 1, TotalMinor: "-125"},
+	}}) {
+		t.Fatal(totals)
+	}
+	// Compare independently against the native browser read for the same outlet.
+	nativeReq := httptest.NewRequest("GET", "http://example.com/api/v1/entities/1/totals?outlet_id=1", nil).WithContext(ctx)
+	for _, cookie := range cookies {
+		nativeReq.AddCookie(cookie)
+	}
+	native := httptest.NewRecorder()
+	router.ServeHTTP(native, nativeReq)
+	if native.Code != 200 || native.Body.String() != "{\"cantidad\":34,\"totales\":[{\"cantidad\":33,\"moneda\":\"ARS\",\"total\":\"7.75\"},{\"cantidad\":1,\"moneda\":\"USD\",\"total\":\"-1.25\"}]}\n" {
+		t.Fatal(native.Code, native.Body.String())
+	}
+	read(base+"/document-totals?status=reviewed", narrow, 422, nil)
+	read(base+"/document-totals?after_id=1", narrow, 422, nil)
+	read("1/outlets/2/document-totals", broad, 200, &totals)
+	if totals.Count != 1 || len(totals.Totals) != 1 || totals.Totals[0].TotalMinor != "25" {
+		t.Fatal(totals)
+	}
+	if _, err := db.ExecContext(ctx, "UPDATE documents SET deleted_at='time' WHERE id=33"); err != nil {
+		t.Fatal(err)
+	}
+	read("1/outlets/2/document-totals", broad, 200, &totals)
+	if totals.Count != 0 || totals.Totals == nil || len(totals.Totals) != 0 {
+		t.Fatal(totals)
+	}
 	var suppliers mcpclient.SupplierList
 	read(base+"/suppliers", narrow, 200, &suppliers)
 	if len(suppliers.Suppliers) != 30 || suppliers.Suppliers[0].ID != 1 || suppliers.Suppliers[1].ID != 4 || suppliers.NextID != 32 {
@@ -146,7 +184,7 @@ func TestPostgresMCPAccountingReadsScopeAndProjection(t *testing.T) {
 	if rec.Draft != 1 || rec.Review != 1 || rec.Closed != 1 {
 		t.Fatal(rec)
 	}
-	for _, endpoint := range []string{"/documents", "/suppliers", "/payments-summary", "/reconciliation-summary"} {
+	for _, endpoint := range []string{"/document-totals", "/documents", "/suppliers", "/payments-summary", "/reconciliation-summary"} {
 		read(base+endpoint, "", 401, nil)
 		read("1/outlets/2"+endpoint, narrow, 404, nil)
 		read("1/outlets/3"+endpoint, broad, 404, nil)
@@ -169,6 +207,7 @@ func TestPostgresMCPAccountingReadsScopeAndProjection(t *testing.T) {
 		t.Fatal(err)
 	}
 	read(base+"/documents", broad, 200, nil)
+	read(base+"/document-totals", broad, 200, nil)
 	read(base+"/suppliers", broad, 200, nil)
 	read(base+"/payments-summary", broad, 403, nil)
 }

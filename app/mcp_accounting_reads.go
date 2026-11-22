@@ -10,6 +10,7 @@ import (
 
 func (a *app) registerMCPAccountingReads(add func(string, string, http.HandlerFunc)) {
 	add(mcpWorkspaceBase+"/documents", http.MethodGet, a.mcpRead(mcpAccountingDocuments))
+	add(mcpWorkspaceBase+"/document-totals", http.MethodGet, a.mcpRead(mcpDocumentTotals))
 	add(mcpWorkspaceBase+"/suppliers", http.MethodGet, a.mcpRead(mcpAccountingSuppliers))
 	add(mcpWorkspaceBase+"/payments-summary", http.MethodGet, a.mcpRead(mcpPaymentStatusCounts))
 	add(mcpWorkspaceBase+"/reconciliation-summary", http.MethodGet, a.mcpRead(mcpReconciliationStatusCounts))
@@ -76,6 +77,43 @@ func mcpAccountingDocuments(r *http.Request, tx *sql.Tx, s mcpTokenScope) (any, 
 	if len(result.Documents) > mcpPageSize {
 		result.Documents = result.Documents[:mcpPageSize]
 		result.NextID = result.Documents[mcpPageSize-1].ID
+	}
+	return result, rows.Err()
+}
+
+type mcpDocumentCurrencyTotal struct {
+	Currency   string `json:"currency"`
+	Count      int64  `json:"count"`
+	TotalMinor string `json:"total_minor"`
+}
+
+func mcpDocumentTotals(r *http.Request, tx *sql.Tx, s mcpTokenScope) (any, error) {
+	if r.URL.RawQuery != "" || r.URL.ForceQuery {
+		return nil, badInput
+	}
+	outlet, err := mcpWorkspaceOutlet(r, tx, s)
+	if err != nil {
+		return nil, err
+	}
+	// Same input rows and credit-note polarity as the browser's documentTotals.
+	rows, err := tx.QueryContext(r.Context(), `SELECT d.currency,COUNT(*),
+  SUM(CASE WHEN d.document_type='credit_note' THEN -d.total_minor::numeric ELSE d.total_minor::numeric END)::text`+
+		documentScope+` GROUP BY d.currency ORDER BY d.currency COLLATE "C"`, s.ID, s.id, outlet)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	result := struct {
+		Count  int64                      `json:"count"`
+		Totals []mcpDocumentCurrencyTotal `json:"totals"`
+	}{Totals: []mcpDocumentCurrencyTotal{}}
+	for rows.Next() {
+		var total mcpDocumentCurrencyTotal
+		if err := rows.Scan(&total.Currency, &total.Count, &total.TotalMinor); err != nil {
+			return nil, err
+		}
+		result.Count += total.Count
+		result.Totals = append(result.Totals, total)
 	}
 	return result, rows.Err()
 }
