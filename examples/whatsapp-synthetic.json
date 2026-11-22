@@ -1,0 +1,1 @@
+{"object":"whatsapp_business_account","entry":[{"id":"demo-business","changes":[{"field":"messages","value":{"messaging_product":"whatsapp","metadata":{"phone_number_id":"demo-destination"},"messages":[{"from":"demo-sender","id":"wamid.demo-message","type":"text","text":{"body":"Cuánto debemos"}}]}}]}]}

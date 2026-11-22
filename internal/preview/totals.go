@@ -87,3 +87,8 @@ func summarize(asOf string, rows []invoice) (summary, error) {
 	})
 	return out, nil
 }
+
+// DemoSummary returns the same generated totals used by the Codex preview.
+func DemoSummary() (summary, error) {
+	return demoSummary()
+}

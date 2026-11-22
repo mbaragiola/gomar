@@ -8,13 +8,19 @@ import (
 	"os"
 
 	"github.com/mbaragiola/gomar/internal/preview"
+	"github.com/mbaragiola/gomar/internal/whatsapppreview"
 )
 
 func run(ctx context.Context, args []string, in io.ReadCloser, out io.WriteCloser) error {
-	if len(args) != 1 || args[0] != "--synthetic-demo" {
-		return errors.New("usage: gomar --synthetic-demo")
+	if len(args) == 1 {
+		switch args[0] {
+		case "--synthetic-demo":
+			return preview.Serve(ctx, in, out)
+		case "--synthetic-whatsapp":
+			return whatsapppreview.Replay(ctx, in, out)
+		}
 	}
-	return preview.Serve(ctx, in, out)
+	return errors.New("usage: gomar --synthetic-demo | --synthetic-whatsapp")
 }
 
 func main() {
