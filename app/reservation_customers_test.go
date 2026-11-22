@@ -140,3 +140,90 @@ func TestPostgresReservationCustomerContacts(t *testing.T) {
 		t.Fatal(response.Code, response.Body)
 	}
 }
+
+func TestPostgresContactSettingsRejectsConcurrentGrantRevocation(t *testing.T) {
+	ctx, db := testPostgresDB(t)
+	if err := migratePostgres(ctx, db); err != nil {
+		t.Fatal(err)
+	}
+	const user = "contact-authorization-fixture"
+	const pass = "synthetic contact authorization password"
+	if _, err := db.ExecContext(ctx, `INSERT INTO users(id,username,password,active,staff,superuser) VALUES(7801,$1,$2,TRUE,FALSE,FALSE)`, user, encodePassword(pass)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.ExecContext(ctx, `
+ INSERT INTO entities(id,name,cuit,active) VALUES(7801,'Synthetic contacts','00000007801',TRUE);
+ INSERT INTO outlets(id,entity_id,name,active) VALUES(7801,7801,'Center',TRUE);
+ INSERT INTO memberships(id,user_id,entity_id,role,active) VALUES(7801,7801,7801,'administration',TRUE);
+ INSERT INTO outlet_grants VALUES(7801,7801);
+ INSERT INTO reservation_venues(outlet_id,slug,display_name,cancellation_policy,enabled) VALUES(7801,'fixture-authz','Center','',TRUE);
+ `); err != nil {
+		t.Fatal(err)
+	}
+	a := &app{db: db, host: "example.com", publicReservations: true, reservationContacts: true}
+	router := a.routes()
+	cookies := postgresTestCookies(t, router, user, pass)
+	const endpoint = "http://example.com/api/v1/entities/7801/outlets/7801/reservations/contact-settings"
+	send := func() *httptest.ResponseRecorder {
+		r := httptest.NewRequest(http.MethodPut, endpoint, strings.NewReader(`{"collect_contact":true}`)).WithContext(ctx)
+		r.Header.Set("Content-Type", "application/json")
+		for _, c := range cookies {
+			r.AddCookie(c)
+			if c.Name == "csrftoken" {
+				r.Header.Set("X-CSRFToken", c.Value)
+			}
+		}
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, r)
+		return w
+	}
+	tx, err := db.BeginTx(ctx, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tx.Rollback()
+	if err = lockPostgresEntity(ctx, tx, 7801); err != nil {
+		t.Fatal(err)
+	}
+	var blocker int
+	if err = tx.QueryRowContext(ctx, `SELECT pg_backend_pid()`).Scan(&blocker); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = tx.ExecContext(ctx, `DELETE FROM outlet_grants WHERE membership_id=7801 AND outlet_id=7801`); err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan *httptest.ResponseRecorder, 1)
+	go func() { done <- send() }()
+	deadline := time.NewTimer(4 * time.Second)
+	defer deadline.Stop()
+	tick := time.NewTicker(20 * time.Millisecond)
+	defer tick.Stop()
+	waiting := false
+	for !waiting {
+		select {
+		case w := <-done:
+			t.Fatalf("write finished before entity lock was released: %d %s", w.Code, w.Body)
+		case <-deadline.C:
+			t.Fatal("write never waited for the membership-change transaction")
+		case <-tick.C:
+			if err = db.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM pg_stat_activity a WHERE a.datname=current_database() AND $1=ANY(pg_blocking_pids(a.pid)))`, blocker).Scan(&waiting); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	if err = tx.Commit(); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case w := <-done:
+		if w.Code != http.StatusNotFound {
+			t.Fatal(w.Code, w.Body)
+		}
+	case <-ctx.Done():
+		t.Fatal(ctx.Err())
+	}
+	var persisted bool
+	if err = db.QueryRowContext(ctx, `SELECT collect_contact FROM reservation_venues WHERE outlet_id=7801`).Scan(&persisted); err != nil || persisted {
+		t.Fatal(persisted, err)
+	}
+}

@@ -231,9 +231,19 @@ func (s reservationsService) requestPublic(ctx context.Context, venue string, in
 		return reservationResult{}, err
 	}
 	defer tx.Rollback()
+	var initialOutlet int64
+	if contactsEnabled {
+		initialOutlet, err = lockReservationContactEntity(ctx, tx, venue)
+		if err != nil {
+			return reservationResult{}, err
+		}
+	}
 	outlet, err := s.lockedVenue(ctx, tx, venue)
 	if err != nil {
 		return reservationResult{}, err
+	}
+	if contactsEnabled && outlet != initialOutlet {
+		return reservationResult{}, reservationUnavailable
 	}
 	collect := false
 	if contactsEnabled {

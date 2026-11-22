@@ -19,7 +19,7 @@ func (a *app) registerReservations(add func(string, string, http.HandlerFunc), p
 	a.registerReservationPublic(add, publicEnabled, time.Now)
 	if a.reservationContacts && publicEnabled {
 		add(reservationStaffBase+"/contact-settings", "GET", a.reservationStaff(reservationContactSettingsRead, false))
-		add(reservationStaffBase+"/contact-settings", "PUT", a.reservationStaff(reservationContactSettingsSave, true))
+		add(reservationStaffBase+"/contact-settings", "PUT", a.reservationContactSettingsWrite())
 	}
 	add(reservationStaffBase, "GET", a.reservationStaff(listReservationRequests, false))
 	add(reservationStaffBase+"/settings", "GET", a.reservationStaff(reservationSettingsRead, false))
@@ -100,6 +100,46 @@ func reservationContactSettingsRead(r *http.Request, tx *sql.Tx, outlet int64, _
 		return 0, nil, reservationUnavailable
 	}
 	return 200, map[string]bool{"collect_contact": collect}, err
+}
+
+func (a *app) reservationContactSettingsWrite() http.HandlerFunc {
+	handler := a.scopedRequest("", func(r *http.Request, tx *sql.Tx, m entityMembership, body []byte) (int, any, error) {
+		ctx := r.Context()
+		outlet, err := pathID(r, "outlet")
+		if err != nil {
+			return 0, nil, err
+		}
+		if err = requireReservationStaff(ctx, tx, m, outlet); err != nil {
+			return 0, nil, err
+		}
+		// Pin the authenticated login and serialize with membership changes
+		// before taking the same outlet lock the public submitter uses.
+		if _, err = lockWikiProposalBrowser(r, tx, m.userID); err != nil {
+			return 0, nil, err
+		}
+		if err = lockPostgresEntity(ctx, tx, m.ID); errors.Is(err, sql.ErrNoRows) {
+			return 0, nil, missingEntity
+		} else if err != nil {
+			return 0, nil, err
+		}
+		if err = lockPostgresOutlet(ctx, tx, outlet); errors.Is(err, sql.ErrNoRows) {
+			return 0, nil, missingOutlet
+		} else if err != nil {
+			return 0, nil, err
+		}
+		m, err = scopedMembership(tx, m.userID, m.ID, "")
+		if err != nil {
+			return 0, nil, err
+		}
+		if err = requireReservationStaff(ctx, tx, m, outlet); err != nil {
+			return 0, nil, err
+		}
+		return reservationContactSettingsSave(r, tx, outlet, body)
+	}, true)
+	return func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Cache-Control", "no-store")
+		handler(w, r)
+	}
 }
 
 func reservationContactSettingsSave(r *http.Request, tx *sql.Tx, outlet int64, body []byte) (int, any, error) {
