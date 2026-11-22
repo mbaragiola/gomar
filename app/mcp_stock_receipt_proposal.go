@@ -136,9 +136,7 @@ func (a *app) lockStockReceiptScope(ctx context.Context, tx *sql.Tx, s stockRece
 		return err
 	}
 	// Same operational roles as the native POS+stock movement route.
-	switch role {
-	case "administration", "purchasing", "accounting":
-	default:
+	if !hasStockReceiptRole(role) {
 		return forbiddenRole
 	}
 	var o int64
@@ -231,4 +229,8 @@ func (a *app) applyStockReceiptProposal(r *http.Request, tx *sql.Tx, u user, s s
 		return empty, err
 	}
 	return row.(stockMovement), nil
+}
+
+func hasStockReceiptRole(role string) bool {
+	return role == "administration" || role == "purchasing" || role == "accounting"
 }

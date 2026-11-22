@@ -20,18 +20,19 @@ type app struct {
 	db       *sql.DB
 	mcpClock func() time.Time
 
-	host                       string
-	payablesClock              func() time.Time
-	reconciliationClock        func() time.Time
-	privateRoot                *os.Root
-	publicReservations         bool
-	enablePOS                  bool
-	enableMCP                  bool
-	enableMCPWikiProposals     bool
-	enableMCPDocumentProposals bool
-	enableMCPWikiEditProposals bool
-	enableDelivery             bool
-	enableStock                bool
+	host                           string
+	payablesClock                  func() time.Time
+	reconciliationClock            func() time.Time
+	privateRoot                    *os.Root
+	publicReservations             bool
+	enablePOS                      bool
+	enableMCP                      bool
+	enableMCPWikiProposals         bool
+	enableMCPDocumentProposals     bool
+	enableMCPWikiEditProposals     bool
+	enableMCPStockReceiptProposals bool
+	enableDelivery                 bool
+	enableStock                    bool
 }
 
 type problem struct {
@@ -202,6 +203,7 @@ func (a *app) routes() http.Handler {
 	a.registerMCPWikiProposals(addAPI)
 	a.registerMCPDocumentProposals(addAPI)
 	a.registerMCPWikiEditProposals(addAPI)
+	a.registerMCPStockReceiptProposals(addAPI)
 	a.registerReservations(addAPI, a.publicReservations)
 	a.registerReservationMenus(addAPI, a.publicReservations)
 	unavailableOperation := func(_ *http.Request, _ *sql.Tx, _ entityMembership, _ []byte) (int, any, error) {
