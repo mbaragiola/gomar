@@ -194,7 +194,7 @@ func TestLiveStdioScopedTools(t *testing.T) {
 			t.Fatalf("unexpected result for %s: %s", test.name, wire)
 		}
 	}
-	if requests.Load() != 26 {
+	if requests.Load() != 27 {
 		t.Fatalf("wrong number of requests: %d", requests.Load())
 	}
 	if err := session.Close(); err != nil {
