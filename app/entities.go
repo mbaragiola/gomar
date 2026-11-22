@@ -164,6 +164,10 @@ func (a *app) entities(w http.ResponseWriter, r *http.Request, u user) error {
 			entry.Capabilities = append(slices.Clone(entry.Capabilities), "mcp_document_proposals")
 			slices.Sort(entry.Capabilities)
 		}
+		if a.enableMCPWikiEditProposals && entry.Role == "administration" && slices.Contains(entry.Capabilities, wikiEditCapability) {
+			entry.Capabilities = append(slices.Clone(entry.Capabilities), "mcp_wiki_edit_proposals")
+			slices.Sort(entry.Capabilities)
+		}
 		if a.enableDelivery && slices.Contains(entry.Capabilities, "read_business_data") {
 			entry.Capabilities = append(slices.Clone(entry.Capabilities), "read_delivery_orders")
 			slices.Sort(entry.Capabilities)

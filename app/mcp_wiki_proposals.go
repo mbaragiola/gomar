@@ -157,6 +157,7 @@ func requireWikiProposalScope(ctx context.Context, tx *sql.Tx, s wikiProposalSco
 
 const wikiKeyPurpose = "wiki"
 const documentKeyPurpose = "document_draft"
+const wikiEditKeyPurpose = "wiki_edit"
 
 func requireProposalScope(ctx context.Context, tx *sql.Tx, s wikiProposalScope, purpose string) error {
 	var membership int64
@@ -169,7 +170,7 @@ func requireProposalScope(ctx context.Context, tx *sql.Tx, s wikiProposalScope, 
 	if err != nil {
 		return err
 	}
-	allowed := purpose == wikiKeyPurpose && role == "administration" && slices.Contains(capabilities[role], "manage_entity_access") ||
+	allowed := (purpose == wikiKeyPurpose || purpose == wikiEditKeyPurpose) && role == "administration" && slices.Contains(capabilities[role], "manage_entity_access") ||
 		purpose == documentKeyPurpose && slices.Contains(capabilities[role], draftCapability)
 	if !allowed {
 		return forbiddenRole
@@ -271,6 +272,9 @@ func (a *app) revokeProposalToken(w http.ResponseWriter, r *http.Request, u user
 			WHERE token_id=$2 AND actor_id=$3 AND status='pending'`, now, id, u.id)
 	case documentKeyPurpose:
 		_, err = tx.ExecContext(r.Context(), `UPDATE mcp_document_draft_proposals SET status='revoked',draft_preview=NULL,supplier_fingerprint=NULL,decided_at=$1
+			WHERE token_id=$2 AND actor_id=$3 AND status='pending'`, now, id, u.id)
+	case wikiEditKeyPurpose:
+		_, err = tx.ExecContext(r.Context(), `UPDATE mcp_wiki_edit_proposals SET status='revoked',edit_preview=NULL,decided_at=$1
 			WHERE token_id=$2 AND actor_id=$3 AND status='pending'`, now, id, u.id)
 	}
 	if err != nil {
@@ -727,6 +731,14 @@ func (a *app) pruneWikiProposals(ctx context.Context) error {
 		SELECT id FROM mcp_document_draft_proposals WHERE status='pending' AND expires_at<=$1
 		ORDER BY expires_at,id LIMIT 100 FOR UPDATE SKIP LOCKED
 	) UPDATE mcp_document_draft_proposals p SET status='expired',draft_preview=NULL,supplier_fingerprint=NULL,decided_at=$1
+		FROM expired WHERE p.id=expired.id`, now.Unix())
+	if err != nil {
+		return err
+	}
+	_, err = a.db.ExecContext(ctx, `WITH expired AS (
+		SELECT id FROM mcp_wiki_edit_proposals WHERE status='pending' AND expires_at<=$1
+		ORDER BY expires_at,id LIMIT 100 FOR UPDATE SKIP LOCKED
+	) UPDATE mcp_wiki_edit_proposals p SET status='expired',edit_preview=NULL,decided_at=$1
 		FROM expired WHERE p.id=expired.id`, now.Unix())
 	if err != nil {
 		return err

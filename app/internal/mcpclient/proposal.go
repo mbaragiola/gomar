@@ -42,9 +42,7 @@ func (c *ProposalClient) ProposeWikiCreate(ctx context.Context, entity, outlet i
 		return out, errors.New("indicá la empresa, sucursal y un request_id UUIDv4")
 	}
 	title = strings.TrimSpace(title)
-	if title == "" || strings.TrimSpace(body) == "" || !utf8.ValidString(title) || !utf8.ValidString(body) ||
-		utf8.RuneCountInString(title) > 120 || utf8.RuneCountInString(body) > 12000 ||
-		len(body) > 48*1024 || strings.ContainsRune(title, 0) || strings.ContainsRune(body, 0) {
+	if !validWikiProposalText(title, body) {
 		return out, errors.New("revisá que el título y el contenido respeten los límites de la wiki")
 	}
 	payload, err := json.Marshal(struct {
@@ -56,6 +54,12 @@ func (c *ProposalClient) ProposeWikiCreate(ctx context.Context, entity, outlet i
 		return out, errors.New("no se pudo preparar la propuesta")
 	}
 	return c.postProposal(ctx, entity, outlet, "/wiki-create-proposals", payload)
+}
+
+func validWikiProposalText(title, body string) bool {
+	return title != "" && strings.TrimSpace(body) != "" && utf8.ValidString(title) && utf8.ValidString(body) &&
+		utf8.RuneCountInString(title) <= 120 && utf8.RuneCountInString(body) <= 12000 &&
+		len(body) <= 48*1024 && !strings.ContainsRune(title, 0) && !strings.ContainsRune(body, 0)
 }
 
 // path is a compile-time suffix from a typed proposal method, never tool input.
@@ -82,6 +86,9 @@ func (c *ProposalClient) postProposal(ctx context.Context, entity, outlet int64,
 	case http.StatusForbidden, http.StatusNotFound:
 		return out, errors.New("la propuesta no está disponible con tus permisos de Gomar")
 	case http.StatusConflict:
+		if path == "/wiki-edit-proposals" {
+			return out, errors.New("la página o la propuesta cambió; volvé a leer la página y usá un request_id nuevo si cambia el contenido")
+		}
 		return out, errors.New("el request_id ya se usó con otro contenido")
 	case http.StatusUnprocessableEntity:
 		return out, errors.New("Gomar rechazó los campos de la propuesta")

@@ -4,6 +4,7 @@ import { lockOfflinePOS } from './pos/storage'
 import { ApiError, download, request } from './api'
 import ThemeSelect from './components/ThemeSelect.vue'
 import McpDocumentProposals from './components/McpDocumentProposals.vue'
+import McpWikiEditProposals from './components/McpWikiEditProposals.vue'
 import McpWikiProposals from './components/McpWikiProposals.vue'
 import McpConnect from './components/McpConnect.vue'
 import InstallApp from './components/InstallApp.vue'
@@ -94,6 +95,7 @@ const canManageSuppliers = computed(() => hasCapability('manage_suppliers'))
 const canReadStock = computed(() => hasCapability('read_pos_stock'))
 const canReadDelivery = computed(() => hasCapability('read_delivery_orders'))
 const canReviewDocumentProposals = computed(() => hasCapability('mcp_document_proposals'))
+const canReviewWikiEditProposals = computed(() => hasCapability('mcp_wiki_edit_proposals'))
 const canReviewWikiProposals = computed(() => hasCapability('mcp_wiki_proposals'))
 const canConnectMCP = computed(() => hasCapability('mcp_read'))
 const canReadBusiness = computed(() => hasCapability('read_business_data'))
@@ -1057,6 +1059,13 @@ onMounted(() => { if (!publicVenue) return initialize() })
         <McpWikiProposals
           v-if="canReviewWikiProposals && selectedEntityId && selectedOutletId && outlets.some((item) => item.id === selectedOutletId)"
           :key="`wiki-proposals-${selectedEntityId}-${selectedOutletId}`"
+          :entity="selectedEntityId"
+          :outlet="selectedOutletId"
+          :outlet-name="outlets.find((item) => item.id === selectedOutletId)?.nombre ?? 'este local'"
+        />
+        <McpWikiEditProposals
+          v-if="canReviewWikiEditProposals && selectedEntityId && selectedOutletId && outlets.some((item) => item.id === selectedOutletId)"
+          :key="`wiki-edit-proposals-${selectedEntityId}-${selectedOutletId}`"
           :entity="selectedEntityId"
           :outlet="selectedOutletId"
           :outlet-name="outlets.find((item) => item.id === selectedOutletId)?.nombre ?? 'este local'"

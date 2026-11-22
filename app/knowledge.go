@@ -115,11 +115,9 @@ func writeKnowledge(r *http.Request, tx *sql.Tx, m entityMembership, raw []byte)
 	if err := decodePayables(raw, &input, fields...); err != nil {
 		return 0, nil, err
 	}
-	title := strings.TrimSpace(input.Title)
-	if title == "" || strings.TrimSpace(input.Body) == "" || utf8.RuneCountInString(title) > 120 ||
-		utf8.RuneCountInString(input.Body) > 12000 || len(input.Body) > 48<<10 ||
-		strings.ContainsRune(title, 0) || strings.ContainsRune(input.Body, 0) {
-		return 0, nil, badInput
+	title, err := normalizeKnowledgeText(input.Title, input.Body)
+	if err != nil {
+		return 0, nil, err
 	}
 	stamp := time.Now().UTC().Format(time.RFC3339Nano)
 	search := strings.ToLower(title + "\n" + input.Body)
@@ -160,4 +158,14 @@ func writeKnowledge(r *http.Request, tx *sql.Tx, m entityMembership, raw []byte)
 	_, err = tx.ExecContext(ctx, `INSERT INTO knowledge_article_versions
 		(article_id,version,actor_id,recorded_at) VALUES($1,$2,$3,$4)`, stored.ID, stored.Version, m.userID, stamp)
 	return status, stored, err
+}
+
+func normalizeKnowledgeText(rawTitle, body string) (string, error) {
+	title := strings.TrimSpace(rawTitle)
+	if title == "" || strings.TrimSpace(body) == "" || utf8.RuneCountInString(title) > 120 ||
+		utf8.RuneCountInString(body) > 12000 || len(body) > 48<<10 ||
+		strings.ContainsRune(title, 0) || strings.ContainsRune(body, 0) {
+		return "", badInput
+	}
+	return title, nil
 }
