@@ -17,3 +17,11 @@ branch, action and resulting product ID and revision in the terminal
 receipt in the same transaction as the native revision-1 insert.
 Approved retries must return that receipt without calling the adapter
 again. There is no change to existing revisions, sale history or stock.
+
+The hosted workflow is off by default. With POS enabled,
+`-enable-mcp-pos-create-proposals` permits a scoped named session for
+`pos_product_create`. The fixed `pos-create-proposals` outlet route
+accepts `{request_id,product:{name,price_minor,active}}`; only the issuing
+browser session sees the full preview and may post `{decision,digest,confirm:true}`.
+A bearer response contains only the proposal ID, state and expiry.
+Rejection makes no catalog change; expiry and revocation clear the preview.
