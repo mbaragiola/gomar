@@ -501,3 +501,105 @@ describe('Ajustes de stock', () => {
     panel.unmount()
   })
 })
+
+describe('Precio y disponibilidad de caja', () => {
+  const price = {
+    product_id: 17, expected_revision: 5, name: '<b>Pan</b>', current_price_minor: 200, price_minor: 350, current_active: true, active: true,
+  }
+  const availability = { ...price, price_minor: 200, active: false }
+  async function openCatalog(fetch: unknown) {
+    vi.stubGlobal('fetch', fetch)
+    const panel = mount(McpProposalSessions, { props: { entity: 2, outlet: 7, outletName: 'Centro de prueba', canRename: false, canChangeCatalog: true } })
+    await button(panel, 'Sesiones de propuestas').trigger('click')
+    await flushPromises()
+    return panel
+  }
+
+  it('requires one explicit named action and shows the exact per-action CLI switch', async () => {
+    const action = 'pos_product_availability_change'
+    const fetch = vi.fn()
+      .mockResolvedValueOnce(result({ sessions: [] }))
+      .mockResolvedValueOnce(result({ proposals: [] }))
+      .mockResolvedValueOnce(result({ proposals: [] }))
+      .mockResolvedValueOnce(result({ ...session(), actions: [action], token }, 201))
+    const panel = await openCatalog(fetch)
+    const [priceChoice, availabilityChoice] = panel.findAll<HTMLInputElement>('input[type=checkbox]')
+    expect([priceChoice.element.checked, availabilityChoice.element.checked]).toEqual([false, false])
+    expect(button(panel, 'Crear sesión de propuestas').attributes()).toHaveProperty('disabled')
+    await priceChoice.setValue(true)
+    expect(panel.text()).toContain('--proposal-session-action=pos_product_price_change')
+    await availabilityChoice.setValue(true)
+    expect([priceChoice.element.checked, availabilityChoice.element.checked]).toEqual([false, true])
+    await button(panel, 'Crear sesión de propuestas').trigger('click')
+    await flushPromises()
+    expect(fetch).toHaveBeenLastCalledWith(keyPath, expect.objectContaining({
+      method: 'POST', body: JSON.stringify({ entity_id: 2, outlet_id: 7, actions: [action] }),
+    }))
+    expect(panel.text()).toContain('--proposal-session-action=pos_product_availability_change')
+    expect(panel.text()).not.toContain(token)
+    panel.unmount()
+  })
+
+  it.each([
+    { changePrice: true, outcome: 'approve' },
+    { changePrice: false, outcome: 'approve' },
+    { changePrice: true, outcome: 'reject' },
+    { changePrice: false, outcome: 'stale' },
+  ])('shows exact before and after, price=$changePrice, outcome=$outcome', async ({ changePrice, outcome }) => {
+    const approved = outcome === 'approve'
+    const rejected = outcome === 'reject'
+    const kind = changePrice ? 'precio' : 'disponibilidad'
+    const fetch = vi.fn()
+      .mockResolvedValueOnce(result({ sessions: [] }))
+      .mockResolvedValueOnce(result({ proposals: [pending()] }))
+      .mockResolvedValueOnce(result({ proposals: [pending()] }))
+      .mockResolvedValueOnce(result({ ...pending(), change: changePrice ? price : availability, digest }))
+      .mockResolvedValueOnce(outcome === 'stale' ? result({ detail: token }, 409)
+        : result({ ...pending(), status: approved ? 'approved' : 'rejected', ...(approved ? { product_id: 17, product_revision: 6 } : {}) }))
+      .mockResolvedValueOnce(result({ sessions: [] }))
+      .mockResolvedValueOnce(result({ proposals: [pending()] }))
+      .mockResolvedValueOnce(result({ proposals: [pending()] }))
+    const panel = await openCatalog(fetch)
+    await button(panel, 'Ver propuesta 8 de ' + kind).trigger('click')
+    await flushPromises()
+    const preview = panel.get('[aria-label="Vista previa de la propuesta"]')
+    expect(preview.text()).toContain('Centro de prueba · Producto 17 · Versión 5')
+    expect(preview.text()).toContain('Nombre sin cambios: <b>Pan</b>')
+    expect(preview.find('b').exists()).toBe(false)
+    expect(preview.text()).toContain(changePrice ? 'Precio actual: ARS 2,00' : 'Disponibilidad actual: Activo')
+    expect(preview.text()).toContain(changePrice ? 'Precio propuesto: ARS 3,50' : 'Disponibilidad propuesta: Inactivo')
+    expect(preview.text()).toContain(changePrice ? 'Disponibilidad sin cambios: Activo' : 'Precio sin cambios: ARS 2,00')
+    const proceed = rejected ? 'Rechazar propuesta' : changePrice ? 'Continuar con el precio' : 'Continuar con la disponibilidad'
+    await button(panel, proceed).trigger('click')
+    await button(panel, 'Volver sin cambios').trigger('click')
+    expect(fetch).toHaveBeenCalledTimes(4)
+    await button(panel, proceed).trigger('click')
+    await button(panel, rejected ? 'Sí, rechazar' : changePrice ? 'Confirmar nuevo precio' : 'Confirmar disponibilidad').trigger('click')
+    await flushPromises()
+    expect(fetch.mock.calls[4]).toEqual([base + (changePrice ? '/pos-price-proposals' : '/pos-availability-proposals') + '/8/decision', expect.objectContaining({
+      method: 'POST', body: JSON.stringify({ decision: rejected ? 'reject' : 'approve', digest, confirm: true }),
+    })])
+    expect(fetch.mock.calls.filter(call => call[1].method === 'POST')).toHaveLength(1)
+    expect(panel.text()).toContain(approved ? changePrice ? 'Precio actualizado' : 'Disponibilidad actualizada'
+      : rejected ? 'El producto no cambió' : 'No se cambió la disponibilidad')
+    expect(panel.text()).not.toContain(token)
+    panel.unmount()
+  })
+
+  it.each([
+    { change: { ...price, active: false }, kind: 'precio' },
+    { change: { ...price, price_minor: 2.5 }, kind: 'precio' },
+    { change: { ...availability, active: undefined }, kind: 'disponibilidad' },
+  ])('refuses incomplete or mixed changes in $kind', async ({ change, kind }) => {
+    const fetch = vi.fn()
+      .mockResolvedValueOnce(result({ sessions: [] }))
+      .mockResolvedValueOnce(result({ proposals: [pending()] }))
+      .mockResolvedValueOnce(result({ proposals: [pending()] }))
+      .mockResolvedValueOnce(result({ ...pending(), change, digest }))
+    const panel = await openCatalog(fetch)
+    await button(panel, 'Ver propuesta 8 de ' + kind).trigger('click')
+    await flushPromises()
+    expect(panel.get('[role=alert]').text()).toBe('No pude abrir la propuesta.')
+    panel.unmount()
+  })
+})

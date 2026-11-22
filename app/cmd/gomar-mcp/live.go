@@ -110,6 +110,16 @@ func runLive(ctx context.Context, args []string, in io.Reader, out io.Writer) er
 			return errors.New(liveUsage)
 		}
 		addSessionTool = addStockPhysicalCountProposalTool
+	case "pos_product_price_change":
+		if *proposalSessionFile == "" {
+			return errors.New(liveUsage)
+		}
+		addSessionTool = addPOSPriceProposalTool
+	case "pos_product_availability_change":
+		if *proposalSessionFile == "" {
+			return errors.New(liveUsage)
+		}
+		addSessionTool = addPOSAvailabilityProposalTool
 	default:
 		return errors.New(liveUsage)
 	}

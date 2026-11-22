@@ -63,7 +63,7 @@ func proposalLoginHash(r *http.Request) ([32]byte, error) {
 }
 
 func (a *app) registerNamedProposalSessions(add func(string, string, http.HandlerFunc)) {
-	if !a.posRenameProposalsEnabled() && !a.documentReviewProposalsEnabled() && !a.reconciliationDraftProposalsEnabled() && !a.documentEditProposalsEnabled() && !a.stockAdjustmentProposalsEnabled() {
+	if !a.posRenameProposalsEnabled() && !a.documentReviewProposalsEnabled() && !a.reconciliationDraftProposalsEnabled() && !a.documentEditProposalsEnabled() && !a.stockAdjustmentProposalsEnabled() && !a.posCatalogProposalsEnabled() {
 		return
 	}
 	add(proposalSessionsAuthPath, http.MethodPost, a.protectedWikiProposal(a.issueNamedProposalSession))
@@ -129,6 +129,11 @@ func (a *app) issueNamedProposalSession(w http.ResponseWriter, r *http.Request, 
 			return badInput
 		}
 		err = a.lockStockReceiptScope(ctx, tx, stockReceiptScope{u.id, input.Entity, input.Outlet})
+	case posPriceSessionAction, posAvailabilitySessionAction:
+		if !a.posCatalogProposalsEnabled() {
+			return badInput
+		}
+		_, err = a.lockPOSRenameScope(ctx, tx, posRenameScope{u.id, input.Entity, input.Outlet})
 	default:
 		return badInput
 	}
@@ -193,6 +198,10 @@ func (a *app) revokeNamedProposalSession(w http.ResponseWriter, r *http.Request,
 		return err
 	}
 	if _, err = tx.ExecContext(ctx, `UPDATE mcp_reconciliation_draft_proposals SET status='revoked',draft_preview=NULL,decided_at=$1
+ WHERE session_id=$2 AND actor_id=$3 AND status='pending'`, now, id, u.id); err != nil {
+		return err
+	}
+	if _, err = tx.ExecContext(ctx, `UPDATE mcp_pos_catalog_proposals SET status='revoked',change_preview=NULL,decided_at=$1
  WHERE session_id=$2 AND actor_id=$3 AND status='pending'`, now, id, u.id); err != nil {
 		return err
 	}

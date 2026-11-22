@@ -91,8 +91,8 @@ func (c *ProposalClient) postProposal(ctx context.Context, entity, outlet int64,
 			return out, errors.New("la página o la propuesta cambió; volvé a leer la página y usá un request_id nuevo si cambia el contenido")
 		case "/stock-receipt-proposals":
 			return out, errors.New("revisá que el producto siga activo y con stock habilitado en esta sucursal; usá un request_id nuevo si cambia el contenido")
-		case "/pos-rename-proposals":
-			return out, errors.New("revisá la revisión y el nombre actual del producto; usá un request_id nuevo si cambia el contenido")
+		case "/pos-rename-proposals", "/pos-price-proposals", "/pos-availability-proposals":
+			return out, errors.New("revisá la revisión y los datos actuales del producto; usá un request_id nuevo si cambia el contenido")
 		case "/document-review-proposals":
 			return out, errors.New("volvé a leer el borrador y su revisión antes de proponer la revisión; usá un request_id nuevo si cambia el contenido")
 		case "/document-edit-proposals":
