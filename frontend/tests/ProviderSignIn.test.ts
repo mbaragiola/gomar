@@ -54,7 +54,7 @@ describe('Ingreso con proveedores', () => {
     await flushPromises()
     expect(panel.find('form').exists()).toBe(false)
     expect(panel.get('a[href="/admin/login/"]').text()).toBe('Recuperación para administradores')
-    expect(panel.findAll('button').filter(b => b.text().startsWith('Continuar con'))).toHaveLength(4)
+    expect(panel.findAll('button').filter(b => b.text().startsWith('Continuar con'))).toHaveLength(3)
     expect(fetch.mock.calls.some(([url]) => url.endsWith('/auth/login'))).toBe(false)
     panel.unmount()
   })
