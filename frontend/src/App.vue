@@ -3,6 +3,7 @@ import { computed, onMounted, reactive, ref } from 'vue'
 import { lockOfflinePOS } from './pos/storage'
 import { ApiError, download, request } from './api'
 import ThemeSelect from './components/ThemeSelect.vue'
+import McpConnect from './components/McpConnect.vue'
 import InstallApp from './components/InstallApp.vue'
 import StockPanel from './components/StockPanel.vue'
 import DeliveryInbox from './components/DeliveryInbox.vue'
@@ -90,6 +91,7 @@ const canDownload = computed(() => hasCapability('download_attachments'))
 const canManageSuppliers = computed(() => hasCapability('manage_suppliers'))
 const canReadStock = computed(() => hasCapability('read_pos_stock'))
 const canReadDelivery = computed(() => hasCapability('read_delivery_orders'))
+const canConnectMCP = computed(() => hasCapability('mcp_read'))
 const canReadBusiness = computed(() => hasCapability('read_business_data'))
 const canManageAccess = computed(() => hasCapability('manage_entity_access'))
 const canRecordPayments = computed(() => hasCapability('record_supplier_payments'))
@@ -1041,6 +1043,13 @@ onMounted(() => { if (!publicVenue) return initialize() })
             {{ showStock ? 'Cerrar stock del local' : 'Ver stock del local' }}
           </button>
         </div>
+        <McpConnect
+          v-if="canConnectMCP && selectedEntityId && selectedOutletId && outlets.some((item) => item.id === selectedOutletId)"
+          :key="`mcp-${selectedEntityId}-${selectedOutletId}`"
+          :entity="selectedEntityId"
+          :outlet="selectedOutletId"
+          :outlet-name="outlets.find((item) => item.id === selectedOutletId)?.nombre ?? 'este local'"
+        />
         <StockPanel
           v-if="showStock && selectedEntityId && selectedOutletId && canReadStock"
           :key="`stock-${selectedEntityId}-${selectedOutletId}`"
