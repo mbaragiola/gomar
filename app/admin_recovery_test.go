@@ -39,7 +39,7 @@ func TestSignInModeRequiresReadyRecoveryAndAllProviders(t *testing.T) {
 
 func TestPostgresAdminRecoveryAndProviderOnlyRealm(t *testing.T) {
 	ctx, db := testPostgresDB(t)
-	if err := migratePostgresThrough(ctx, db, postgresMigrationNames[:11]); err != nil {
+	if err := migratePostgresThrough(ctx, db, postgresMigrationNames[:12]); err != nil {
 		t.Fatal(err)
 	}
 	if err := verifyLocalAdminRecoveryAccount(ctx, db); err == nil {

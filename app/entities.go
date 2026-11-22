@@ -186,6 +186,10 @@ func (a *app) entities(w http.ResponseWriter, r *http.Request, u user) error {
 			entry.Capabilities = append(slices.Clone(entry.Capabilities), "mcp_document_review_proposals")
 			slices.Sort(entry.Capabilities)
 		}
+		if a.reconciliationDraftProposalsEnabled() && slices.Contains(entry.Capabilities, "reconcile_financial_data") {
+			entry.Capabilities = append(slices.Clone(entry.Capabilities), "mcp_reconciliation_draft_proposals")
+			slices.Sort(entry.Capabilities)
+		}
 		if manageProposalSessions {
 			entry.Capabilities = append(slices.Clone(entry.Capabilities), "mcp_proposal_session_management")
 			slices.Sort(entry.Capabilities)

@@ -69,6 +69,7 @@ func (a *app) registerMCP(add func(string, string, http.HandlerFunc)) {
 	a.registerMCPAccountingReads(add)
 	a.registerMCPBookingReads(add)
 	a.registerMCPDetailReads(add)
+	a.registerMCPFinanceStockReads(add)
 }
 
 func (a *app) issueMCPToken(w http.ResponseWriter, r *http.Request, u user) error {

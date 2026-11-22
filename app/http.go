@@ -23,21 +23,22 @@ type app struct {
 	providerOnly  bool
 	mcpClock      func() time.Time
 
-	host                             string
-	payablesClock                    func() time.Time
-	reconciliationClock              func() time.Time
-	privateRoot                      *os.Root
-	publicReservations               bool
-	enablePOS                        bool
-	enableMCP                        bool
-	enableMCPWikiProposals           bool
-	enableMCPDocumentProposals       bool
-	enableMCPWikiEditProposals       bool
-	enableMCPStockReceiptProposals   bool
-	enableMCPProposalSessions        bool
-	enableMCPDocumentReviewProposals bool
-	enableDelivery                   bool
-	enableStock                      bool
+	host                                  string
+	payablesClock                         func() time.Time
+	reconciliationClock                   func() time.Time
+	privateRoot                           *os.Root
+	publicReservations                    bool
+	enablePOS                             bool
+	enableMCP                             bool
+	enableMCPWikiProposals                bool
+	enableMCPDocumentProposals            bool
+	enableMCPWikiEditProposals            bool
+	enableMCPStockReceiptProposals        bool
+	enableMCPProposalSessions             bool
+	enableMCPDocumentReviewProposals      bool
+	enableMCPReconciliationDraftProposals bool
+	enableDelivery                        bool
+	enableStock                           bool
 }
 
 type problem struct {
@@ -217,6 +218,7 @@ func (a *app) routes() http.Handler {
 	a.registerNamedProposalSessions(addAPI)
 	a.registerMCPPOSRenameProposals(addAPI)
 	a.registerMCPDocumentReviewProposals(addAPI)
+	a.registerMCPReconciliationDraftProposals(addAPI)
 	a.registerReservations(addAPI, a.publicReservations)
 	a.registerReservationMenus(addAPI, a.publicReservations)
 	unavailableOperation := func(_ *http.Request, _ *sql.Tx, _ entityMembership, _ []byte) (int, any, error) {

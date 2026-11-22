@@ -11,7 +11,7 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
-const liveUsage = "uso: gomar-mcp --origin=<origen de Gomar> --token-file=<ruta absoluta privada> [--wiki-proposal-token-file=<ruta privada>] [--document-proposal-token-file=<ruta privada>] [--wiki-edit-proposal-token-file=<ruta privada>] [--stock-receipt-proposal-token-file=<ruta privada>] [--proposal-session-token-file=<ruta privada> --proposal-session-action=pos_product_rename|document_draft_review]"
+const liveUsage = "uso: gomar-mcp --origin=<origen de Gomar> --token-file=<ruta absoluta privada> [--wiki-proposal-token-file=<ruta privada>] [--document-proposal-token-file=<ruta privada>] [--wiki-edit-proposal-token-file=<ruta privada>] [--stock-receipt-proposal-token-file=<ruta privada>] [--proposal-session-token-file=<ruta privada> --proposal-session-action=pos_product_rename|document_draft_review|reconciliation_draft_create]"
 
 type noArgs struct{}
 type entityArgs struct {
@@ -50,6 +50,7 @@ func liveServer(client *mcpclient.Client) *mcp.Server {
 	addAccountingReadTools(server, client)
 	addBookingReadTools(server, client)
 	addDetailReadTools(server, client)
+	addFinanceStockReadTools(server, client)
 	return server
 }
 
@@ -89,6 +90,11 @@ func runLive(ctx context.Context, args []string, in io.Reader, out io.Writer) er
 			return errors.New(liveUsage)
 		}
 		addSessionTool = addDocumentReviewProposalTool
+	case "reconciliation_draft_create":
+		if *proposalSessionFile == "" {
+			return errors.New(liveUsage)
+		}
+		addSessionTool = addReconciliationDraftProposalTool
 	default:
 		return errors.New(liveUsage)
 	}
