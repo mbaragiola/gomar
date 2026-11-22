@@ -400,3 +400,104 @@ describe('Editar fechas e importes de un borrador', () => {
     panel.unmount()
   })
 })
+
+describe('Ajustes de stock', () => {
+  const waste = { product_id: 21, product_name: '<b>Pan</b>', revision: 3, stock_minimum: 2, latest_movement: 8, before: 7, after: 4, delta: -3, quantity: 3 }
+  const count = { ...waste, quantity: 0, before: 7, after: 0, delta: -7 }
+  const issuePath = '/api/v1/auth/mcp-proposal-sessions'
+  const wastePath = base + '/stock-waste-proposals'
+  const countPath = base + '/stock-physical-count-proposals'
+  async function openStock(fetch: unknown) {
+    vi.stubGlobal('fetch', fetch)
+    const panel = mount(McpProposalSessions, { props: { entity: 2, outlet: 7, outletName: 'Centro de prueba', canRename: false, canAdjustStock: true } })
+    await button(panel, 'Sesiones de propuestas').trigger('click')
+    await flushPromises()
+    return panel
+  }
+
+  it('offers two unchecked actions and issues only the selected stock action', async () => {
+    const fetch = vi.fn()
+      .mockResolvedValueOnce(result({ sessions: [] }))
+      .mockResolvedValueOnce(result({ proposals: [] }))
+      .mockResolvedValueOnce(result({ proposals: [] }))
+      .mockResolvedValueOnce(result({ ...session(), actions: ['stock_physical_count'], token }, 201))
+    const panel = await openStock(fetch)
+    const [merma, conteo] = panel.findAll<HTMLInputElement>('input[type=checkbox]')
+    expect([merma.element.checked, conteo.element.checked]).toEqual([false, false])
+    await merma.setValue(true)
+    expect(panel.text()).toContain('--proposal-session-action=stock_waste_record')
+    await conteo.setValue(true)
+    expect([merma.element.checked, conteo.element.checked]).toEqual([false, true])
+    await button(panel, 'Crear sesión de propuestas').trigger('click')
+    await flushPromises()
+    expect(panel.text()).toContain('--proposal-session-action=stock_physical_count')
+    expect(fetch).toHaveBeenLastCalledWith(issuePath, expect.objectContaining({
+      method: 'POST', body: JSON.stringify({ entity_id: 2, outlet_id: 7, actions: ['stock_physical_count'] }),
+    }))
+    expect(panel.text()).not.toContain(token)
+    panel.unmount()
+  })
+
+  it.each([
+    { physical: true, outcome: 'approve' },
+    { physical: false, outcome: 'approve' },
+    { physical: false, outcome: 'reject' },
+    { physical: true, outcome: 'stale' },
+  ])('shows exact product and delta; physical=$physical, outcome=$outcome', async ({ physical, outcome }) => {
+    const approved = outcome === 'approve'
+    const rejected = outcome === 'reject'
+    const fetch = vi.fn()
+      .mockResolvedValueOnce(result({ sessions: [] }))
+      .mockResolvedValueOnce(result({ proposals: [pending()] }))
+      .mockResolvedValueOnce(result({ proposals: [pending()] }))
+      .mockResolvedValueOnce(result({ ...pending(), adjustment: physical ? count : waste, digest }))
+      .mockResolvedValueOnce(outcome === 'stale'
+        ? result({ detail: token }, 409)
+        : result({ ...pending(), status: approved ? 'approved' : 'rejected', ...(approved ? { movement_id: 23 } : {}) }))
+      .mockResolvedValueOnce(result({ sessions: [] }))
+      .mockResolvedValueOnce(result({ proposals: [pending()] }))
+      .mockResolvedValueOnce(result({ proposals: [pending()] }))
+    const panel = await openStock(fetch)
+    await button(panel, 'Ver propuesta 8 de ' + (physical ? 'conteo' : 'merma')).trigger('click')
+    await flushPromises()
+    const preview = panel.get('[aria-label="Vista previa de la propuesta"]')
+    expect(preview.text()).toContain('Centro de prueba')
+    expect(preview.text()).toContain('Producto: <b>Pan</b> (21)')
+    expect(preview.find('b').exists()).toBe(false)
+    expect(preview.text()).toContain(physical ? 'Unidades contadas: 0' : 'Unidades de merma: 3')
+    expect(preview.text()).toContain(physical ? 'Saldo: 7 → 0' : 'Saldo: 7 → 4')
+    expect(preview.text()).toContain(physical ? 'Cambio: -7' : 'Cambio: -3')
+    const begin = rejected ? 'Rechazar propuesta' : physical ? 'Continuar con el conteo' : 'Continuar con la merma'
+    await button(panel, begin).trigger('click')
+    await button(panel, 'Volver sin cambios').trigger('click')
+    expect(fetch).toHaveBeenCalledTimes(4)
+    await button(panel, begin).trigger('click')
+    await button(panel, rejected ? 'Sí, rechazar' : physical ? 'Registrar conteo físico' : 'Registrar merma').trigger('click')
+    await flushPromises()
+    expect(fetch.mock.calls[4]).toEqual([(physical ? countPath : wastePath) + '/8/decision', expect.objectContaining({
+      method: 'POST', body: JSON.stringify({ decision: rejected ? 'reject' : 'approve', digest, confirm: true }),
+    })])
+    expect(fetch.mock.calls.filter(call => call[1].method === 'POST')).toHaveLength(1)
+    expect(panel.text()).toContain(approved ? physical ? 'Conteo físico registrado' : 'Merma registrada' : rejected ? 'El stock no cambió' : 'El stock o la propuesta cambiaron')
+    expect(panel.text()).not.toContain(token)
+    panel.unmount()
+  })
+
+  it.each([
+    { physical: false, adjustment: { ...waste, quantity: 0, after: 7, delta: 0 } },
+    { physical: true, adjustment: { ...count, quantity: null } },
+    { physical: true, adjustment: { ...count, delta: 7 } },
+  ])('refuses mismatched or invalid pending stock previews', async ({ physical, adjustment }) => {
+    const fetch = vi.fn()
+      .mockResolvedValueOnce(result({ sessions: [] }))
+      .mockResolvedValueOnce(result({ proposals: [pending()] }))
+      .mockResolvedValueOnce(result({ proposals: [pending()] }))
+      .mockResolvedValueOnce(result({ ...pending(), adjustment, digest }))
+    const panel = await openStock(fetch)
+    await button(panel, 'Ver propuesta 8 de ' + (physical ? 'conteo' : 'merma')).trigger('click')
+    await flushPromises()
+    expect(panel.get('[role=alert]').text()).toBe('No pude abrir la propuesta.')
+    expect(panel.find('[aria-label="Vista previa de la propuesta"]').exists()).toBe(false)
+    panel.unmount()
+  })
+})
