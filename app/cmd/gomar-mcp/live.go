@@ -11,7 +11,7 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
-const liveUsage = "uso: gomar-mcp --origin=<origen de Gomar> --token-file=<ruta absoluta privada> [--wiki-proposal-token-file=<ruta privada>] [--document-proposal-token-file=<ruta privada>] [--wiki-edit-proposal-token-file=<ruta privada>]"
+const liveUsage = "uso: gomar-mcp --origin=<origen de Gomar> --token-file=<ruta absoluta privada> [--wiki-proposal-token-file=<ruta privada>] [--document-proposal-token-file=<ruta privada>] [--wiki-edit-proposal-token-file=<ruta privada>] [--stock-receipt-proposal-token-file=<ruta privada>]"
 
 type noArgs struct{}
 type entityArgs struct {
@@ -64,6 +64,7 @@ func runLive(ctx context.Context, args []string, in io.Reader, out io.Writer) er
 	proposalFile := fs.String("wiki-proposal-token-file", "", "")
 	documentProposalFile := fs.String("document-proposal-token-file", "", "")
 	wikiEditProposalFile := fs.String("wiki-edit-proposal-token-file", "", "")
+	stockReceiptProposalFile := fs.String("stock-receipt-proposal-token-file", "", "")
 	if fs.Parse(args) != nil || fs.NArg() != 0 || *origin == "" || !filepath.IsAbs(*tokenFile) {
 		return errors.New(liveUsage)
 	}
@@ -85,6 +86,7 @@ func runLive(ctx context.Context, args []string, in io.Reader, out io.Writer) er
 		{*proposalFile, addWikiProposalTool},
 		{*documentProposalFile, addDocumentProposalTool},
 		{*wikiEditProposalFile, addWikiEditProposalTool},
+		{*stockReceiptProposalFile, addStockReceiptProposalTool},
 	} {
 		if cfg.file == "" {
 			continue
