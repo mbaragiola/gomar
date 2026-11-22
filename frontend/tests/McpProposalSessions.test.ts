@@ -112,3 +112,78 @@ describe('Sesiones de propuestas', () => {
     panel.unmount()
   })
 })
+
+describe('Propuestas para revisar comprobantes', () => {
+  const reviewPath = base + '/document-review-proposals'
+  const review = {
+    document_id: 31, expected_revision: 2, type: 'invoice', total_minor: 5025, currency: 'USD', reason: '<b>Nota de prueba</b>\nSegunda línea',
+  }
+  async function openReview(fetch: unknown, canRename: boolean) {
+    vi.stubGlobal('fetch', fetch)
+    const panel = mount(McpProposalSessions, { props: { entity: 2, outlet: 7, outletName: 'Centro de prueba', canRename, canReviewDocuments: true } })
+    await button(panel, 'Sesiones de propuestas').trigger('click')
+    await flushPromises()
+    return panel
+  }
+
+  it('offers two independent unchecked actions, but issues only the one selected', async () => {
+    const fetch = vi.fn()
+      .mockResolvedValueOnce(result({ sessions: [] }))
+      .mockResolvedValueOnce(result({ proposals: [] }))
+      .mockResolvedValueOnce(result({ proposals: [] }))
+      .mockResolvedValueOnce(result({ ...session(), actions: ['document_draft_review'], token }, 201))
+    const panel = await openReview(fetch, true)
+    const [pos, doc] = panel.findAll<HTMLInputElement>('input[type=checkbox]')
+    expect([pos.element.checked, doc.element.checked]).toEqual([false, false])
+    await pos.setValue(true)
+    await doc.setValue(true)
+    expect([pos.element.checked, doc.element.checked]).toEqual([false, true])
+    await button(panel, 'Crear sesión de propuestas').trigger('click')
+    await flushPromises()
+    expect(fetch).toHaveBeenLastCalledWith(keyPath, expect.objectContaining({
+      method: 'POST', body: JSON.stringify({ entity_id: 2, outlet_id: 7, actions: ['document_draft_review'] }),
+    }))
+    expect(panel.text()).not.toContain(token)
+    expect(panel.text()).toContain('Marcar un comprobante como revisado')
+    panel.unmount()
+  })
+
+  it.each(['approve', 'reject', 'stale'] as const)('shows the exact safe preview and handles %s only for the document', async outcome => {
+    const fetch = vi.fn()
+      .mockResolvedValueOnce(result({ sessions: [] }))
+      .mockResolvedValueOnce(result({ proposals: [pending()] }))
+      .mockResolvedValueOnce(result({ proposals: [pending()] }))
+      .mockResolvedValueOnce(result({ ...pending(), review, digest }))
+      .mockResolvedValueOnce(outcome === 'stale'
+        ? result({ detail: token }, 409)
+        : result({ ...pending(), status: outcome === 'approve' ? 'approved' : 'rejected',
+          ...(outcome === 'approve' ? { document_id: 31, document_revision: 3 } : {}) }))
+      .mockResolvedValueOnce(result({ sessions: [] }))
+      .mockResolvedValueOnce(result({ proposals: [pending()] }))
+      .mockResolvedValueOnce(result({ proposals: [pending()] }))
+    const panel = await openReview(fetch, true)
+    await button(panel, 'Ver propuesta 8 de revisión').trigger('click')
+    await flushPromises()
+    expect(panel.get('[aria-label="Motivo de la revisión"]').element.textContent).toBe(review.reason)
+    expect(panel.find('pre b').exists()).toBe(false)
+    expect(panel.text()).toContain('Centro de prueba · Comprobante 31 · Versión 2')
+    expect(panel.text()).toContain('Factura · Total: USD 50,25')
+    expect(panel.text()).toContain('No se registra una deuda ni un pago')
+    const reject = outcome === 'reject'
+    const begin = reject ? 'Rechazar propuesta' : 'Continuar con la revisión'
+    await button(panel, begin).trigger('click')
+    await button(panel, 'Volver sin cambios').trigger('click')
+    expect(fetch).toHaveBeenCalledTimes(4)
+    await button(panel, begin).trigger('click')
+    await button(panel, reject ? 'Sí, rechazar' : 'Marcar como revisado').trigger('click')
+    await flushPromises()
+    expect(fetch.mock.calls[4]).toEqual([reviewPath + '/8/decision', expect.objectContaining({
+      method: 'POST', body: JSON.stringify({ decision: reject ? 'reject' : 'approve', digest, confirm: true }),
+    })])
+    expect(fetch.mock.calls.filter(call => call[1].method === 'POST')).toHaveLength(1)
+    expect(panel.text()).toContain(reject ? 'No se modificó el comprobante' : outcome === 'stale' ? 'No se marcó como revisado' : 'Comprobante marcado como revisado')
+    expect(panel.text()).not.toContain(token)
+    expect(button(panel, 'Ver propuesta 8')).toBeTruthy()
+    panel.unmount()
+  })
+})
