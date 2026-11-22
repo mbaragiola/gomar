@@ -8,7 +8,7 @@ applied change. Features disabled in the app are not available via MCP.
 | Workflow | MCP coverage now | Work still needed |
 | --- | --- | --- |
 | Identity and business scope | Current user, businesses, and outlets | Management views; changes to access stay in Gomar |
-| POS | Recorded sales totals, product catalog, and separate name, price, and availability proposals for confirmation in Gomar | New catalog items and register operations; Gomar does not expose shift management |
+| POS | Recorded sales totals, product catalog, and separate create, name, price, and availability proposals for confirmation in Gomar | Register sales stay in the native POS; Gomar does not expose shift management |
 | Inventory | Tracked balances, thresholds and movements; propose receipts, waste, and physical counts for confirmation in Gomar | Catalog and tracking settings; bills of materials are not implemented |
 | Wiki | Search and read by ID; propose new pages and versioned edits for confirmation in Gomar | Gomar does not offer deletion |
 | Delivery | Recent order status with limited fields | No native staff write workflow; provider calls and credentials stay outside the read interface |
@@ -46,7 +46,9 @@ change supplier, branch, currency, files, review status, payables, or payments.
 Optional POS catalog proposals let a branch manager approve either a price
 change or an availability change. Each action preserves the other fields
 and adds a native catalog revision. A proposal does not make a sale, collect
-a payment, or rewrite prior sale items or stock movements.
+a payment, or rewrite prior sale items or stock movements. The opt-in
+new-product proposal creates one catalog item at revision 1 after browser
+approval, without a stock or sales change.
 
 An optional reservation confirmation proposal lets the issuing browser
 login confirm one existing pending reservation for its branch. It shows
