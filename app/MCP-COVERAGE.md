@@ -60,3 +60,9 @@ future request for an authorized branch. It binds prior status and table
 allocation and uses native cancellation to release the table. It does not
 send messages or disclose guest or venue-policy data. There is no MCP
 cancellation tool or approval route in this adapter.
+
+With reservation cancellation proposals enabled, the issuing browser login
+can approve cancellation of one future pending or confirmed reservation.
+The preview shows the existing time, party size, status, and assigned table
+if there is one. Approval releases that table. It does not notify the guest
+or change venue settings or policy.
