@@ -57,6 +57,15 @@ func TestLiveStdioScopedTools(t *testing.T) {
 			_, _ = io.WriteString(w, `{"orders":[{"id":10,"provider":"rappi","status":"received","received_at":"2026-11-01T03:00:00Z","updated_at":"2026-11-01T03:00:00Z","external_order_id":"`+secret+`"}],"truncated":false}`)
 		case "/api/v1/mcp/entities/20/outlets/10/payables-summary":
 			_, _ = io.WriteString(w, `{"as_of":"2026-11-01","totals":[{"currency":"USD","outstanding_count":1,"outstanding_minor":55,"overdue_count":0,"overdue_minor":0}],"supplier":"`+secret+`"}`)
+		case "/api/v1/mcp/entities/20/outlets/10/documents/7":
+			_, _ = io.WriteString(w, `{"id":7,"revision":0,"status":"draft","type":"invoice","reference":"Factura 00001-00000007","issue_date":"2026-11-01","currency":"ARS","total_minor":0,"private":"`+secret+`"}`)
+		case "/api/v1/mcp/entities/20/outlets/10/reconciliation-runs":
+			if r.URL.RawQuery != "after_id=5" {
+				t.Error("unexpected reconciliation cursor")
+			}
+			_, _ = io.WriteString(w, `{"runs":[{"id":8,"revision":1,"status":"draft","created_at":"2026-11-01T03:00:00Z","counts":{"outlets":1,"sources":0,"rows":0,"confirmed":0,"rejected":0}}]}`)
+		case "/api/v1/mcp/entities/20/outlets/10/reconciliation-runs/8":
+			_, _ = io.WriteString(w, `{"id":8,"revision":1,"status":"draft","created_at":"2026-11-01T03:00:00Z","counts":{"outlets":1,"sources":1,"rows":5,"confirmed":0,"rejected":0},"private":"`+secret+`"}`)
 		default:
 			w.WriteHeader(http.StatusNotFound)
 			_, _ = io.WriteString(w, secret)
@@ -85,7 +94,7 @@ func TestLiveStdioScopedTools(t *testing.T) {
 	}
 	defer session.Close()
 	metadata, err := session.ListTools(ctx, &mcp.ListToolsParams{})
-	if err != nil || len(metadata.Tools) != 17 {
+	if err != nil || len(metadata.Tools) != 20 {
 		t.Fatal(metadata, err)
 	}
 	for _, tool := range metadata.Tools {
@@ -111,6 +120,11 @@ func TestLiveStdioScopedTools(t *testing.T) {
 		{"gomar_payables_summary", map[string]any{"entity_id": 20, "outlet_id": 10}, `"outstanding_minor":55`, false},
 		{"gomar_payables_summary", map[string]any{"entity_id": 20, "outlet_id": 11}, "permisos", true},
 		{"gomar_list_stock", map[string]any{"entity_id": 20}, "", true},
+		{"gomar_read_document", map[string]any{"entity_id": 20, "outlet_id": 10, "document_id": 7}, `"revision":0`, false},
+		{"gomar_read_document", map[string]any{"entity_id": 20, "outlet_id": 10, "document_id": 0}, "document_id", true},
+		{"gomar_list_reconciliation_runs", map[string]any{"entity_id": 20, "outlet_id": 10, "after_id": 5}, `"id":8`, false},
+		{"gomar_read_reconciliation_run", map[string]any{"entity_id": 20, "outlet_id": 10, "run_id": 8}, `"rows":5`, false},
+		{"gomar_read_reconciliation_run", map[string]any{"entity_id": 20, "outlet_id": 11, "run_id": 8}, "permisos", true},
 		{"gomar_sales_summary", map[string]any{"entity_id": 20, "period": "this_month", "path": "http://forged.invalid"}, "", true},
 	} {
 		result, err := session.CallTool(ctx, &mcp.CallToolParams{Name: test.name, Arguments: test.args})
@@ -127,7 +141,7 @@ func TestLiveStdioScopedTools(t *testing.T) {
 			t.Fatalf("unexpected result for %s: %s", test.name, wire)
 		}
 	}
-	if requests.Load() != 11 {
+	if requests.Load() != 15 {
 		t.Fatalf("wrong number of requests: %d", requests.Load())
 	}
 	if err := session.Close(); err != nil {

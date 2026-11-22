@@ -49,6 +49,7 @@ func liveServer(client *mcpclient.Client) *mcp.Server {
 	addWorkspaceTools(server, client)
 	addAccountingReadTools(server, client)
 	addBookingReadTools(server, client)
+	addDetailReadTools(server, client)
 	return server
 }
 

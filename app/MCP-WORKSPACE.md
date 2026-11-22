@@ -13,9 +13,12 @@ delivery provider, writes a record, sends a message, or accesses a receipt.
 | `gomar_list_recent_delivery` | Internal order IDs, provider, recorded status and times | Requires delivery enabled. Up to 30; no customer data, provider order IDs, items, or amounts. |
 | `gomar_payables_summary` | Outstanding and overdue balances by currency, in minor units | Uses the existing accounting role and outlet checks. No supplier details, invoices or payments. |
 | `gomar_list_documents` | Document metadata for the selected outlet | No attachments or tax identifiers. Up to 30 per page. |
+| `gomar_read_document` | One document’s status, revision, reference, dates and accounting totals | No supplier data, notes, audit, or attachments. |
 | `gomar_list_suppliers` | Active supplier names and IDs for the business | Requires an authorized selected outlet. No contact or tax details. Up to 30 per page. |
 | `gomar_payment_status_summary` | Recorded payment counts by status | No amounts, account details or receipts. |
 | `gomar_reconciliation_status_summary` | Accessible reconciliation counts by status | Do not sum across outlets. No movements, accounts or files. |
+| `gomar_list_reconciliation_runs` | State, revision, dates and counts for eligible runs | Up to 30 per page by ID. Requires grants to every participating outlet; an outlet-scoped key sees only runs for that outlet alone. |
+| `gomar_read_reconciliation_run` | The same metadata for one run by ID | Same scope as the list; no bank details, source labels, CSV or individual rows. |
 | `gomar_reservation_status` | Daily reservation and guest counts by status | One Buenos Aires date. No identifying details. |
 | `gomar_published_menu` | Whether a menu is published and its file metadata | No file or download link. |
 | `gomar_pos_catalog` | Products and ARS prices in minor units | Up to 30 per page. |
