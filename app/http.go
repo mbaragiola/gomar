@@ -31,6 +31,7 @@ type app struct {
 	enableMCPDocumentProposals     bool
 	enableMCPWikiEditProposals     bool
 	enableMCPStockReceiptProposals bool
+	enableMCPProposalSessions      bool
 	enableDelivery                 bool
 	enableStock                    bool
 }
@@ -204,6 +205,7 @@ func (a *app) routes() http.Handler {
 	a.registerMCPDocumentProposals(addAPI)
 	a.registerMCPWikiEditProposals(addAPI)
 	a.registerMCPStockReceiptProposals(addAPI)
+	a.registerMCPPOSRenameProposals(addAPI)
 	a.registerReservations(addAPI, a.publicReservations)
 	a.registerReservationMenus(addAPI, a.publicReservations)
 	unavailableOperation := func(_ *http.Request, _ *sql.Tx, _ entityMembership, _ []byte) (int, any, error) {
