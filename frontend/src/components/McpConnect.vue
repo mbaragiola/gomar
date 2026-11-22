@@ -150,6 +150,7 @@ onBeforeUnmount(() => {
     <p>Sólo lectura para <strong>{{ outletName }}</strong>. No habilita cambios ni acceso a otros locales.</p>
     <p v-if="link">Vence a las {{ expiry }}. La clave se puede copiar o mostrar una sola vez.</p>
     <p v-else>El acceso vence en 15 minutos.</p>
+    <p>Si cerrás el panel o cambiás de local, ocultás la clave, pero el acceso sigue activo hasta que venza. Si querés cortarlo antes, elegí «Revocar acceso» antes de salir.</p>
 
     <div class="gomar-feature-actions">
       <button v-if="!link" class="primary" type="button" :disabled="busy" @click="issue">Crear acceso</button>
