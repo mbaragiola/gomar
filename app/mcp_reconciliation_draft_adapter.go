@@ -57,21 +57,31 @@ func (a *app) applyReconciliationDraftApproval(ctx context.Context, tx *sql.Tx, 
 	if p.Scope != scope || subtle.ConstantTimeCompare(fingerprint[:], approved[:]) != 1 {
 		return reconciliationReadRun{}, problem{409, "La propuesta de conciliación cambió."}
 	}
+	actor, err := lockReconciliationDraftScope(ctx, tx, scope)
+	if err != nil {
+		return reconciliationReadRun{}, err
+	}
+	u.name = actor
+	return a.insertReconciliationDraft(tx, u, scope.Entity, []int64{scope.Outlet}, p.Input.MatchReference)
+}
+
+func lockReconciliationDraftScope(ctx context.Context, tx *sql.Tx, scope reconciliationDraftScope) (string, error) {
+	var actor string
 	var member int64
 	var role string
 	err := tx.QueryRowContext(ctx, `SELECT m.id,m.role,u.username FROM memberships m
  JOIN entities e ON e.id=m.entity_id AND e.active
  JOIN users u ON u.id=m.user_id AND u.active
  WHERE m.entity_id=$1 AND m.user_id=$2 AND m.active FOR SHARE OF m,e,u`,
-		scope.Entity, scope.Actor).Scan(&member, &role, &u.name)
+		scope.Entity, scope.Actor).Scan(&member, &role, &actor)
 	if errors.Is(err, sql.ErrNoRows) {
-		return reconciliationReadRun{}, missingEntity
+		return "", missingEntity
 	}
 	if err != nil {
-		return reconciliationReadRun{}, err
+		return "", err
 	}
 	if !slices.Contains(capabilities[role], "reconcile_financial_data") {
-		return reconciliationReadRun{}, forbiddenRole
+		return "", forbiddenRole
 	}
 	var outlet int64
 	err = tx.QueryRowContext(ctx, `SELECT o.id FROM outlets o
@@ -79,10 +89,10 @@ func (a *app) applyReconciliationDraftApproval(ctx context.Context, tx *sql.Tx, 
  WHERE o.entity_id=$2 AND o.id=$3 AND o.active FOR SHARE OF o,g`,
 		member, scope.Entity, scope.Outlet).Scan(&outlet)
 	if errors.Is(err, sql.ErrNoRows) {
-		return reconciliationReadRun{}, missingOutlet
+		return "", missingOutlet
 	}
 	if err != nil {
-		return reconciliationReadRun{}, err
+		return "", err
 	}
-	return a.insertReconciliationDraft(tx, u, scope.Entity, []int64{outlet}, p.Input.MatchReference)
+	return actor, nil
 }
