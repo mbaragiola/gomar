@@ -27,6 +27,7 @@ type app struct {
 	payablesClock                         func() time.Time
 	reconciliationClock                   func() time.Time
 	privateRoot                           *os.Root
+	enableMCPSupplierNameProposals        bool
 	enableMCPStockMinimumProposals        bool
 	enableMCPPOSCreateProposals           bool
 	enableMCPReservationCancelProposals   bool
@@ -234,6 +235,7 @@ func (a *app) routes() http.Handler {
 	a.registerMCPReservationCancelProposals(addAPI)
 	a.registerMCPPOSCreateProposals(addAPI)
 	a.registerMCPStockMinimumProposals(addAPI)
+	a.registerMCPSupplierNameProposals(addAPI)
 	a.registerReservationMenus(addAPI, a.publicReservations)
 	unavailableOperation := func(_ *http.Request, _ *sql.Tx, _ entityMembership, _ []byte) (int, any, error) {
 		return 0, nil, unavailable

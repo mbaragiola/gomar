@@ -141,6 +141,11 @@ func runLive(ctx context.Context, args []string, in io.Reader, out io.Writer) er
 			return errors.New(liveUsage)
 		}
 		addSessionTool = addStockMinimumProposalTool
+	case "supplier_legal_name_change":
+		if *proposalSessionFile == "" {
+			return errors.New(liveUsage)
+		}
+		addSessionTool = addSupplierLegalNameProposalTool
 	default:
 		return errors.New(liveUsage)
 	}

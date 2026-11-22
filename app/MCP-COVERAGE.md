@@ -80,3 +80,9 @@ change tracking, inventory quantity, product availability, or sales.
 times as the guest page, only while public reservations and the venue are
 enabled. Pending requests do not hold tables. A returned time does not book
 a table or guarantee the guest can submit a request.
+
+An optional supplier legal-name proposal changes an existing active
+supplier's name across the whole business. The active branch grant allows
+the request, but does not limit its effect to that branch. The issuing
+browser login reviews the exact old and new names. The proposal cannot
+change a tax reference, affect a posted payable snapshot, or add a supplier.
