@@ -25,7 +25,7 @@ func TestDocumentReviewProposalSendsOnlyRevisionAndReason(t *testing.T) {
 		if r.Method != "POST" || r.URL.Path != "/api/v1/mcp/entities/4/outlets/3/document-review-proposals" ||
 			r.URL.RawQuery != "" || r.Header.Get("Authorization") != "Bearer "+fixtureKey || r.Header.Get("Cookie") != "" ||
 			d.Decode(&got) != nil || got.RequestID != requestID ||
-			got.Review != (DocumentReview{DocumentID: 15, ExpectedRevision: 2, Reason: "Control de prueba"}) {
+			got.Review.DocumentID != 15 || got.Review.ExpectedRevision == nil || *got.Review.ExpectedRevision != 0 || got.Review.Reason != "Control de prueba" {
 			t.Error("unexpected review request")
 			w.WriteHeader(422)
 			return
@@ -39,7 +39,8 @@ func TestDocumentReviewProposalSendsOnlyRevisionAndReason(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	input := DocumentReview{DocumentID: 15, ExpectedRevision: 2, Reason: " Control de prueba "}
+	legacyRevision := int64(0)
+	input := DocumentReview{DocumentID: 15, ExpectedRevision: &legacyRevision, Reason: " Control de prueba "}
 	receipt, err := client.ProposeDocumentReview(t.Context(), 4, 3, requestID, input)
 	if err != nil || receipt != (ProposalReceipt{ID: 12, Status: "pending", ExpiresAt: "2026-11-01T03:15:00Z"}) {
 		t.Fatal("expected only the typed proposal receipt", err)
@@ -49,6 +50,10 @@ func TestDocumentReviewProposalSendsOnlyRevisionAndReason(t *testing.T) {
 		if _, err := client.ProposeDocumentReview(t.Context(), 4, 3, requestID, input); err == nil {
 			t.Fatal("invalid review reason sent")
 		}
+	}
+	input.Reason, input.ExpectedRevision = "Control de prueba", nil
+	if _, err := client.ProposeDocumentReview(t.Context(), 4, 3, requestID, input); err == nil {
+		t.Fatal("absent revision accepted")
 	}
 	if calls.Load() != 1 {
 		t.Fatal("an invalid request reached Gomar")

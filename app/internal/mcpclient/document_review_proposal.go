@@ -12,13 +12,13 @@ import (
 
 type DocumentReview struct {
 	DocumentID       int64  `json:"document_id" jsonschema:"ID exacto del borrador devuelto por gomar_read_document."`
-	ExpectedRevision int64  `json:"expected_revision" jsonschema:"Revisión actual del borrador; no la inventes."`
+	ExpectedRevision *int64 `json:"expected_revision" jsonschema:"Revisión actual del borrador, incluida la revisión 0; no la inventes."`
 	Reason           string `json:"reason" jsonschema:"Motivo de revisión, obligatorio y en texto plano. No incluyas credenciales ni datos personales."`
 }
 
 func (c *ProposalClient) ProposeDocumentReview(ctx context.Context, entity, outlet int64, requestID string, review DocumentReview) (ProposalReceipt, error) {
 	if entity < 1 || outlet < 1 || !proposalRequestID.MatchString(requestID) ||
-		review.DocumentID < 1 || review.ExpectedRevision < 1 || review.ExpectedRevision == math.MaxInt64 {
+		review.DocumentID < 1 || review.ExpectedRevision == nil || *review.ExpectedRevision < 0 || *review.ExpectedRevision == math.MaxInt64 {
 		return ProposalReceipt{}, errors.New("indicá la empresa, sucursal, comprobante, revisión y un request_id UUIDv4")
 	}
 	review.Reason = strings.TrimFunc(review.Reason, func(r rune) bool {
