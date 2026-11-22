@@ -126,6 +126,11 @@ func runLive(ctx context.Context, args []string, in io.Reader, out io.Writer) er
 			return errors.New(liveUsage)
 		}
 		addSessionTool = addReservationConfirmProposalTool
+	case "reservation_cancel":
+		if *proposalSessionFile == "" {
+			return errors.New(liveUsage)
+		}
+		addSessionTool = addReservationCancelProposalTool
 	default:
 		return errors.New(liveUsage)
 	}
