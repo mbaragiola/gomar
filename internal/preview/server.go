@@ -11,7 +11,9 @@ import (
 const tool = "get_payables_summary"
 
 func server() *mcp.Server {
-	s := mcp.NewServer(&mcp.Implementation{Name: "gomar-preview", Version: "0.1.0"}, nil)
+	s := mcp.NewServer(&mcp.Implementation{Name: "gomar-preview", Version: "0.1.0"}, &mcp.ServerOptions{
+		Capabilities: &mcp.ServerCapabilities{Tools: &mcp.ToolCapabilities{}},
+	})
 	closedWorld := false
 	s.AddTool(&mcp.Tool{
 		Name:        tool,
