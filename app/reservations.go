@@ -172,6 +172,10 @@ func (s reservationsService) availability(ctx context.Context, venue, date strin
 	if err != nil {
 		return nil, err
 	}
+	return reservationAvailabilityInTx(ctx, tx, id, day, partySize, now)
+}
+
+func reservationAvailabilityInTx(ctx context.Context, tx *sql.Tx, id int64, day time.Time, partySize int, now time.Time) ([]reservationSlot, error) {
 	rows, err := tx.QueryContext(ctx, `SELECT s.start_at FROM reservation_slots s
         WHERE s.outlet_id=$1 AND s.start_at>=$2 AND s.start_at<$3 AND s.start_at>$4
         AND EXISTS(SELECT 1 FROM reservation_tables t WHERE t.outlet_id=s.outlet_id AND t.capacity>=$5 AND `+availableReservationTable+`)

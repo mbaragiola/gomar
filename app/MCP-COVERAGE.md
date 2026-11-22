@@ -16,7 +16,7 @@ applied change. Features disabled in the app are not available via MCP.
 | Suppliers | Active supplier names and IDs in the business | Guarded create and edit |
 | Payables and payment records | Outstanding and overdue totals, counts by status, and outlet-only payable and payment record details | Guarded accounting entries and reviews, not movement of money |
 | Reconciliation | Scoped run counts by status, paged run list, metadata by ID, and proposal for an empty draft | Source handling, matches, decisions, and review stay in Gomar |
-| Reservations and menus | Daily reservation totals, scoped staff queue and detail, published menu metadata, and separate confirmation and cancellation proposals | Booking, menu and venue settings stay in Gomar |
+| Reservations and menus | Daily reservation totals, scoped staff queue and detail, available public reservation times by day and party size, published menu metadata, and separate confirmation and cancellation proposals | Booking, menu and venue settings stay in Gomar |
 
 ## Verification levels
 
@@ -74,3 +74,9 @@ An optional stock minimum proposal changes only the warning threshold for
 one actively tracked item at one branch. Zero is a valid threshold. The
 issuing browser login reviews the prior and proposed minimum. This does not
 change tracking, inventory quantity, product availability, or sales.
+
+`gomar_reservation_availability` asks for an exact branch, Buenos Aires date
+(today through 60 days out) and 1–12 people. It returns the same candidate
+times as the guest page, only while public reservations and the venue are
+enabled. Pending requests do not hold tables. A returned time does not book
+a table or guarantee the guest can submit a request.

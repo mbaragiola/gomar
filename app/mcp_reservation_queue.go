@@ -15,6 +15,7 @@ const mcpReservationQueuePath = mcpWorkspaceBase + "/reservation-requests"
 func (a *app) registerMCPReservationQueue(add func(string, string, http.HandlerFunc)) {
 	add(mcpReservationQueuePath, http.MethodGet, a.mcpRead(mcpListReservationRequests))
 	add(mcpReservationQueuePath+"/{reservation}", http.MethodGet, a.mcpRead(mcpReadReservationRequest))
+	add(mcpWorkspaceBase+"/reservation-availability", http.MethodGet, a.mcpRead(a.mcpReservationAvailability))
 }
 
 func mcpReservationQueueScope(r *http.Request, tx *sql.Tx, s mcpTokenScope) (int64, error) {
