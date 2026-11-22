@@ -41,3 +41,8 @@ pending preview. Periodic cleanup removes leftover expired previews and
 retains minimal receipts for 24 hours after the key expires. The stock
 movement and proposal receipt commit in one transaction. See
 [the adapter](MCP-STOCK-RECEIPT-ADAPTER.md) for scope and locking.
+
+Gomar allows up to four active proposal keys per user across all four purposes,
+with at most three for any one purpose. Revoked and expired keys do not
+count as active. The existing daily issuance cap still applies. This change
+does not enroll anyone or turn the feature on.

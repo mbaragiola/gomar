@@ -41,12 +41,13 @@ func TestPostgresMCPStockReceiptProposalBoundaries(t *testing.T) {
 	var clock atomic.Int64
 	clock.Store(time.Date(2026, 11, 25, 12, 0, 0, 0, time.UTC).Unix())
 	a := &app{db: db, host: "example.com", enableMCP: true, enablePOS: true, enableStock: true, enableMCPDocumentProposals: true,
-		enableMCPWikiEditProposals: true, enableMCPStockReceiptProposals: true, mcpClock: func() time.Time { return time.Unix(clock.Load(), 0) }}
+		enableMCPWikiProposals: true, enableMCPWikiEditProposals: true, enableMCPStockReceiptProposals: true, mcpClock: func() time.Time { return time.Unix(clock.Load(), 0) }}
 	router := a.routes()
 	actor := postgresTestCookies(t, router, "stock-editor", password)
 	other := postgresTestCookies(t, router, "stock-other", password)
 	const origin = "http://example.com"
 	const auth = "/api/v1/auth/mcp-stock-receipt-proposal-token"
+	const wikiAuth = "/api/v1/auth/mcp-proposal-token"
 	const docsAuth = "/api/v1/auth/mcp-document-proposal-token"
 	const editAuth = "/api/v1/auth/mcp-wiki-edit-proposal-token"
 	const browser = "/api/v1/entities/1/outlets/1/stock-receipt-proposals"
@@ -150,11 +151,19 @@ func TestPostgresMCPStockReceiptProposalBoundaries(t *testing.T) {
 	buyer := issue(auth, other) // Accounting is an existing stock operation role.
 	otherProposal := submit(buyer.Token, body(1, 1, 4), 201)
 	expect(do(router, "GET", item(otherProposal.ID), "", "", origin, actor), 404, nil)
+	issue(auth, other)
+	issue(auth, other)
+	expect(do(router, "POST", auth, keyBody, "", origin, other), 429, nil) // fourth for a single purpose
+	expect(do(router, "DELETE", fmt.Sprintf("%s/%d", auth, buyer.ID), "", "", origin, other), 204, nil)
+	issue(auth, other) // a revoked key no longer counts as active
+
 	docs := issue(docsAuth, actor)
 	edit := issue(editAuth, actor)
 	key1 := issue(auth, actor)
+	wiki := issue(wikiAuth, actor)                                         // one active key for each of the four purposes
+	expect(do(router, "POST", auth, keyBody, "", origin, actor), 429, nil) // fifth active key
 	read := issue("/api/v1/auth/mcp-token", actor)
-	for _, wrong := range []key{docs, edit, read} {
+	for _, wrong := range []key{docs, edit, wiki, read} {
 		submit(wrong.Token, body(1, 1, 7), 401)
 	}
 	expect(do(router, "GET", "/api/v1/mcp/entities", "", key1.Token, "", nil), 401, nil)
@@ -242,6 +251,7 @@ func TestPostgresMCPStockReceiptProposalBoundaries(t *testing.T) {
 	next := issue(auth, actor)
 	p = submit(next.Token, body(4, 1, 7), 201)
 	clock.Add(900)
+	issue(auth, actor) // expired keys no longer count as active
 	if got := detail(p.ID); got.Status != "expired" || got.Receipt != nil {
 		t.Fatal(got)
 	}
