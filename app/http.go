@@ -17,8 +17,9 @@ import (
 )
 
 type app struct {
-	db       *sql.DB
-	mcpClock func() time.Time
+	db           *sql.DB
+	providerAuth *hostedProviderAuth
+	mcpClock     func() time.Time
 
 	host                             string
 	payablesClock                    func() time.Time
@@ -202,6 +203,7 @@ func (a *app) routes() http.Handler {
 	a.registerDelivery(addAPI)
 	a.registerStock(addAPI, a.enablePOS && a.enableStock)
 	a.registerMCP(addAPI)
+	a.registerProviderLogin(addAPI)
 	a.registerMCPWikiProposals(addAPI)
 	a.registerMCPDocumentProposals(addAPI)
 	a.registerMCPWikiEditProposals(addAPI)
