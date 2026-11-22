@@ -37,3 +37,8 @@ reconciliation reads. An issuing browser login can approve an empty native
 draft, including its native creation audit. The proposal fixes one active
 branch and an explicit match-by-reference setting. It cannot add statement
 files or rows, match transactions, close a run, or record a payment.
+
+An optional document draft edit proposes dates and amounts only. It shows
+the old and new values, currency, and reason to the issuing browser login.
+Approval applies one native draft revision and audit entry. It cannot
+change supplier, branch, currency, files, review status, payables, or payments.
