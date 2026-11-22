@@ -11,6 +11,7 @@ interface Venue {
   timezone: string
   cancellation_policy: string
   menu_pdf_url?: string
+  collect_contact?: boolean
 }
 
 const props = defineProps<{ venue: string }>()
@@ -23,6 +24,8 @@ const menuPath = computed(() => {
 const date = ref(todayInBuenosAires())
 const size = ref(2)
 const guest = ref('')
+const phone = ref('')
+const note = ref('')
 const slots = ref<string[]>([])
 const slot = ref('')
 const searched = ref(false)
@@ -70,16 +73,21 @@ async function availability() {
 }
 
 async function book() {
-  if (busy.value || !slot.value || !guest.value.trim()) return
+  if (busy.value || !slot.value || !guest.value.trim() || (venueData.value?.collect_contact && !phone.value.trim())) return
   busy.value = true
   problem.value = ''
   try {
     const result = await request<{ id: string; status: 'pending'; cancellation_policy?: string }>(`${path}/requests`, {
       method: 'POST',
-      body: JSON.stringify({ guest_name: guest.value.trim(), party_size: size.value, start_at: slot.value }),
+      body: JSON.stringify({
+        guest_name: guest.value.trim(), party_size: size.value, start_at: slot.value,
+        ...(venueData.value?.collect_contact ? { phone: phone.value.trim(), note: note.value.trim() } : {}),
+      }),
     })
     resetSlots()
     guest.value = ''
+    phone.value = ''
+    note.value = ''
     submittedPolicy.value = result.cancellation_policy ?? null
     confirmation.value = `Solicitud recibida. Todavía no está confirmada. Referencia: ${result.id}.`
   } catch (err) {
@@ -128,7 +136,12 @@ onMounted(async () => {
               <option v-for="start in slots" :key="start" :value="start">{{ localTime(start) }}</option>
             </select>
           </label>
-          <label>Nombre<input v-model="guest" autocomplete="name" maxlength="100" required :disabled="busy" /></label>
+          <label>Nombre<input v-model="guest" autocomplete="name" maxlength="80" required :disabled="busy" /></label>
+          <template v-if="venueData.collect_contact">
+            <label>Teléfono con código de país<input v-model="phone" type="tel" autocomplete="tel" maxlength="48" required :disabled="busy" /></label>
+            <p>Usamos tu teléfono para esta reserva. Si es un celular argentino, empezá con +54 9.</p>
+            <label>Nota para esta reserva (opcional)<input v-model="note" maxlength="300" :disabled="busy" /></label>
+          </template>
           <button class="primary" :disabled="busy || !slot">Solicitar reserva</button>
         </form>
       </template>

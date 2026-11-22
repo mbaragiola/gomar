@@ -33,6 +33,7 @@ var (
 )
 
 type reservationVenue struct {
+	CollectContact     bool   `json:"collect_contact,omitempty"`
 	Slug               string `json:"venue"`
 	DisplayName        string `json:"display_name"`
 	Locale             string `json:"locale"`
@@ -51,6 +52,11 @@ type reservationInput struct {
 	GuestName string `json:"guest_name"`
 	PartySize int    `json:"party_size"`
 	StartAt   string `json:"start_at"`
+}
+type reservationPublicInput struct {
+	reservationInput
+	Phone string `json:"phone,omitempty"`
+	Note  string `json:"note,omitempty"`
 }
 type reservationResult struct {
 	ID                 string  `json:"id"`
@@ -114,10 +120,10 @@ func reservationPublicVenue(ctx context.Context, tx *sql.Tx, slug string) (int64
 	if !reservationValidSlug(slug) {
 		return 0, v, reservationUnavailable
 	}
-	err := tx.QueryRowContext(ctx, `SELECT v.outlet_id,v.slug,v.display_name,v.cancellation_policy
+	err := tx.QueryRowContext(ctx, `SELECT v.outlet_id,v.slug,v.display_name,v.cancellation_policy,v.collect_contact
         FROM reservation_venues v JOIN outlets o ON o.id=v.outlet_id AND o.active
         JOIN entities e ON e.id=o.entity_id AND e.active WHERE v.slug=$1 AND v.enabled`, slug).
-		Scan(&outletID, &v.Slug, &v.DisplayName, &v.CancellationPolicy)
+		Scan(&outletID, &v.Slug, &v.DisplayName, &v.CancellationPolicy, &v.CollectContact)
 	if errors.Is(err, sql.ErrNoRows) {
 		err = reservationUnavailable
 	}
@@ -211,6 +217,10 @@ func pickReservationTableWithCapacity(ctx context.Context, tx *sql.Tx, outlet in
 	return table, capacity, err
 }
 func (s reservationsService) request(ctx context.Context, venue string, in reservationInput, now time.Time) (reservationResult, error) {
+	return s.requestPublic(ctx, venue, reservationPublicInput{reservationInput: in}, now, false)
+}
+
+func (s reservationsService) requestPublic(ctx context.Context, venue string, in reservationPublicInput, now time.Time, contactsEnabled bool) (reservationResult, error) {
 	start, err := reservationStart(in.StartAt, now)
 	name, valid := reservationText(in.GuestName, 1, 80)
 	if err != nil || !valid || in.PartySize < 1 || in.PartySize > 12 {
@@ -225,9 +235,34 @@ func (s reservationsService) request(ctx context.Context, venue string, in reser
 	if err != nil {
 		return reservationResult{}, err
 	}
+	collect := false
+	if contactsEnabled {
+		if err = tx.QueryRowContext(ctx, `SELECT collect_contact FROM reservation_venues WHERE outlet_id=$1`, outlet).Scan(&collect); err != nil {
+			return reservationResult{}, err
+		}
+	}
+	var phone, note string
+	if collect {
+		var valid bool
+		phone, valid = normalizeReservationPhone(in.Phone)
+		if !valid {
+			return reservationResult{}, problem{422, "Ingresá un teléfono válido con código de país, por ejemplo +54 9 para un celular argentino."}
+		}
+		note, valid = reservationText(in.Note, 0, 300)
+		if !valid {
+			return reservationResult{}, problem{422, "La nota debe ser texto simple de hasta 300 caracteres."}
+		}
+	} else if in.Phone != "" || in.Note != "" {
+		return reservationResult{}, badInput
+	}
 	result, err := requestReservationInTx(ctx, tx, outlet, start, name, in.PartySize, now)
 	if err != nil {
 		return reservationResult{}, err
+	}
+	if collect {
+		if err = reserveCustomerContact(ctx, tx, outlet, result.ID, phone, note); err != nil {
+			return reservationResult{}, err
+		}
 	}
 	if err := tx.Commit(); err != nil {
 		return reservationResult{}, err

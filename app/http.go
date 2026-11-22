@@ -17,11 +17,12 @@ import (
 )
 
 type app struct {
-	db            *sql.DB
-	providerAuth  *hostedProviderAuth
-	adminRecovery bool
-	providerOnly  bool
-	mcpClock      func() time.Time
+	reservationContacts bool
+	db                  *sql.DB
+	providerAuth        *hostedProviderAuth
+	adminRecovery       bool
+	providerOnly        bool
+	mcpClock            func() time.Time
 
 	host                                  string
 	payablesClock                         func() time.Time
