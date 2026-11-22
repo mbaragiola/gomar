@@ -26,6 +26,7 @@ func main() {
 	enableDelivery := flag.Bool("enable-delivery", false, "enable the prototype delivery inbox for permitted staff")
 	enablePOS := flag.Bool("enable-pos", false, "enable the prototype POS for permitted staff")
 	enableMCP := flag.Bool("enable-mcp", false, "allow scoped staff read-only MCP access")
+	enableWikiProposals := flag.Bool("enable-mcp-wiki-proposals", false, "allow administrators to propose new wiki articles for browser approval")
 	enableStock := flag.Bool("enable-stock", false, "enable optional finished-item stock for the prototype POS")
 	publicReservations := flag.Bool("public-reservations", false, "enable the guest reservation routes for explicitly enabled venues")
 	flag.Parse()
@@ -43,7 +44,7 @@ func main() {
 			modes++
 		}
 	}
-	if *state == "" || flag.NArg() != 0 || modes > 1 || modes != 0 && (explicitTCP || unixMode || *publicReservations || *enablePOS || *enableDelivery || *enableMCP) {
+	if *state == "" || flag.NArg() != 0 || modes > 1 || modes != 0 && (explicitTCP || unixMode || *publicReservations || *enablePOS || *enableDelivery || *enableMCP || *enableWikiProposals) {
 		log.Fatal("provide -state; choose at most one of -init, -check and -create-admin without server flags")
 	}
 	var addr netip.AddrPort
@@ -118,21 +119,27 @@ func main() {
 		WriteTimeout:      20 * time.Second,
 		IdleTimeout:       60 * time.Second,
 	}
+	application := &app{db: db, privateRoot: privateRoot, publicReservations: *publicReservations, enablePOS: *enablePOS,
+		enableDelivery: *enableDelivery, enableStock: *enableStock, enableMCP: *enableMCP, enableMCPWikiProposals: *enableWikiProposals}
 	if ingress != nil {
 		listener = ingress.listener
 		server.DisableGeneralOptionsHandler = true
 		server.BaseContext = ingress.baseContext
 		server.ConnContext = ingress.connContext
-		server.Handler = ingress.wrapHTTPS(*unixAuthority,
-			(&app{db: db, host: *unixAuthority, privateRoot: privateRoot, publicReservations: *publicReservations, enablePOS: *enablePOS, enableDelivery: *enableDelivery, enableStock: *enableStock, enableMCP: *enableMCP}).routes())
+		application.host = *unixAuthority
+		server.Handler = ingress.wrapHTTPS(*unixAuthority, application.routes())
 		fmt.Printf("unix://%s\n", *unixPath)
 	} else {
 		listener, err = net.Listen("tcp", addr.String())
 		if err != nil {
 			log.Fatal(err)
 		}
-		server.Handler = (&app{db: db, host: listener.Addr().String(), privateRoot: privateRoot, publicReservations: *publicReservations, enablePOS: *enablePOS, enableDelivery: *enableDelivery, enableStock: *enableStock, enableMCP: *enableMCP}).routes()
+		application.host = listener.Addr().String()
+		server.Handler = application.routes()
 		fmt.Printf("http://%s\n", listener.Addr())
 	}
+	pruneContext, stopPruning := context.WithCancel(context.Background())
+	defer stopPruning()
+	go application.pruneWikiProposalsLoop(pruneContext)
 	log.Fatal(server.Serve(listener))
 }

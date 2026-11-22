@@ -11,7 +11,7 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
-const liveUsage = "uso: gomar-mcp --origin=<origen de Gomar> --token-file=<ruta absoluta privada>"
+const liveUsage = "uso: gomar-mcp --origin=<origen de Gomar> --token-file=<ruta absoluta privada> [--wiki-proposal-token-file=<otra ruta absoluta privada>]"
 
 type noArgs struct{}
 type entityArgs struct {
@@ -61,6 +61,7 @@ func runLive(ctx context.Context, args []string, in io.Reader, out io.Writer) er
 	fs.SetOutput(io.Discard)
 	origin := fs.String("origin", "", "")
 	tokenFile := fs.String("token-file", "", "")
+	proposalFile := fs.String("wiki-proposal-token-file", "", "")
 	if fs.Parse(args) != nil || fs.NArg() != 0 || *origin == "" || !filepath.IsAbs(*tokenFile) {
 		return errors.New(liveUsage)
 	}
@@ -72,5 +73,25 @@ func runLive(ctx context.Context, args []string, in io.Reader, out io.Writer) er
 	if err != nil {
 		return err
 	}
-	return liveServer(client).Run(ctx, &mcp.IOTransport{Reader: io.NopCloser(in), Writer: quietWriter{out}, MaxLineLength: 16 * 1024})
+	server := liveServer(client)
+	maxLine := 16 * 1024
+	if *proposalFile != "" {
+		if !filepath.IsAbs(*proposalFile) {
+			return errors.New(liveUsage)
+		}
+		proposalToken, err := mcpclient.ReadToken(*proposalFile)
+		if err != nil {
+			return err
+		}
+		if proposalToken == token {
+			return errors.New("la consulta y las propuestas requieren claves separadas")
+		}
+		proposals, err := mcpclient.NewProposalClient(*origin, proposalToken)
+		if err != nil {
+			return err
+		}
+		addWikiProposalTool(server, proposals)
+		maxLine = 128 * 1024
+	}
+	return server.Run(ctx, &mcp.IOTransport{Reader: io.NopCloser(in), Writer: quietWriter{out}, MaxLineLength: maxLine})
 }
