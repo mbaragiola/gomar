@@ -86,3 +86,8 @@ supplier's name across the whole business. The active branch grant allows
 the request, but does not limit its effect to that branch. The issuing
 browser login reviews the exact old and new names. The proposal cannot
 change a tax reference, affect a posted payable snapshot, or add a supplier.
+
+The read-only reconciliation setup view shows whether nonempty source
+metadata exists on each side, whether the reference rule is enabled, and
+whether known setup limits apply. It does not open files, read source rows,
+or verify that native preparation will succeed.
