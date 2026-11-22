@@ -136,7 +136,10 @@ describe('Propuestas para revisar comprobantes', () => {
     const [pos, doc] = panel.findAll<HTMLInputElement>('input[type=checkbox]')
     expect([pos.element.checked, doc.element.checked]).toEqual([false, false])
     await pos.setValue(true)
+    expect(panel.text()).toContain('--proposal-session-action=pos_product_rename')
     await doc.setValue(true)
+    expect(panel.text()).not.toContain('--proposal-session-action=pos_product_rename')
+    expect(panel.text()).toContain('--proposal-session-action=document_draft_review')
     expect([pos.element.checked, doc.element.checked]).toEqual([false, true])
     await button(panel, 'Crear sesión de propuestas').trigger('click')
     await flushPromises()
@@ -145,6 +148,7 @@ describe('Propuestas para revisar comprobantes', () => {
     }))
     expect(panel.text()).not.toContain(token)
     expect(panel.text()).toContain('Marcar un comprobante como revisado')
+    expect(panel.text()).toContain('--proposal-session-action=document_draft_review')
     panel.unmount()
   })
 

@@ -60,6 +60,7 @@ const busy = ref(false)
 const notice = ref('')
 const error = ref('')
 const credential = ref<{ id: number; expires: number; kind: Action } | null>(null)
+const setupAction = computed(() => credential.value?.kind ?? selected.value)
 const available = ref(false)
 const revealed = ref('')
 let secret = ''
@@ -320,6 +321,7 @@ onBeforeUnmount(() => {
       <p v-if="revealed" class="mcp-connect-secret"><code>{{ revealed }}</code></p>
       <p>Guardá la clave en un archivo privado de tu equipo (permiso 0600). No la pegues en chats, URLs ni comandos.</p>
       <p>Configurá <code>gomar-mcp</code> con el archivo de lectura habitual y <code>--proposal-session-token-file</code> apuntando a este otro archivo privado.</p>
+      <p v-if="setupAction">Para esta acción, agregá <code>--proposal-session-action={{ setupAction }}</code>.</p>
     </details>
     <h3>Sesiones activas de {{ outletName }}</h3>
     <p v-if="!sessions.length && !busy && !error">No hay sesiones activas para este local.</p>
