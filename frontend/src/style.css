@@ -281,3 +281,10 @@ button:focus-visible, a:focus-visible { outline: 2px solid var(--accent); outlin
 .login-card .appearance-toolbar { justify-content: space-between; margin-bottom: 1.25rem; }
 .gomar-public > .appearance-toolbar { margin: .75rem 0; }
 a { color: var(--accent); }
+
+.mcp-connect-launch { margin-block: 1rem .5rem; justify-content: flex-start; }
+.mcp-connect { margin-block: .5rem 1rem; }
+.mcp-connect p { margin: 0; }
+.mcp-connect details { line-height: 1.5; }
+.mcp-connect details p { margin-block-start: .65rem; }
+.mcp-connect-secret { overflow-wrap: anywhere; padding: .75rem; background: var(--panel); border: 1px solid var(--line); }

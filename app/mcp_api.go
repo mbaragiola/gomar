@@ -65,6 +65,7 @@ func (a *app) registerMCP(add func(string, string, http.HandlerFunc)) {
 	if a.enablePOS {
 		add("/api/v1/mcp/entities/{entity}/sales-summary", http.MethodGet, a.mcpRead(a.mcpSalesSummary))
 	}
+	a.registerMCPWorkspace(add)
 }
 
 func (a *app) issueMCPToken(w http.ResponseWriter, r *http.Request, u user) error {

@@ -152,6 +152,10 @@ func (a *app) entities(w http.ResponseWriter, r *http.Request, u user) error {
 			return err
 		}
 		entry.Capabilities = capabilities[entry.Role]
+		if a.enableMCP && slices.Contains(entry.Capabilities, "read_business_data") {
+			entry.Capabilities = append(slices.Clone(entry.Capabilities), "mcp_read")
+			slices.Sort(entry.Capabilities)
+		}
 		if a.enableDelivery && slices.Contains(entry.Capabilities, "read_business_data") {
 			entry.Capabilities = append(slices.Clone(entry.Capabilities), "read_delivery_orders")
 			slices.Sort(entry.Capabilities)
