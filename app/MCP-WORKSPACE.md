@@ -13,6 +13,7 @@ delivery provider, writes a record, sends a message, or accesses a receipt.
 | `gomar_list_recent_delivery` | Internal order IDs, provider, recorded status and times | Requires delivery enabled. Up to 30; no customer data, provider order IDs, items, or amounts. |
 | `gomar_payables_summary` | Outstanding and overdue balances by currency, in minor units | Uses the existing accounting role and outlet checks. No supplier details, invoices or payments. |
 | `gomar_list_payables` / `gomar_read_payable` | Internal payable ID, local dates, status, amount and balance by currency | 30 per page. No supplier or document identity. Excludes rows affected by another outlet. |
+| `gomar_list_payable_movements` | One payable’s ledger: type, Buenos Aires date (if recorded), signed change and resulting balance in minor units | Same finance role and outlet checks plus foreign reversal checks. Up to 30 in ledger order; reuse `next_cursor` only for the same payable. No supplier, document, payment or receipt identity. |
 | `gomar_list_recorded_payments` / `gomar_read_recorded_payment` | Internal payment record ID, local dates, status and amount | 30 per page. Excludes cross-outlet settlements and linked reversals, with no method, accounts, notes or receipts. Not confirmation that money moved. |
 | `gomar_document_totals` | Count and net document totals by currency for the selected outlet | All non-deleted documents; credits subtract; exact signed strings in minor units. |
 | `gomar_list_documents` | Document metadata for the selected outlet | No attachments or tax identifiers. Up to 30 per page. |
@@ -28,6 +29,14 @@ delivery provider, writes a record, sends a message, or accesses a receipt.
 | `gomar_pos_catalog` | Products and ARS prices in minor units | Up to 30 per page. |
 | `gomar_stock_movements` | Counts and net units by movement type | One product and up to 31 Buenos Aires days, with no actor or order IDs. |
 | `gomar_list_stock_movements` | Individual movement type, signed change and Buenos Aires timestamp | One authorized product, 1 to 31 days, up to 30 rows per page. No actor, movement ID, order or notes. |
+
+In payable movement history, `post` adds the payable, `payment` subtracts
+only the amount applied to that payable (not the whole payment), and
+`reversal` restores the reversed share. Drafts do not change the ledger.
+There are no void entries or status forecasts; payment and reversal refer
+to internal records, not bank confirmation. Pages do not share a frozen
+snapshot; later changes may appear, and eligibility is checked again.
+The order is ledger recording order, not a sort by date.
 
 Sales still means recorded POS sales, not delivery or invoices. The tools
 can be listed even when an app feature is off or the user lacks permission;

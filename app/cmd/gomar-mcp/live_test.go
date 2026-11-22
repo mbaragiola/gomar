@@ -90,6 +90,11 @@ func TestLiveStdioScopedTools(t *testing.T) {
 			_, _ = io.WriteString(w, `{"records":[{"id":5,"status":"partial","currency":"ARS","issue_date":"2026-11-01","posted_date":"2026-11-02","total_minor":100,"balance_minor":50}]}`)
 		case "/api/v1/mcp/entities/20/outlets/10/payable-records/5":
 			_, _ = io.WriteString(w, `{"id":5,"status":"partial","currency":"ARS","issue_date":"2026-11-01","posted_date":"2026-11-02","total_minor":100,"balance_minor":50,"supplier":"`+secret+`"}`)
+		case "/api/v1/mcp/entities/20/outlets/10/payable-records/5/movements":
+			if r.URL.RawQuery != "cursor=5.2" {
+				t.Error("unexpected payable history cursor")
+			}
+			_, _ = io.WriteString(w, `{"payable_id":5,"currency":"ARS","movements":[{"kind":"payment","date":"2026-11-03","delta_minor":-50,"balance_minor":50,"actor":"`+secret+`","payment_id":"`+secret+`","reason":"`+secret+`"}]}`)
 		case "/api/v1/mcp/entities/20/outlets/10/recorded-payments":
 			_, _ = io.WriteString(w, `{"records":[{"id":12,"status":"draft","currency":"USD","created_date":"2026-11-03","total_minor":100}]}`)
 		case "/api/v1/mcp/entities/20/outlets/10/recorded-payments/12":
@@ -147,7 +152,7 @@ func TestLiveStdioScopedTools(t *testing.T) {
 	}
 	defer session.Close()
 	metadata, err := session.ListTools(ctx, &mcp.ListToolsParams{})
-	if err != nil || len(metadata.Tools) != 33 {
+	if err != nil || len(metadata.Tools) != 34 {
 		t.Fatal(metadata, err)
 	}
 	for _, tool := range metadata.Tools {
@@ -185,6 +190,8 @@ func TestLiveStdioScopedTools(t *testing.T) {
 		{"gomar_read_reconciliation_run", map[string]any{"entity_id": 20, "outlet_id": 11, "run_id": 8}, "permisos", true},
 		{"gomar_list_payables", map[string]any{"entity_id": 20, "outlet_id": 10, "after_id": 4}, `"balance_minor":50`, false},
 		{"gomar_read_payable", map[string]any{"entity_id": 20, "outlet_id": 10, "payable_id": 5}, `"status":"partial"`, false},
+		{"gomar_list_payable_movements", map[string]any{"entity_id": 20, "outlet_id": 10, "payable_id": 5, "cursor": "5.2"}, `"delta_minor":-50`, false},
+		{"gomar_list_payable_movements", map[string]any{"entity_id": 20, "outlet_id": 10, "payable_id": 5, "cursor": "4.2"}, "misma cuenta", true},
 		{"gomar_list_recorded_payments", map[string]any{"entity_id": 20, "outlet_id": 10}, `"status":"draft"`, false},
 		{"gomar_read_recorded_payment", map[string]any{"entity_id": 20, "outlet_id": 10, "payment_id": 12}, `"total_minor":100`, false},
 		{"gomar_list_stock_movements", map[string]any{"entity_id": 20, "outlet_id": 10, "product_id": 3, "days": 1, "start_date": "2026-11-01", "after_id": 2}, `"delta":-5`, false},
@@ -212,7 +219,7 @@ func TestLiveStdioScopedTools(t *testing.T) {
 			t.Fatalf("unexpected result for %s: %s", test.name, wire)
 		}
 	}
-	if requests.Load() != 30 {
+	if requests.Load() != 31 {
 		t.Fatalf("wrong number of requests: %d", requests.Load())
 	}
 	if err := session.Close(); err != nil {
