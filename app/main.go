@@ -31,6 +31,7 @@ func main() {
 	enableWikiEditProposals := flag.Bool("enable-mcp-wiki-edit-proposals", false, "allow administrators to propose wiki edits for browser approval")
 	enableStockReceiptProposals := flag.Bool("enable-mcp-stock-receipt-proposals", false, "allow staff to propose stock receipts for browser approval")
 	enableProposalSessions := flag.Bool("enable-mcp-proposal-sessions", false, "allow selected chat proposals for browser approval")
+	enableProviderAuth := flag.Bool("enable-provider-auth", false, "allow explicitly configured OpenID Connect login providers")
 	enableStock := flag.Bool("enable-stock", false, "enable optional finished-item stock for the prototype POS")
 	publicReservations := flag.Bool("public-reservations", false, "enable the guest reservation routes for explicitly enabled venues")
 	enableDocumentReviewProposals := flag.Bool("enable-mcp-document-review-proposals", false, "allow staff to propose draft document review for browser approval")
@@ -55,7 +56,7 @@ func main() {
 			modes++
 		}
 	}
-	if *state == "" || flag.NArg() != 0 || modes > 1 || modes != 0 && (explicitTCP || unixMode || *publicReservations || *enablePOS || *enableDelivery || *enableMCP || *enableWikiProposals || *enableDocumentProposals || *enableWikiEditProposals || *enableStockReceiptProposals || *enableProposalSessions || *enableDocumentReviewProposals) {
+	if *state == "" || flag.NArg() != 0 || modes > 1 || modes != 0 && (explicitTCP || unixMode || *publicReservations || *enablePOS || *enableDelivery || *enableMCP || *enableWikiProposals || *enableDocumentProposals || *enableWikiEditProposals || *enableStockReceiptProposals || *enableProposalSessions || *enableDocumentReviewProposals || *enableProviderAuth) {
 		log.Fatal("provide -state; choose at most one of -init, -check and -create-admin without server flags")
 	}
 	var addr netip.AddrPort
@@ -69,6 +70,13 @@ func main() {
 		if err != nil || addr.Addr().Zone() != "" || !addr.Addr().IsLoopback() {
 			log.Fatal("-listen must use a numeric loopback IP and port")
 		}
+	}
+	providerAuth, err := providerRuntimeAuth(providerRuntimeSettings{
+		enabled: *enableProviderAuth, protectedIngress: unixMode, authority: *unixAuthority,
+		migrations: postgresMigrationNames, env: os.Getenv, readSecret: readProviderSecretFile, now: time.Now(),
+	})
+	if err != nil {
+		log.Fatal(err)
 	}
 	// Resolve and reserve the exact protected listener before opening (or
 	// migrating) state. An invalid, unsafe, or occupied path cannot cause
@@ -130,7 +138,7 @@ func main() {
 		WriteTimeout:      20 * time.Second,
 		IdleTimeout:       60 * time.Second,
 	}
-	application := &app{db: db, privateRoot: privateRoot, publicReservations: *publicReservations, enablePOS: *enablePOS,
+	application := &app{db: db, providerAuth: providerAuth, privateRoot: privateRoot, publicReservations: *publicReservations, enablePOS: *enablePOS,
 		enableDelivery: *enableDelivery, enableStock: *enableStock, enableMCP: *enableMCP, enableMCPWikiProposals: *enableWikiProposals, enableMCPDocumentProposals: *enableDocumentProposals, enableMCPWikiEditProposals: *enableWikiEditProposals, enableMCPStockReceiptProposals: *enableStockReceiptProposals, enableMCPProposalSessions: *enableProposalSessions, enableMCPDocumentReviewProposals: *enableDocumentReviewProposals}
 	if ingress != nil {
 		listener = ingress.listener

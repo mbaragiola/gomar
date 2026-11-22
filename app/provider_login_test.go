@@ -124,6 +124,10 @@ func TestPostgresProviderLoginSynthetic(t *testing.T) {
 		"microsoft":      {"synthetic-client", "synthetic-secret", ""},
 		"microsoft-work": {"synthetic-client", "synthetic-secret", "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"},
 	}
+	now := time.Now()
+	apple := settings["apple"]
+	apple.ClientSecret = providerAppleSecretFixture(apple.ClientID, now, nil)
+	settings["apple"] = apple
 	endpoints := map[string]providerEndpoints{}
 	for flow, config := range settings {
 		e, err := pinnedProviderEndpoints(flow, config.Tenant)
@@ -165,7 +169,11 @@ func TestPostgresProviderLoginSynthetic(t *testing.T) {
 		}
 		tokenRequests++
 		code, ok := codes[r.Form.Get("code")]
-		if !ok || r.URL.String() != code.settings.Token || r.Form.Get("client_secret") != "synthetic-secret" ||
+		secret := "synthetic-secret"
+		if code.settings.Name == "apple" {
+			secret = apple.ClientSecret
+		}
+		if !ok || r.URL.String() != code.settings.Token || r.Form.Get("client_secret") != secret ||
 			r.Form.Get("redirect_uri") != code.authorization.Get("redirect_uri") || r.Form.Get("grant_type") != "authorization_code" {
 			t.Error("unexpected token exchange")
 			return nil, errProviderIdentity
@@ -203,7 +211,22 @@ func TestPostgresProviderLoginSynthetic(t *testing.T) {
 		out.Body = io.NopCloser(strings.NewReader(string(response)))
 		return out, nil
 	})
-	config, err := newHostedProviderAuth(origin, settings, fake)
+	env := map[string]string{"GOMAR_AUTH_PUBLIC_ORIGIN": origin, "GOMAR_AUTH_PROVIDERS": "google,apple,microsoft,microsoft-work"}
+	secrets := make(map[string]string)
+	for id, v := range settings {
+		prefix := "GOMAR_AUTH_" + strings.ToUpper(strings.ReplaceAll(id, "-", "_"))
+		path := "/synthetic/provider-test/" + id
+		env[prefix+"_CLIENT_ID"] = v.ClientID
+		env[prefix+"_CLIENT_SECRET_FILE"] = path
+		env[prefix+"_TENANT_ID"] = v.Tenant
+		secrets[path] = v.ClientSecret
+	}
+	config, err := providerRuntimeAuth(providerRuntimeSettings{
+		enabled: true, protectedIngress: true, authority: "example.com",
+		migrations: []string{providerAuthMigration}, now: now, network: fake,
+		env:        func(key string) string { return env[key] },
+		readSecret: func(path string) (string, error) { return secrets[path], nil },
+	})
 	if err != nil {
 		t.Fatal(err)
 	}

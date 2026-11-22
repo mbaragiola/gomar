@@ -142,7 +142,12 @@ func newOIDCProvider(origin, flow string, settings providerClientSettings, base 
 		return nil, errProviderConfig
 	}
 	if base == nil {
-		base = http.DefaultTransport
+		// Do not inherit ambient proxies for credential exchange.
+		base = &http.Transport{
+			ForceAttemptHTTP2: true, TLSHandshakeTimeout: 5 * time.Second,
+			ResponseHeaderTimeout: 5 * time.Second, MaxResponseHeaderBytes: 32 << 10,
+			MaxIdleConnsPerHost: 2, IdleConnTimeout: 15 * time.Second,
+		}
 	}
 	transport := providerOutbound{token: e.Token, jwks: e.JWKS, base: base}
 	if e.Name == "microsoft" {
