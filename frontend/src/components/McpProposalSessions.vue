@@ -3,7 +3,7 @@ import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { ApiError, request } from '../api'
 
 type Status = 'pending' | 'approved' | 'rejected' | 'expired' | 'revoked'
-type Proposal = { id: number; status: Status; expires_at: string; product_id?: number; product_revision?: number; rename?: Rename; document_id?: number; document_revision?: number; review?: Review; run_id?: number; draft?: Draft; edit?: DocumentEdit; digest?: string }
+type Proposal = { id: number; status: Status; expires_at: string; product_id?: number; product_revision?: number; rename?: Rename; document_id?: number; document_revision?: number; review?: Review; run_id?: number; draft?: Draft; edit?: DocumentEdit; movement_id?: number; adjustment?: StockAdjustment; digest?: string }
 type Rename = {
   product_id: number; expected_revision: number; name: string; current_name: string
   unchanged_price_minor: number; unchanged_active: boolean
@@ -16,18 +16,27 @@ type DocumentEdit = {
   document_id: number; expected_revision: number; reason: string; currency: 'ARS' | 'USD'; before: DocumentValues; after: DocumentValues
 }
 type Draft = { match_reference: boolean }
-type Action = 'pos_product_rename' | 'document_draft_review' | 'reconciliation_draft_create' | 'document_draft_edit'
+type StockAdjustment = {
+  product_id: number; product_name: string; revision: number; stock_minimum: number
+  quantity: number; latest_movement: number; before: number; after: number; delta: number
+}
+type Action = 'pos_product_rename' | 'document_draft_review' | 'reconciliation_draft_create' | 'document_draft_edit' | 'stock_waste_record' | 'stock_physical_count'
 type ScopedProposal = Proposal & { kind: Action }
 type Session = { id: number; expires_at: string; actions: string[] }
 const actionName = 'pos_product_rename'
 const reviewAction = 'document_draft_review'
 const draftAction = 'reconciliation_draft_create'
 const editAction = 'document_draft_edit'
+const wasteAction = 'stock_waste_record'
+const countAction = 'stock_physical_count'
+const isStock = (action: Action) => action === wasteAction || action === countAction
 const actionLabels: Record<Action, string> = {
   pos_product_rename: 'Cambiar el nombre de un producto de caja',
   document_draft_review: 'Marcar un comprobante como revisado',
   reconciliation_draft_create: 'Crear un borrador vacío de conciliación',
   document_draft_edit: 'Editar fechas e importes de un borrador',
+  stock_waste_record: 'Registrar una merma de stock',
+  stock_physical_count: 'Registrar un conteo físico de stock',
 }
 const actionUI: Record<Action, {
   path: string; previewSuffix: string; proceed: string; approve: string; confirm: string; rejectConfirm: string
@@ -46,6 +55,20 @@ const actionUI: Record<Action, {
     rejectConfirm: '¿Querés rechazar sin modificar el comprobante?',
     stale: 'No se marcó como revisado. La propuesta o la versión del comprobante cambiaron.',
     approved: 'Comprobante marcado como revisado.', rejected: 'Propuesta rechazada. No se modificó el comprobante.',
+  },
+  stock_waste_record: {
+    path: '/stock-waste-proposals', previewSuffix: ' de merma', proceed: 'Continuar con la merma',
+    approve: 'Registrar merma', confirm: '¿Querés registrar esta merma para el local indicado?',
+    rejectConfirm: '¿Querés rechazar la merma sin cambiar el stock?',
+    stale: 'No se registró la merma. El stock o la propuesta cambiaron. Prepará otra propuesta.',
+    approved: 'Merma registrada.', rejected: 'Propuesta rechazada. El stock no cambió.',
+  },
+  stock_physical_count: {
+    path: '/stock-physical-count-proposals', previewSuffix: ' de conteo', proceed: 'Continuar con el conteo',
+    approve: 'Registrar conteo físico', confirm: '¿Querés registrar este saldo contado para el local indicado?',
+    rejectConfirm: '¿Querés rechazar el conteo sin cambiar el stock?',
+    stale: 'No se registró el conteo. El stock o la propuesta cambiaron. Prepará otra propuesta.',
+    approved: 'Conteo físico registrado.', rejected: 'Propuesta rechazada. El stock no cambió.',
   },
   document_draft_edit: {
     path: '/document-edit-proposals', previewSuffix: ' de edición', proceed: 'Continuar con la edición',
@@ -88,22 +111,33 @@ function isDocumentEdit(value: DocumentEdit | undefined): value is DocumentEdit 
     typeof value.reason === 'string' && !!value.reason && (value.currency === 'ARS' || value.currency === 'USD') &&
     isDocumentValues(value.before) && isDocumentValues(value.after)
 }
+const nonnegative = (value: number) => Number.isSafeInteger(value) && value >= 0
+function validStock(kind: Action, x: StockAdjustment | undefined): x is StockAdjustment {
+  if (!x || !positive(x.product_id) || typeof x.product_name !== 'string' || !nonnegative(x.revision) ||
+    !nonnegative(x.stock_minimum) || !nonnegative(x.latest_movement) || !nonnegative(x.quantity) || x.quantity > 1_000_000 ||
+    ![x.before, x.after, x.delta].every(Number.isSafeInteger) || x.after - x.before !== x.delta) return false
+  return kind === wasteAction ? x.quantity > 0 && x.delta === -x.quantity : x.after === x.quantity
+}
+const stockUnits = new Intl.NumberFormat('es-AR')
+const stockDelta = new Intl.NumberFormat('es-AR', { signDisplay: 'exceptZero' })
 const prices = new Intl.NumberFormat('es-AR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
 const amount = (value: number | null) => value === null ? 'No informado' : prices.format(value / 100)
 type Decision = 'approve' | 'reject'
-const props = defineProps<{ entity: number; outlet: number; outletName: string; canRename: boolean; canReviewDocuments?: boolean; canCreateReconciliationDraft?: boolean; canEditDocuments?: boolean }>()
+const props = defineProps<{ entity: number; outlet: number; outletName: string; canRename: boolean; canReviewDocuments?: boolean; canCreateReconciliationDraft?: boolean; canEditDocuments?: boolean; canAdjustStock?: boolean }>()
 const scopePath = `/entities/${props.entity}/outlets/${props.outlet}`
 const base = (kind: Action) => scopePath + actionUI[kind].path
-const allowed = (kind: Action) => kind === editAction ? !!props.canEditDocuments
+const allowed = (kind: Action) => isStock(kind) ? !!props.canAdjustStock
+  : kind === editAction ? !!props.canEditDocuments
   : kind === draftAction ? !!props.canCreateReconciliationDraft
   : kind === reviewAction ? !!props.canReviewDocuments : props.canRename
-const actionChoices = computed(() => ([actionName, reviewAction, draftAction, editAction] as const).filter(allowed))
+const actionChoices = computed(() => ([actionName, reviewAction, draftAction, editAction, wasteAction, countAction] as const).filter(allowed))
 const setSelected = (kind: Action, event: Event) => {
   if (event.target instanceof HTMLInputElement) selected.value = event.target.checked ? kind : null
 }
 const actionText = (action: string) => Object.hasOwn(actionLabels, action)
   ? actionLabels[action as Action] : 'Acción no reconocida'
-const validPreview = (kind: Action, proposal: Proposal) => kind === editAction ? isDocumentEdit(proposal.edit)
+const validPreview = (kind: Action, proposal: Proposal) => isStock(kind) ? validStock(kind, proposal.adjustment)
+  : kind === editAction ? isDocumentEdit(proposal.edit)
   : kind === draftAction
   ? typeof proposal.draft?.match_reference === 'boolean'
   : kind === reviewAction ? isReview(proposal.review) : isRename(proposal.rename)
@@ -255,7 +289,8 @@ async function decide() {
       body: JSON.stringify({ decision: target.action, digest: target.digest, confirm: true }),
     })
     if (!active(run)) return
-    const validApproval = target.kind === editAction
+    const validApproval = isStock(target.kind) ? positive(result.movement_id ?? 0)
+      : target.kind === editAction
       ? result.document_id === proposed.edit?.document_id && result.document_revision === (proposed.edit?.expected_revision ?? -1) + 1
       : target.kind === draftAction ? positive(result.run_id ?? 0)
       : target.kind === reviewAction
@@ -403,7 +438,15 @@ onBeforeUnmount(() => {
     <section v-if="viewed && allowed(viewed.kind)" class="card subsection gomar-feature" aria-label="Vista previa de la propuesta">
       <h3>Vista previa</h3>
       <template v-if="viewed.status === 'pending'">
-        <div v-if="viewed.kind === editAction && viewed.edit">
+        <div v-if="isStock(viewed.kind) && viewed.adjustment">
+          <p>Local: <strong>{{ outletName }}</strong></p>
+          <p class="gomar-feature-text">Producto: <strong>{{ viewed.adjustment.product_name }}</strong> ({{ viewed.adjustment.product_id }}) · Versión {{ viewed.adjustment.revision }}</p>
+          <p>{{ viewed.kind === wasteAction ? 'Unidades de merma' : 'Unidades contadas' }}: <strong>{{ stockUnits.format(viewed.adjustment.quantity) }}</strong></p>
+          <p>Saldo: <strong>{{ stockUnits.format(viewed.adjustment.before) }} → {{ stockUnits.format(viewed.adjustment.after) }}</strong></p>
+          <p>Cambio: <strong>{{ stockDelta.format(viewed.adjustment.delta) }}</strong></p>
+          <p>Si hubo otro movimiento desde la propuesta, no se aplica este ajuste. No se cambian precios ni se registra una venta.</p>
+        </div>
+        <div v-else-if="viewed.kind === editAction && viewed.edit">
           <p>Local: <strong>{{ outletName }}</strong> · Comprobante {{ viewed.edit.document_id }} · Versión {{ viewed.edit.expected_revision }}</p>
           <p>Moneda sin cambios: <strong>{{ viewed.edit.currency }}</strong></p>
           <section
@@ -463,6 +506,7 @@ onBeforeUnmount(() => {
         <p v-if="viewed.status === 'approved' && viewed.product_id">Producto {{ viewed.product_id }} · Versión {{ viewed.product_revision }}</p>
         <p v-if="viewed.status === 'approved' && viewed.document_id">Comprobante {{ viewed.document_id }} · Versión {{ viewed.document_revision }}</p>
         <p v-if="viewed.status === 'approved' && viewed.run_id">Conciliación {{ viewed.run_id }}</p>
+        <p v-if="viewed.status === 'approved' && viewed.movement_id">Movimiento {{ viewed.movement_id }}</p>
         <button type="button" class="text-button" @click="clearPreview">Cerrar vista previa</button>
       </template>
     </section>

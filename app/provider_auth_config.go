@@ -17,7 +17,7 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-const providerAuthMigration = "014_provider_auth.sql"
+const providerAuthMigration = "015_provider_auth.sql"
 const providerAppleMaxSecretAge = 15777000 * time.Second
 
 var errProviderNeedsSchema = errors.New("provider login requires its registered and applied PostgreSQL migration")

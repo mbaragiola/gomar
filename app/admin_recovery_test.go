@@ -39,7 +39,12 @@ func TestSignInModeRequiresReadyRecoveryAndAllProviders(t *testing.T) {
 
 func TestPostgresAdminRecoveryAndProviderOnlyRealm(t *testing.T) {
 	ctx, db := testPostgresDB(t)
-	if err := migratePostgresThrough(ctx, db, postgresMigrationNames[:12]); err != nil {
+	const publicMigrationCount = 14
+	if len(postgresMigrationNames) < publicMigrationCount ||
+		postgresMigrationNames[publicMigrationCount-1] != "014_mcp_stock_adjustment_proposals.sql" {
+		t.Fatal("must rehearse the upgrade from public stock-adjustment schema 014")
+	}
+	if err := migratePostgresThrough(ctx, db, postgresMigrationNames[:publicMigrationCount]); err != nil {
 		t.Fatal(err)
 	}
 	if err := verifyLocalAdminRecoveryAccount(ctx, db); err == nil {

@@ -2,8 +2,8 @@
 
 This change is **off by default**. The executable reads no provider
 settings unless `-enable-provider-auth` is explicitly selected. Existing
-password login and administrator access are unchanged. Migrations 014 and
-015 register the provider and admin recovery storage after 013. Do not
+password login and administrator access are unchanged. Migrations 015 and
+016 register the provider and admin recovery storage after 014. Do not
 set the opt-in flags until the release gates below pass.
 
 ## Flow and identity
@@ -59,7 +59,7 @@ set the opt-in flags until the release gates below pass.
 
 Apple is not an accepted provider setting, no Apple login routes are
 registered, and Gomar does not display an Apple sign-in option. The
-unpublished prototype adapter is not a launch commitment. Apple documents
+inactive prototype adapter is not a launch commitment. Apple documents
 that web authentication requires an existing App Store app that uses Sign in
 with Apple; Gomar has no eligible app. No Apple account or credentials are
 required for provider-only mode.
@@ -67,7 +67,7 @@ required for provider-only mode.
 
 ## Runtime settings
 
-This is the operator interface after migration 014 is registered and applied.
+This is the operator interface after migration 015 is registered and applied.
 It is not a deployment instruction and no live configuration was added.
 
 - `-enable-provider-auth` also requires the protected Unix HTTPS ingress.
@@ -93,7 +93,7 @@ It is not a deployment instruction and no live configuration was added.
 
 ## Release gates
 
-Verify migration 014 and 015 upgrades without changing
+Verify migration 015 and 016 upgrades without changing
 earlier checksums. Use the private credential path above. Do not put
 provider secrets in Git, frontend code,
 logs or test data. Set ingress limits and avoid
@@ -113,11 +113,11 @@ Neither flag is enabled by default:
 
 - `-enable-admin-recovery-realm`: protects the existing `/admin/login/` with a
   separate, 30-minute password session. Requires registered/applied
-  migration 015, protected Unix HTTPS ingress, and an existing active local
+  migration 016, protected Unix HTTPS ingress, and an existing active local
   account with both staff and superuser flags and a usable password hash.
   No account is created or changed at startup.
 - `-provider-only-sign-in`: additionally requires the recovery flag,
-  `-enable-provider-auth`, registered/applied 014 and 015, and complete
+  `-enable-provider-auth`, registered/applied 015 and 016, and complete
   Google and Microsoft **personal** configurations. Optional work
   Microsoft cannot stand in for personal. Classic password sign-in is
   blocked in the app, and classic password sessions no longer authorize
