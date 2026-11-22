@@ -13,6 +13,7 @@ import InstallApp from './components/InstallApp.vue'
 import StockPanel from './components/StockPanel.vue'
 import DeliveryInbox from './components/DeliveryInbox.vue'
 import KnowledgePanel from './components/KnowledgePanel.vue'
+import ProviderSignIn from './components/ProviderSignIn.vue'
 import PublicReservations from './components/PublicReservations.vue'
 import StaffReservations from './components/StaffReservations.vue'
 import ReconciliationPanel from './components/ReconciliationPanel.vue'
@@ -21,6 +22,7 @@ import type { Document, Entity, EntityManagement, IntakeOperation, OcrConfig, Oc
 
 const publicVenue = /^\/reservas\/([a-z0-9][a-z0-9-]{0,63})\/?$/.exec(window.location.pathname)?.[1]
 const authenticated = ref(false)
+const providerSignInBusy = ref(false)
 const loading = ref(true)
 const busy = ref(false)
 const error = ref('')
@@ -242,6 +244,7 @@ async function initialize() {
 }
 
 async function signIn() {
+  if (providerSignInBusy.value || busy.value) return
   const credentials = { ...loginForm }
   const sessionToken = resetUserState()
   const busyToken = startBusy()
@@ -1005,11 +1008,12 @@ onMounted(() => { if (!publicVenue) return initialize() })
       <p class="eyebrow">GOMAR</p>
       <h1>Registro de compras</h1>
       <p class="muted">Ingresá con tu cuenta asignada. No hay registro público.</p>
+      <ProviderSignIn :disabled="busy" @busy="providerSignInBusy = $event" />
       <form class="stack" @submit.prevent="signIn">
         <label>Usuario<input v-model="loginForm.usuario" autocomplete="username" required /></label>
         <label>Contraseña<input v-model="loginForm.clave" type="password" autocomplete="current-password" required /></label>
         <p v-if="error" class="error" role="alert">{{ error }}</p>
-        <button class="primary" :disabled="busy">{{ busy ? 'Ingresando…' : 'Ingresar' }}</button>
+        <button class="primary" :disabled="busy || providerSignInBusy">{{ busy ? 'Ingresando…' : 'Ingresar' }}</button>
       </form>
     </section>
   </main>
