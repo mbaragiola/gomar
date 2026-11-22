@@ -38,8 +38,14 @@ type DocumentTotals struct {
 }
 
 type SupplierList struct {
-	Suppliers []Named `json:"suppliers"`
-	NextID    int64   `json:"next_id,omitempty"`
+	Suppliers []SupplierReference `json:"suppliers"`
+	NextID    int64               `json:"next_id,omitempty"`
+}
+
+type SupplierReference struct {
+	ID       int64  `json:"id"`
+	Name     string `json:"name"`
+	Revision *int64 `json:"revision,omitempty"`
 }
 
 type PaymentStatusCounts struct {
@@ -150,7 +156,7 @@ func (c *Client) Suppliers(ctx context.Context, entity, outlet int64, after *int
 		return result, err
 	}
 	for _, s := range result.Suppliers {
-		if s.ID <= last || strings.TrimSpace(s.Name) == "" || !utf8.ValidString(s.Name) {
+		if s.ID <= last || strings.TrimSpace(s.Name) == "" || !utf8.ValidString(s.Name) || s.Revision != nil && *s.Revision < 1 {
 			return SupplierList{}, invalidResponse
 		}
 		last = s.ID

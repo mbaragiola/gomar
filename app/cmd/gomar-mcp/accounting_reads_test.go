@@ -38,7 +38,7 @@ func TestAccountingReadToolsUseScopedGETAndTypedOutput(t *testing.T) {
 			}
 			response = `{"count":2,"totals":[{"currency":"ARS","count":1,"total_minor":"10000000000000000000","note":"private sentinel"},{"currency":"USD","count":1,"total_minor":"-125"}],"supplier":"private sentinel"}`
 		case "/suppliers":
-			response = `{"suppliers":[{"id":1,"name":"Synthetic supplier","cuit":"private sentinel"}]}`
+			response = `{"suppliers":[{"id":1,"name":"Synthetic supplier","revision":7,"cuit":"private sentinel"}]}`
 		case "/payments-summary":
 			response = `{"draft":1,"posted":3,"reversed":2,"reversals":2,"receipt":"private sentinel"}`
 		case "/reconciliation-summary":
@@ -80,7 +80,7 @@ func TestAccountingReadToolsUseScopedGETAndTypedOutput(t *testing.T) {
 	}
 	for name, field := range map[string]string{
 		"gomar_document_totals": `"total_minor":"10000000000000000000"`,
-		"gomar_list_documents":  `"type":"credit_note"`, "gomar_list_suppliers": `"name":"Synthetic supplier"`,
+		"gomar_list_documents":  `"type":"credit_note"`, "gomar_list_suppliers": `"name":"Synthetic supplier","revision":7`,
 		"gomar_payment_status_summary": `"posted":3`, "gomar_reconciliation_status_summary": `"review":1`,
 	} {
 		args := map[string]any{"entity_id": 14, "outlet_id": 16}
