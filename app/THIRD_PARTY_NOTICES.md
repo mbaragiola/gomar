@@ -12,6 +12,9 @@ notices](../THIRD_PARTY_NOTICES.md) apply to the separate root module.
 | github.com/jackc/puddle/v2 | v2.2.3 | [LICENSE](third_party/puddle/LICENSE) |
 | golang.org/x/sync | v0.22.0 | [LICENSE](third_party/x-sync/LICENSE), [PATENTS](third_party/x-sync/PATENTS) |
 | golang.org/x/text | v0.41.0 | [LICENSE](third_party/x-text/LICENSE), [PATENTS](third_party/x-text/PATENTS) |
+| github.com/nyaruka/phonenumbers/v2 | v2.0.16 | [LICENSE](third_party/phonenumbers/LICENSE) |
+| Google libphonenumber numbering-plan metadata | v9.0.42 | [LICENSE](third_party/libphonenumber/LICENSE) |
+| google.golang.org/protobuf | v1.36.11 | [LICENSE](third_party/protobuf/LICENSE), [PATENTS](third_party/protobuf/PATENTS) |
 | vue | 3.5.43 | [LICENSE](third_party/vue/LICENSE) |
 | @vue/runtime-core | 3.5.43 | [LICENSE](third_party/runtime-core/LICENSE) |
 | @vue/runtime-dom | 3.5.43 | [LICENSE](third_party/runtime-dom/LICENSE) |

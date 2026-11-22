@@ -17,6 +17,10 @@ const (
 
 func (a *app) registerReservations(add func(string, string, http.HandlerFunc), publicEnabled bool) {
 	a.registerReservationPublic(add, publicEnabled, time.Now)
+	if a.reservationContacts && publicEnabled {
+		add(reservationStaffBase+"/contact-settings", "GET", a.reservationStaff(reservationContactSettingsRead, false))
+		add(reservationStaffBase+"/contact-settings", "PUT", a.reservationContactSettingsWrite())
+	}
 	add(reservationStaffBase, "GET", a.reservationStaff(listReservationRequests, false))
 	add(reservationStaffBase+"/settings", "GET", a.reservationStaff(reservationSettingsRead, false))
 	add(reservationStaffBase+"/settings", "PUT", a.reservationStaff(reservationSettingsSave, true))
@@ -51,6 +55,10 @@ func (a *app) registerReservationPublic(add func(string, string, http.HandlerFun
 		if err != nil {
 			return 0, nil, err
 		}
+		v.CollectContact = a.reservationContacts && v.CollectContact
+		if err != nil {
+			return 0, nil, err
+		}
 		menu, err := reservationMenuForConcierge(r.Context(), a.db, venue, publicEnabled)
 		if menu != nil {
 			v.MenuPDFURL = menu.Path
@@ -76,13 +84,82 @@ func (a *app) registerReservationPublic(add func(string, string, http.HandlerFun
 		if err != nil || contentType != "application/json" {
 			return 0, nil, problem{415, "Enviá los datos en formato JSON."}
 		}
-		var in reservationInput
+		var in reservationPublicInput
 		if err := parseJSON(w, r, &in); err != nil {
 			return 0, nil, err
 		}
-		result, err := s.request(r.Context(), venue, in, clock())
+		result, err := s.requestPublic(r.Context(), venue, in, clock(), a.reservationContacts)
 		return 201, result, err
 	}))
+}
+
+func reservationContactSettingsRead(r *http.Request, tx *sql.Tx, outlet int64, _ []byte) (int, any, error) {
+	var collect bool
+	err := tx.QueryRowContext(r.Context(), `SELECT collect_contact FROM reservation_venues WHERE outlet_id=$1`, outlet).Scan(&collect)
+	if errors.Is(err, sql.ErrNoRows) {
+		return 0, nil, reservationUnavailable
+	}
+	return 200, map[string]bool{"collect_contact": collect}, err
+}
+
+func (a *app) reservationContactSettingsWrite() http.HandlerFunc {
+	handler := a.scopedRequest("", func(r *http.Request, tx *sql.Tx, m entityMembership, body []byte) (int, any, error) {
+		ctx := r.Context()
+		outlet, err := pathID(r, "outlet")
+		if err != nil {
+			return 0, nil, err
+		}
+		if err = requireReservationStaff(ctx, tx, m, outlet); err != nil {
+			return 0, nil, err
+		}
+		// Pin the authenticated login and serialize with membership changes
+		// before taking the same outlet lock the public submitter uses.
+		if _, err = lockWikiProposalBrowser(r, tx, m.userID); err != nil {
+			return 0, nil, err
+		}
+		if err = lockPostgresEntity(ctx, tx, m.ID); errors.Is(err, sql.ErrNoRows) {
+			return 0, nil, missingEntity
+		} else if err != nil {
+			return 0, nil, err
+		}
+		if err = lockPostgresOutlet(ctx, tx, outlet); errors.Is(err, sql.ErrNoRows) {
+			return 0, nil, missingOutlet
+		} else if err != nil {
+			return 0, nil, err
+		}
+		m, err = scopedMembership(tx, m.userID, m.ID, "")
+		if err != nil {
+			return 0, nil, err
+		}
+		if err = requireReservationStaff(ctx, tx, m, outlet); err != nil {
+			return 0, nil, err
+		}
+		return reservationContactSettingsSave(r, tx, outlet, body)
+	}, true)
+	return func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Cache-Control", "no-store")
+		handler(w, r)
+	}
+}
+
+func reservationContactSettingsSave(r *http.Request, tx *sql.Tx, outlet int64, body []byte) (int, any, error) {
+	var in struct {
+		Collect *bool `json:"collect_contact"`
+	}
+	if err := decodeJSON(body, &in); err != nil {
+		return 0, nil, err
+	}
+	if in.Collect == nil {
+		return 0, nil, badInput
+	}
+	var collect bool
+	if err := tx.QueryRowContext(r.Context(), `UPDATE reservation_venues SET collect_contact=$2 WHERE outlet_id=$1 RETURNING collect_contact`, outlet, *in.Collect).Scan(&collect); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return 0, nil, reservationUnavailable
+		}
+		return 0, nil, err
+	}
+	return 200, map[string]bool{"collect_contact": collect}, nil
 }
 
 type reservationStaffHandler func(*http.Request, *sql.Tx, int64, []byte) (int, any, error)
