@@ -1,4 +1,4 @@
-// gomar-mcp is a local stdio demonstration over generated payables only.
+// gomar-mcp serves the Gomar chat tools over local stdio.
 package main
 
 import (
@@ -15,6 +15,9 @@ import (
 
 func run(args []string, in io.Reader, out io.Writer) error {
 	const prefix = "--synthetic-scope="
+	if len(args) > 0 && !strings.HasPrefix(args[0], "--synthetic-") {
+		return runLive(context.Background(), args, in, out)
+	}
 	if len(args) != 1 || !strings.HasPrefix(args[0], prefix) {
 		return errors.New("usage: gomar-mcp --synthetic-scope=centro|norte")
 	}
