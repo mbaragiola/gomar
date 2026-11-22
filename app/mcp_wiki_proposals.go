@@ -152,6 +152,13 @@ func lockWikiProposalBrowser(r *http.Request, tx *sql.Tx, actor int64) ([]byte, 
 }
 
 func requireWikiProposalScope(ctx context.Context, tx *sql.Tx, s wikiProposalScope) error {
+	return requireProposalScope(ctx, tx, s, wikiKeyPurpose)
+}
+
+const wikiKeyPurpose = "wiki"
+const documentKeyPurpose = "document_draft"
+
+func requireProposalScope(ctx context.Context, tx *sql.Tx, s wikiProposalScope, purpose string) error {
 	var membership int64
 	var role string
 	err := tx.QueryRowContext(ctx, `SELECT m.id,m.role FROM memberships m JOIN entities e ON e.id=m.entity_id AND e.active
@@ -162,7 +169,9 @@ func requireWikiProposalScope(ctx context.Context, tx *sql.Tx, s wikiProposalSco
 	if err != nil {
 		return err
 	}
-	if role != "administration" || !slices.Contains(capabilities[role], "manage_entity_access") {
+	allowed := purpose == wikiKeyPurpose && role == "administration" && slices.Contains(capabilities[role], "manage_entity_access") ||
+		purpose == documentKeyPurpose && slices.Contains(capabilities[role], draftCapability)
+	if !allowed {
 		return forbiddenRole
 	}
 	var id int64
@@ -175,6 +184,10 @@ func requireWikiProposalScope(ctx context.Context, tx *sql.Tx, s wikiProposalSco
 }
 
 func (a *app) issueWikiProposalToken(w http.ResponseWriter, r *http.Request, u user) error {
+	return a.issueProposalToken(w, r, u, wikiKeyPurpose)
+}
+
+func (a *app) issueProposalToken(w http.ResponseWriter, r *http.Request, u user, purpose string) error {
 	raw, err := readJSONBody(w, r)
 	if err != nil {
 		return err
@@ -199,7 +212,7 @@ func (a *app) issueWikiProposalToken(w http.ResponseWriter, r *http.Request, u u
 	if err != nil {
 		return err
 	}
-	if err = requireWikiProposalScope(r.Context(), tx, s); err != nil {
+	if err = requireProposalScope(r.Context(), tx, s, purpose); err != nil {
 		return err
 	}
 	now := a.tokenTime()
@@ -217,8 +230,8 @@ func (a *app) issueWikiProposalToken(w http.ResponseWriter, r *http.Request, u u
 	hash := sha256.Sum256(secret)
 	expiry := now.Add(wikiProposalLifetime)
 	var id int64
-	err = tx.QueryRowContext(r.Context(), `INSERT INTO mcp_wiki_proposal_tokens(actor_id,entity_id,outlet_id,token_hash,password_digest,issued_at,expires_at)
-		VALUES($1,$2,$3,$4,$5,$6,$7) RETURNING id`, s.actor, s.entity, s.outlet, hash[:], password, now.Unix(), expiry.Unix()).Scan(&id)
+	err = tx.QueryRowContext(r.Context(), `INSERT INTO mcp_wiki_proposal_tokens(actor_id,entity_id,outlet_id,token_hash,password_digest,issued_at,expires_at,purpose)
+		VALUES($1,$2,$3,$4,$5,$6,$7,$8) RETURNING id`, s.actor, s.entity, s.outlet, hash[:], password, now.Unix(), expiry.Unix(), purpose).Scan(&id)
 	if err != nil {
 		return err
 	}
@@ -230,6 +243,10 @@ func (a *app) issueWikiProposalToken(w http.ResponseWriter, r *http.Request, u u
 }
 
 func (a *app) revokeWikiProposalToken(w http.ResponseWriter, r *http.Request, u user) error {
+	return a.revokeProposalToken(w, r, u, wikiKeyPurpose)
+}
+
+func (a *app) revokeProposalToken(w http.ResponseWriter, r *http.Request, u user, purpose string) error {
 	id, err := pathID(r, "token")
 	if err != nil || id <= 0 {
 		return badInput
@@ -245,11 +262,18 @@ func (a *app) revokeWikiProposalToken(w http.ResponseWriter, r *http.Request, u 
 	now := a.tokenTime().Unix()
 	// An actor may revoke their own credential even if their role has changed.
 	if _, err = tx.ExecContext(r.Context(), `UPDATE mcp_wiki_proposal_tokens SET revoked_at=$1
-		WHERE id=$2 AND actor_id=$3 AND revoked_at IS NULL`, now, id, u.id); err != nil {
+		WHERE id=$2 AND actor_id=$3 AND purpose=$4 AND revoked_at IS NULL`, now, id, u.id, purpose); err != nil {
 		return err
 	}
-	if _, err = tx.ExecContext(r.Context(), `UPDATE mcp_wiki_proposals SET status='revoked',title=NULL,body=NULL,decided_at=$1
-		WHERE token_id=$2 AND actor_id=$3 AND status='pending'`, now, id, u.id); err != nil {
+	switch purpose {
+	case wikiKeyPurpose:
+		_, err = tx.ExecContext(r.Context(), `UPDATE mcp_wiki_proposals SET status='revoked',title=NULL,body=NULL,decided_at=$1
+			WHERE token_id=$2 AND actor_id=$3 AND status='pending'`, now, id, u.id)
+	case documentKeyPurpose:
+		_, err = tx.ExecContext(r.Context(), `UPDATE mcp_document_draft_proposals SET status='revoked',draft_preview=NULL,supplier_fingerprint=NULL,decided_at=$1
+			WHERE token_id=$2 AND actor_id=$3 AND status='pending'`, now, id, u.id)
+	}
+	if err != nil {
 		return err
 	}
 	if err = tx.Commit(); err != nil {
@@ -359,48 +383,14 @@ func (a *app) acceptWikiProposal(w http.ResponseWriter, r *http.Request) error {
 		return err
 	}
 	defer tx.Rollback()
-	var password string
-	var tokenID, expires, entity, outlet int64
-	var tokenPassword []byte
-	// The actor lookup is only a hint for lock ordering. After locking the
-	// actor, query the credential again to see any committed revocation.
-	err = tx.QueryRowContext(ctx, `SELECT actor_id FROM mcp_wiki_proposal_tokens WHERE token_hash=$1`, hash).Scan(&scope.actor)
-	if errors.Is(err, sql.ErrNoRows) {
-		return unauthenticated
-	}
+	tokenID, expires, err := a.loadProposalKey(ctx, tx, hash, &scope, wikiKeyPurpose)
 	if err != nil {
 		return err
-	}
-	err = tx.QueryRowContext(ctx, `SELECT password FROM users WHERE id=$1 AND active FOR UPDATE`, scope.actor).Scan(&password)
-	if errors.Is(err, sql.ErrNoRows) {
-		return unauthenticated
-	}
-	if err != nil {
-		return err
-	}
-	now := a.tokenTime()
-	err = tx.QueryRowContext(ctx, `SELECT id,entity_id,outlet_id,expires_at,password_digest FROM mcp_wiki_proposal_tokens
-		WHERE token_hash=$1 AND actor_id=$2 AND revoked_at IS NULL AND issued_at<=$3 AND expires_at>$3 FOR SHARE`,
-		hash, scope.actor, now.Unix()).Scan(&tokenID, &entity, &outlet, &expires, &tokenPassword)
-	if errors.Is(err, sql.ErrNoRows) {
-		return unauthenticated
-	}
-	if err != nil {
-		return err
-	}
-	digestPassword := sha256.Sum256([]byte(password))
-	if subtle.ConstantTimeCompare(tokenPassword, digestPassword[:]) != 1 {
-		return unauthenticated
-	}
-	if entity != scope.entity {
-		return missingEntity
-	}
-	if outlet != scope.outlet {
-		return missingOutlet
 	}
 	if err = requireWikiProposalScope(ctx, tx, scope); err != nil {
 		return err
 	}
+	now := a.tokenTime()
 
 	digest := wikiProposalDigest(scope, title, input.Body)
 	p, err := scanWikiProposal(tx.QueryRowContext(ctx, `SELECT `+wikiProposalColumns+` FROM mcp_wiki_proposals
@@ -446,6 +436,48 @@ func (a *app) acceptWikiProposal(w http.ResponseWriter, r *http.Request) error {
 	p.ArticleID = nil // The proposal credential never accesses the published article.
 	jsonResponse(w, status, p.wikiProposalReceipt)
 	return nil
+}
+
+// Lock the hinted actor and then re-read credentials so revocation and
+// rotation cannot race a successful authorization transaction.
+func (a *app) loadProposalKey(ctx context.Context, tx *sql.Tx, hash []byte, scope *wikiProposalScope, purpose string) (tokenID, expires int64, err error) {
+	var password string
+	var entity, outlet int64
+	var tokenPassword []byte
+	err = tx.QueryRowContext(ctx, `SELECT actor_id FROM mcp_wiki_proposal_tokens WHERE token_hash=$1 AND purpose=$2`, hash, purpose).Scan(&scope.actor)
+	if errors.Is(err, sql.ErrNoRows) {
+		err = unauthenticated
+	}
+	if err != nil {
+		return
+	}
+	err = tx.QueryRowContext(ctx, `SELECT password FROM users WHERE id=$1 AND active FOR UPDATE`, scope.actor).Scan(&password)
+	if errors.Is(err, sql.ErrNoRows) {
+		err = unauthenticated
+	}
+	if err != nil {
+		return
+	}
+	now := a.tokenTime().Unix()
+	err = tx.QueryRowContext(ctx, `SELECT id,entity_id,outlet_id,expires_at,password_digest FROM mcp_wiki_proposal_tokens
+		WHERE token_hash=$1 AND actor_id=$2 AND revoked_at IS NULL AND issued_at<=$3 AND expires_at>$3 AND purpose=$4 FOR SHARE`,
+		hash, scope.actor, now, purpose).Scan(&tokenID, &entity, &outlet, &expires, &tokenPassword)
+	if errors.Is(err, sql.ErrNoRows) {
+		err = unauthenticated
+	}
+	if err != nil {
+		return
+	}
+	digestPassword := sha256.Sum256([]byte(password))
+	switch {
+	case subtle.ConstantTimeCompare(tokenPassword, digestPassword[:]) != 1:
+		err = unauthenticated
+	case entity != scope.entity:
+		err = missingEntity
+	case outlet != scope.outlet:
+		err = missingOutlet
+	}
+	return
 }
 
 func (a *app) beginWikiReview(r *http.Request, u user) (*sql.Tx, wikiProposalScope, []byte, error) {
@@ -687,6 +719,14 @@ func (a *app) pruneWikiProposals(ctx context.Context) error {
 		SELECT id FROM mcp_wiki_proposals WHERE status='pending' AND expires_at<=$1
 		ORDER BY expires_at,id LIMIT 100 FOR UPDATE SKIP LOCKED
 	) UPDATE mcp_wiki_proposals p SET status='expired',title=NULL,body=NULL,decided_at=$1
+		FROM expired WHERE p.id=expired.id`, now.Unix())
+	if err != nil {
+		return err
+	}
+	_, err = a.db.ExecContext(ctx, `WITH expired AS (
+		SELECT id FROM mcp_document_draft_proposals WHERE status='pending' AND expires_at<=$1
+		ORDER BY expires_at,id LIMIT 100 FOR UPDATE SKIP LOCKED
+	) UPDATE mcp_document_draft_proposals p SET status='expired',draft_preview=NULL,supplier_fingerprint=NULL,decided_at=$1
 		FROM expired WHERE p.id=expired.id`, now.Unix())
 	if err != nil {
 		return err

@@ -27,6 +27,7 @@ func main() {
 	enablePOS := flag.Bool("enable-pos", false, "enable the prototype POS for permitted staff")
 	enableMCP := flag.Bool("enable-mcp", false, "allow scoped staff read-only MCP access")
 	enableWikiProposals := flag.Bool("enable-mcp-wiki-proposals", false, "allow administrators to propose new wiki articles for browser approval")
+	enableDocumentProposals := flag.Bool("enable-mcp-document-proposals", false, "allow staff to propose document drafts for browser approval")
 	enableStock := flag.Bool("enable-stock", false, "enable optional finished-item stock for the prototype POS")
 	publicReservations := flag.Bool("public-reservations", false, "enable the guest reservation routes for explicitly enabled venues")
 	flag.Parse()
@@ -44,7 +45,7 @@ func main() {
 			modes++
 		}
 	}
-	if *state == "" || flag.NArg() != 0 || modes > 1 || modes != 0 && (explicitTCP || unixMode || *publicReservations || *enablePOS || *enableDelivery || *enableMCP || *enableWikiProposals) {
+	if *state == "" || flag.NArg() != 0 || modes > 1 || modes != 0 && (explicitTCP || unixMode || *publicReservations || *enablePOS || *enableDelivery || *enableMCP || *enableWikiProposals || *enableDocumentProposals) {
 		log.Fatal("provide -state; choose at most one of -init, -check and -create-admin without server flags")
 	}
 	var addr netip.AddrPort
@@ -120,7 +121,7 @@ func main() {
 		IdleTimeout:       60 * time.Second,
 	}
 	application := &app{db: db, privateRoot: privateRoot, publicReservations: *publicReservations, enablePOS: *enablePOS,
-		enableDelivery: *enableDelivery, enableStock: *enableStock, enableMCP: *enableMCP, enableMCPWikiProposals: *enableWikiProposals}
+		enableDelivery: *enableDelivery, enableStock: *enableStock, enableMCP: *enableMCP, enableMCPWikiProposals: *enableWikiProposals, enableMCPDocumentProposals: *enableDocumentProposals}
 	if ingress != nil {
 		listener = ingress.listener
 		server.DisableGeneralOptionsHandler = true
