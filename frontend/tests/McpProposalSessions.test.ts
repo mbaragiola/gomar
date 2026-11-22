@@ -986,3 +986,113 @@ describe('Mínimo de stock', () => {
     panel.unmount()
   })
 })
+
+describe('Razón social de proveedores', () => {
+  const path = base + '/supplier-legal-name-proposals'
+  const supplier = {
+    supplier_id: 48, expected_revision: 7, name: 'Almacén <b>del Río</b> S.A.', current_name: '  Almacén del río SRL  ',
+    business_wide: true,
+  }
+  function fakeFetch(reply: Response, preview: unknown = supplier) {
+    return vi.fn((url: string) => {
+      if (url.endsWith('/proposal-sessions')) return Promise.resolve(result({ sessions: [] }))
+      if (url === path) return Promise.resolve(result({ proposals: [pending()] }))
+      if (url === path + '/8') return Promise.resolve(result({
+        ...pending(), digest, supplier: { ...preview as object, cuit: 'tax-sentinel', contact: 'contact-sentinel' },
+      }))
+      if (url === path + '/8/decision') return Promise.resolve(reply)
+      throw Error('unexpected test request')
+    })
+  }
+
+  async function show(fetch: unknown, businessName = 'Compradora del Litoral', canChangeSupplierName = true) {
+    vi.stubGlobal('fetch', fetch)
+    const panel = mount(McpProposalSessions, {
+      props: { entity: 2, outlet: 7, outletName: 'Centro de prueba', businessName, canRename: false, canChangeSupplierName },
+    })
+    await button(panel, 'Sesiones de propuestas').trigger('click')
+    await flushPromises()
+    return panel
+  }
+
+  async function read(panel: ReturnType<typeof mount>) {
+    await button(panel, 'Ver propuesta 8 de razón social').trigger('click')
+    await flushPromises()
+  }
+
+  it('keeps the action unchecked and previews the exact company-wide name before a distinct approval', async () => {
+    const fetch = fakeFetch(result({ ...pending(), status: 'approved', supplier_id: 48, supplier_revision: 8 }))
+    const panel = await show(fetch)
+    const choice = panel.get('input[type=checkbox]')
+    expect((choice.element as HTMLInputElement).checked).toBe(false)
+    expect(button(panel, 'Crear sesión de propuestas').attributes()).toHaveProperty('disabled')
+    await choice.setValue(true)
+    expect(panel.text()).toContain('--proposal-session-action=supplier_legal_name_change')
+    await read(panel)
+    for (const text of ['Empresa: Compradora del Litoral', 'Local que autoriza el acceso: Centro de prueba', 'todos los locales de esta empresa', 'Proveedor 48 · Versión 7']) {
+      expect(panel.text()).toContain(text)
+    }
+    expect(panel.get('[aria-label="Razón social actual"]').element.textContent).toBe(supplier.current_name)
+    expect(panel.get('[aria-label="Razón social propuesta"]').element.textContent).toBe(supplier.name)
+    expect(panel.find('[aria-label="Razón social propuesta"] b').exists()).toBe(false)
+    expect(panel.text()).not.toContain('sentinel')
+    await button(panel, 'Continuar con el cambio de razón social').trigger('click')
+    expect(panel.get('[aria-label="Confirmar decisión"]').text()).toContain('todos los locales')
+    expect(fetch.mock.calls.some(([url]) => url.endsWith('/decision'))).toBe(false)
+    await button(panel, 'Confirmar nueva razón social').trigger('click')
+    await flushPromises()
+    expect(fetch).toHaveBeenLastCalledWith(path + '/8/decision', expect.objectContaining({
+      method: 'POST', body: JSON.stringify({ decision: 'approve', digest, confirm: true }),
+    }))
+    expect(panel.text()).toContain('Razón social del proveedor actualizada para toda la empresa.')
+    panel.unmount()
+  })
+
+  it('rejects explicitly and expects no supplier fields in the rejection receipt', async () => {
+    for (const leaked of [false, true]) {
+      const fetch = fakeFetch(result({ ...pending(), status: 'rejected', ...(leaked ? { supplier_id: 48, supplier_revision: 8 } : {}) }))
+      const panel = await show(fetch)
+      await read(panel)
+      await button(panel, 'Rechazar propuesta').trigger('click')
+      await button(panel, 'Sí, rechazar').trigger('click')
+      await flushPromises()
+      expect(fetch).toHaveBeenLastCalledWith(path + '/8/decision', expect.objectContaining({
+        method: 'POST', body: JSON.stringify({ decision: 'reject', digest, confirm: true }),
+      }))
+      expect(panel.text()).toContain(leaked ? 'No pude verificar el resultado.' : 'Propuesta rechazada. No se cambió el proveedor.')
+      panel.unmount()
+    }
+  })
+
+  it.each([409, 410, 200])('does not retry a stale or mismatched decision receipt (%s)', async code => {
+    const fetch = fakeFetch(result({ ...pending(), status: 'approved', supplier_id: 48, supplier_revision: 9 }, code))
+    const panel = await show(fetch)
+    await read(panel)
+    await button(panel, 'Continuar con el cambio de razón social').trigger('click')
+    await button(panel, 'Confirmar nueva razón social').trigger('click')
+    await flushPromises()
+    expect(panel.get('[role=alert]').text()).toMatch(/No se cambió|venció|No pude verificar/)
+    expect(panel.text()).not.toContain('actualizada para toda la empresa')
+    await read(panel)
+    expect(button(panel, 'Continuar con el cambio de razón social').attributes()).toHaveProperty('disabled')
+    expect(fetch.mock.calls.filter(([url]) => url.endsWith('/decision'))).toHaveLength(1)
+    panel.unmount()
+  })
+
+  it('does not review an invalid scope marker/revision or query without capability or an exact company label', async () => {
+    const fetch = fakeFetch(result({}), { ...supplier, business_wide: false })
+    for (const [name, caps] of [['', true], ['Empresa fixture', false]] as const) {
+      const panel = await show(fetch, name, caps)
+      expect(fetch.mock.calls.some(([url]) => url === path)).toBe(false)
+      panel.unmount()
+    }
+    for (const change of [{ business_wide: false }, { expected_revision: 0 }]) {
+      const fake = fakeFetch(result({}), { ...supplier, ...change })
+      const panel = await show(fake)
+      await read(panel)
+      expect(panel.get('[role=alert]').text()).toContain('No pude abrir la propuesta.')
+      expect(button(panel, 'Continuar con el cambio de razón social')).toBeUndefined()
+      panel.unmount()
+    }
+  })
+})

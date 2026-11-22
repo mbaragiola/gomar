@@ -119,7 +119,8 @@ const canConfirmReservationsViaMcp = computed(() => hasCapability('mcp_reservati
 const canCancelReservationsViaMcp = computed(() => hasCapability('mcp_reservation_cancel_proposals'))
 const canCreateProductsViaMcp = computed(() => hasCapability('mcp_pos_create_proposals'))
 const canSetStockMinimumViaMcp = computed(() => hasCapability('mcp_stock_minimum_proposals'))
-const canManageMcpProposalSessions = computed(() => hasCapability('mcp_proposal_session_management') || canRenameViaMcp.value || canReviewDocViaMcp.value || canCreateReconciliationViaMcp.value || canEditDocViaMcp.value || canAdjustStockViaMcp.value || canChangeCatalogViaMcp.value || canConfirmReservationsViaMcp.value || canCancelReservationsViaMcp.value || canCreateProductsViaMcp.value || canSetStockMinimumViaMcp.value)
+const canChangeSupplierNameViaMcp = computed(() => hasCapability('mcp_supplier_legal_name_proposals'))
+const canManageMcpProposalSessions = computed(() => hasCapability('mcp_proposal_session_management') || canRenameViaMcp.value || canReviewDocViaMcp.value || canCreateReconciliationViaMcp.value || canEditDocViaMcp.value || canAdjustStockViaMcp.value || canChangeCatalogViaMcp.value || canConfirmReservationsViaMcp.value || canCancelReservationsViaMcp.value || canCreateProductsViaMcp.value || canSetStockMinimumViaMcp.value || canChangeSupplierNameViaMcp.value)
 const canReviewStockReceiptProposals = computed(() => hasCapability('mcp_stock_receipt_proposals'))
 const canReviewWikiEditProposals = computed(() => hasCapability('mcp_wiki_edit_proposals'))
 const canReviewWikiProposals = computed(() => hasCapability('mcp_wiki_proposals'))
@@ -1185,6 +1186,8 @@ onMounted(() => { if (!publicVenue) return initialize() })
             :can-cancel-reservations="canCancelReservationsViaMcp"
             :can-create-products="canCreateProductsViaMcp"
             :can-set-stock-minimum="canSetStockMinimumViaMcp"
+            :can-change-supplier-name="canChangeSupplierNameViaMcp"
+            :business-name="currentEntity?.nombre"
             :entity="selectedEntityId"
             :outlet="selectedOutletId"
             :outlet-name="outlets.find((item) => item.id === selectedOutletId)?.nombre ?? 'este local'"
