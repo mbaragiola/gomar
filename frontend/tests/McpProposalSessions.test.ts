@@ -603,3 +603,106 @@ describe('Precio y disponibilidad de caja', () => {
     panel.unmount()
   })
 })
+
+describe('Confirmación de una reserva', () => {
+  const path = base + '/reservation-confirm-proposals'
+  const reference = '4'.repeat(32)
+  const confirmation = {
+    reservation_reference: reference, start_utc: '2027-09-03T01:30:00Z',
+    start_local: '2027-09-02T22:30:00-03:00', timezone: 'America/Argentina/Buenos_Aires',
+    party_size: 3, status: 'pending', table_label: 'Mesa de prueba', table_capacity: 4,
+  }
+  async function reservationPanel(fetch: unknown, allowed = true) {
+    vi.stubGlobal('fetch', fetch)
+    const panel = mount(McpProposalSessions, {
+      props: { entity: 2, outlet: 7, outletName: 'Centro de prueba', canRename: false, canConfirmReservations: allowed },
+    })
+    await button(panel, 'Sesiones de propuestas').trigger('click')
+    await flushPromises()
+    return panel
+  }
+  function fakeFetch(reply: Response, preview = confirmation) {
+    return vi.fn((url: string) => {
+      if (url.endsWith('/proposal-sessions')) return Promise.resolve(result({ sessions: [] }))
+      if (url === path) return Promise.resolve(result({ proposals: [pending()] }))
+      if (url === path + '/8') return Promise.resolve(result({
+        ...pending(), digest, confirmation: { ...preview, guest_name: 'name sentinel', guest_phone: 'phone sentinel' },
+      }))
+      if (url === path + '/8/decision') return Promise.resolve(reply)
+      throw Error('unexpected test request')
+    })
+  }
+
+  it('previews the exact scoped reservation, with a separate confirmation and no guest data', async () => {
+    const fetch = fakeFetch(result({ ...pending(), status: 'approved', reservation_reference: reference }))
+    const panel = await reservationPanel(fetch)
+    await panel.get('input[type=checkbox]').setValue(true)
+    expect(panel.text()).toContain('--proposal-session-action=reservation_confirm')
+    await button(panel, 'Ver propuesta 8 de reserva').trigger('click')
+    await flushPromises()
+    for (const text of ['Centro de prueba', reference, '2027-09-02 · 22:30', 'Personas: 3', 'Mesa de prueba', 'Capacidad: 4']) {
+      expect(panel.text()).toContain(text)
+    }
+    expect(panel.text()).not.toContain('sentinel')
+    await button(panel, 'Continuar con la reserva').trigger('click')
+    expect(fetch.mock.calls.some(([url]) => url.endsWith('/decision'))).toBe(false)
+    await button(panel, 'Confirmar reserva').trigger('click')
+    await flushPromises()
+    expect(fetch).toHaveBeenLastCalledWith(path + '/8/decision', expect.objectContaining({
+      method: 'POST', body: JSON.stringify({ decision: 'approve', digest, confirm: true }),
+    }))
+    expect(panel.text()).toContain('Reserva confirmada.')
+    panel.unmount()
+  })
+
+  it.each([409, 410])('does not retry a stale or expired decision (%s) even if it still lists as pending', async status => {
+    const fetch = fakeFetch(result({}, status))
+    const panel = await reservationPanel(fetch)
+    await button(panel, 'Ver propuesta 8 de reserva').trigger('click')
+    await flushPromises()
+    await button(panel, 'Continuar con la reserva').trigger('click')
+    await button(panel, 'Confirmar reserva').trigger('click')
+    await flushPromises()
+    expect(panel.get('[role=alert]').text()).toMatch(/No se confirmó|venció/)
+    await button(panel, 'Ver propuesta 8 de reserva').trigger('click')
+    await flushPromises()
+    expect(button(panel, 'Continuar con la reserva').attributes()).toHaveProperty('disabled')
+    expect(fetch.mock.calls.filter(([url]) => url.endsWith('/decision'))).toHaveLength(1)
+    panel.unmount()
+  })
+
+  it('rejects without confirming a booking and rejects a mismatched approval receipt', async () => {
+    for (const decision of ['reject', 'approve']) {
+      const fetch = fakeFetch(result(decision === 'reject'
+        ? { ...pending(), status: 'rejected' }
+        : { ...pending(), status: 'approved', reservation_reference: 'f'.repeat(32) }))
+      const panel = await reservationPanel(fetch)
+      await button(panel, 'Ver propuesta 8 de reserva').trigger('click')
+      await flushPromises()
+      await button(panel, decision === 'reject' ? 'Rechazar propuesta' : 'Continuar con la reserva').trigger('click')
+      await button(panel, decision === 'reject' ? 'Sí, rechazar' : 'Confirmar reserva').trigger('click')
+      await flushPromises()
+      expect(fetch).toHaveBeenLastCalledWith(path + '/8/decision', expect.objectContaining({
+        method: 'POST', body: JSON.stringify({ decision, digest, confirm: true }),
+      }))
+      expect(panel.text()).toContain(decision === 'reject' ? 'No se modificó la reserva.' : 'No pude resolver la propuesta.')
+      expect(panel.text()).not.toContain('Reserva confirmada.')
+      panel.unmount()
+    }
+  })
+
+  it('does not advertise the operation without its capability or accept inconsistent local time', async () => {
+    const hidden = fakeFetch(result({}))
+    const absent = await reservationPanel(hidden, false)
+    expect(hidden.mock.calls.some(([url]) => url === path)).toBe(false)
+    expect(absent.text()).not.toContain('reservation_confirm')
+    absent.unmount()
+    const fetch = fakeFetch(result({}), { ...confirmation, start_local: '2027-09-03T01:30:00+00:00' })
+    const panel = await reservationPanel(fetch)
+    await button(panel, 'Ver propuesta 8 de reserva').trigger('click')
+    await flushPromises()
+    expect(panel.get('[role=alert]').text()).toContain('No pude abrir la propuesta.')
+    expect(button(panel, 'Continuar con la reserva')).toBeUndefined()
+    panel.unmount()
+  })
+})

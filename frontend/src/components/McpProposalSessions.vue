@@ -3,7 +3,7 @@ import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { ApiError, request } from '../api'
 
 type Status = 'pending' | 'approved' | 'rejected' | 'expired' | 'revoked'
-type Proposal = { id: number; status: Status; expires_at: string; product_id?: number; product_revision?: number; rename?: Rename; document_id?: number; document_revision?: number; review?: Review; run_id?: number; draft?: Draft; edit?: DocumentEdit; movement_id?: number; adjustment?: StockAdjustment; change?: CatalogChange; digest?: string }
+type Proposal = { id: number; status: Status; expires_at: string; product_id?: number; product_revision?: number; rename?: Rename; document_id?: number; document_revision?: number; review?: Review; run_id?: number; draft?: Draft; edit?: DocumentEdit; movement_id?: number; adjustment?: StockAdjustment; change?: CatalogChange; reservation_reference?: string; confirmation?: ReservationConfirmation; digest?: string }
 type Rename = {
   product_id: number; expected_revision: number; name: string; current_name: string
   unchanged_price_minor: number; unchanged_active: boolean
@@ -24,7 +24,11 @@ type CatalogChange = {
   product_id: number; expected_revision: number; name: string
   current_price_minor: number; price_minor: number; current_active: boolean; active: boolean
 }
-type Action = 'pos_product_rename' | 'document_draft_review' | 'reconciliation_draft_create' | 'document_draft_edit' | 'stock_waste_record' | 'stock_physical_count' | 'pos_product_price_change' | 'pos_product_availability_change'
+type ReservationConfirmation = {
+  reservation_reference: string; start_utc: string; start_local: string; timezone: string
+  party_size: number; status: 'pending'; table_label: string; table_capacity: number
+}
+type Action = 'pos_product_rename' | 'document_draft_review' | 'reconciliation_draft_create' | 'document_draft_edit' | 'stock_waste_record' | 'stock_physical_count' | 'pos_product_price_change' | 'pos_product_availability_change' | 'reservation_confirm'
 type ScopedProposal = Proposal & { kind: Action }
 type Session = { id: number; expires_at: string; actions: string[] }
 const actionName = 'pos_product_rename'
@@ -35,9 +39,11 @@ const wasteAction = 'stock_waste_record'
 const countAction = 'stock_physical_count'
 const priceAction = 'pos_product_price_change'
 const availabilityAction = 'pos_product_availability_change'
+const reservationAction = 'reservation_confirm'
 const isCatalog = (action: Action) => action === priceAction || action === availabilityAction
 const isStock = (action: Action) => action === wasteAction || action === countAction
 const actionLabels: Record<Action, string> = {
+  reservation_confirm: 'Confirmar una reserva pendiente',
   pos_product_rename: 'Cambiar el nombre de un producto de caja',
   document_draft_review: 'Marcar un comprobante como revisado',
   reconciliation_draft_create: 'Crear un borrador vacío de conciliación',
@@ -51,6 +57,13 @@ const actionUI: Record<Action, {
   path: string; previewSuffix: string; proceed: string; approve: string; confirm: string; rejectConfirm: string
   stale: string; approved: string; rejected: string
 }> = {
+  reservation_confirm: {
+    path: '/reservation-confirm-proposals', previewSuffix: ' de reserva', proceed: 'Continuar con la reserva',
+    approve: 'Confirmar reserva', confirm: '¿Querés confirmar esta reserva para el local, horario y mesa indicados?',
+    rejectConfirm: '¿Querés rechazar la propuesta sin modificar la reserva?',
+    stale: 'No se confirmó la reserva. La propuesta, la reserva o la mesa cambiaron. Prepará otra propuesta.',
+    approved: 'Reserva confirmada.', rejected: 'Propuesta rechazada. No se modificó la reserva.',
+  },
   pos_product_rename: {
     path: '/pos-rename-proposals', previewSuffix: '', proceed: 'Continuar con este cambio',
     approve: 'Confirmar cambio de nombre', confirm: '¿Querés cambiar solo el nombre de este producto?',
@@ -108,6 +121,24 @@ const actionUI: Record<Action, {
     approved: 'Borrador vacío de conciliación creado.', rejected: 'Propuesta rechazada. No se creó un borrador.',
   },
 }
+const reservationTimezone = 'America/Argentina/Buenos_Aires'
+const reservationWallTime = new Intl.DateTimeFormat('en-GB', {
+  timeZone: reservationTimezone, year: 'numeric', month: '2-digit', day: '2-digit',
+  hour: '2-digit', minute: '2-digit', second: '2-digit', hourCycle: 'h23',
+})
+const reservationReference = (value: unknown): value is string => typeof value === 'string' && /^[0-9a-f]{32}$/.test(value)
+function validReservation(x: ReservationConfirmation | undefined): x is ReservationConfirmation {
+  if (!x || !reservationReference(x.reservation_reference) || x.status !== 'pending' ||
+    x.timezone !== reservationTimezone || !positive(x.party_size) || !positive(x.table_capacity) ||
+    x.party_size > x.table_capacity || typeof x.table_label !== 'string' || !x.table_label.trim() ||
+    typeof x.start_utc !== 'string' || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/.test(x.start_utc) ||
+    typeof x.start_local !== 'string' || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}[+-]\d{2}:\d{2}$/.test(x.start_local)) return false
+  const utc = new Date(x.start_utc)
+  if (!Number.isFinite(utc.getTime()) || utc.toISOString() !== x.start_utc.replace('Z', '.000Z') ||
+    Date.parse(x.start_local) !== utc.getTime()) return false
+  const parts = Object.fromEntries(reservationWallTime.formatToParts(utc).map(part => [part.type, part.value]))
+  return x.start_local.slice(0, 19) === `${parts.year}-${parts.month}-${parts.day}T${parts.hour}:${parts.minute}:${parts.second}`
+}
 const documentTypes: Record<string, string> = { invoice: 'Factura', credit_note: 'Nota de crédito', debit_note: 'Nota de débito' }
 const positive = (value: number) => Number.isSafeInteger(value) && value > 0
 function isRename(value: Rename | undefined): value is Rename {
@@ -156,21 +187,23 @@ const stateLabel = (active: boolean) => active ? 'Activo' : 'Inactivo'
 const prices = new Intl.NumberFormat('es-AR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
 const amount = (value: number | null) => value === null ? 'No informado' : prices.format(value / 100)
 type Decision = 'approve' | 'reject'
-const props = defineProps<{ entity: number; outlet: number; outletName: string; canRename: boolean; canReviewDocuments?: boolean; canCreateReconciliationDraft?: boolean; canEditDocuments?: boolean; canAdjustStock?: boolean; canChangeCatalog?: boolean }>()
+const props = defineProps<{ entity: number; outlet: number; outletName: string; canRename: boolean; canReviewDocuments?: boolean; canCreateReconciliationDraft?: boolean; canEditDocuments?: boolean; canAdjustStock?: boolean; canChangeCatalog?: boolean; canConfirmReservations?: boolean }>()
 const scopePath = `/entities/${props.entity}/outlets/${props.outlet}`
 const base = (kind: Action) => scopePath + actionUI[kind].path
-const allowed = (kind: Action) => isCatalog(kind) ? !!props.canChangeCatalog
+const allowed = (kind: Action) => kind === reservationAction ? !!props.canConfirmReservations
+  : isCatalog(kind) ? !!props.canChangeCatalog
   : isStock(kind) ? !!props.canAdjustStock
   : kind === editAction ? !!props.canEditDocuments
   : kind === draftAction ? !!props.canCreateReconciliationDraft
   : kind === reviewAction ? !!props.canReviewDocuments : props.canRename
-const actionChoices = computed(() => ([actionName, reviewAction, draftAction, editAction, wasteAction, countAction, priceAction, availabilityAction] as const).filter(allowed))
+const actionChoices = computed(() => ([actionName, reviewAction, draftAction, editAction, wasteAction, countAction, priceAction, availabilityAction, reservationAction] as const).filter(allowed))
 const setSelected = (kind: Action, event: Event) => {
   if (event.target instanceof HTMLInputElement) selected.value = event.target.checked ? kind : null
 }
 const actionText = (action: string) => Object.hasOwn(actionLabels, action)
   ? actionLabels[action as Action] : 'Acción no reconocida'
-const validPreview = (kind: Action, proposal: Proposal) => isCatalog(kind) ? validCatalog(kind, proposal.change)
+const validPreview = (kind: Action, proposal: Proposal) => kind === reservationAction ? validReservation(proposal.confirmation)
+  : isCatalog(kind) ? validCatalog(kind, proposal.change)
   : isStock(kind) ? validStock(kind, proposal.adjustment)
   : kind === editAction ? isDocumentEdit(proposal.edit)
   : kind === draftAction
@@ -204,7 +237,8 @@ const labels: Record<Status, string> = {
 const displayExpiry = (time: number) => new Intl.DateTimeFormat('es-AR', {
   hour: '2-digit', minute: '2-digit', timeZoneName: 'short',
 }).format(time)
-const canDecide = computed(() => viewed.value?.status === 'pending' && allowed(viewed.value.kind) && validPreview(viewed.value.kind, viewed.value) &&
+const closedReservationDecisions = new Set<number>()
+const canDecide = computed(() => viewed.value?.status === 'pending' && (viewed.value.kind !== reservationAction || !closedReservationDecisions.has(viewed.value.id)) && allowed(viewed.value.kind) && validPreview(viewed.value.kind, viewed.value) &&
   /^[a-f0-9]{64}$/.test(viewed.value.digest ?? ''))
 
 function hideKey() {
@@ -284,6 +318,7 @@ async function perform(message: string, action: (run: number) => Promise<void>, 
   } catch (cause) {
     if (!active(run)) return
     if (cause instanceof ApiError && (cause.status === 409 || cause.status === 410)) {
+      if (kind === reservationAction && deciding.value) closedReservationDecisions.add(deciding.value.id)
       clearPreview()
       error.value = cause.status === 410 ? 'La propuesta venció o se revocó su clave.' : actionUI[kind].stale
       try { await list(run) } catch { /* Keep the decision error. */ }
@@ -324,7 +359,9 @@ async function decide() {
       body: JSON.stringify({ decision: target.action, digest: target.digest, confirm: true }),
     })
     if (!active(run)) return
-    const validApproval = isCatalog(target.kind)
+    const validApproval = target.kind === reservationAction
+      ? reservationReference(result.reservation_reference) && result.reservation_reference === proposed.confirmation?.reservation_reference
+      : isCatalog(target.kind)
       ? result.product_id === proposed.change?.product_id && result.product_revision === (proposed.change?.expected_revision ?? -1) + 1
       : isStock(target.kind) ? positive(result.movement_id ?? 0)
       : target.kind === editAction
@@ -334,7 +371,12 @@ async function decide() {
       ? result.document_id === proposed.review?.document_id && result.document_revision === (proposed.review?.expected_revision ?? -1) + 1
       : result.product_id === proposed.rename?.product_id && result.product_revision === (proposed.rename?.expected_revision ?? -1) + 1
     if (result.id !== target.id || result.status !== (target.action === 'approve' ? 'approved' : 'rejected') ||
-      (target.action === 'approve' && !validApproval)) {
+      (target.action === 'approve' && !validApproval) ||
+      (target.kind === reservationAction && target.action === 'reject' && result.reservation_reference !== undefined)) {
+      if (target.kind === reservationAction) {
+        closedReservationDecisions.add(target.id)
+        clearPreview()
+      }
       throw new Error('unexpected decision receipt')
     }
     clearPreview()
@@ -475,7 +517,15 @@ onBeforeUnmount(() => {
     <section v-if="viewed && allowed(viewed.kind)" class="card subsection gomar-feature" aria-label="Vista previa de la propuesta">
       <h3>Vista previa</h3>
       <template v-if="viewed.status === 'pending'">
-        <div v-if="isCatalog(viewed.kind) && viewed.change">
+        <div v-if="viewed.kind === reservationAction && viewed.confirmation">
+          <p>Local: <strong>{{ outletName }}</strong></p>
+          <p>Referencia: <strong>{{ viewed.confirmation.reservation_reference }}</strong></p>
+          <p>Horario de Buenos Aires: <strong>{{ viewed.confirmation.start_local.slice(0, 10) }} · {{ viewed.confirmation.start_local.slice(11, 16) }}</strong></p>
+          <p>Personas: <strong>{{ viewed.confirmation.party_size }}</strong> · Estado actual: Pendiente.</p>
+          <p>Mesa: <strong>{{ viewed.confirmation.table_label }}</strong> · Capacidad: <strong>{{ viewed.confirmation.table_capacity }}</strong>.</p>
+          <p>Solo se confirma esta reserva. No se envían mensajes.</p>
+        </div>
+        <div v-else-if="isCatalog(viewed.kind) && viewed.change">
           <p>Local: <strong>{{ outletName }}</strong> · Producto {{ viewed.change.product_id }} · Versión {{ viewed.change.expected_revision }}</p>
           <p class="gomar-feature-text">Nombre sin cambios: <strong>{{ viewed.change.name }}</strong></p>
           <template v-if="viewed.kind === priceAction">
@@ -559,6 +609,7 @@ onBeforeUnmount(() => {
         <p v-if="viewed.status === 'approved' && viewed.document_id">Comprobante {{ viewed.document_id }} · Versión {{ viewed.document_revision }}</p>
         <p v-if="viewed.status === 'approved' && viewed.run_id">Conciliación {{ viewed.run_id }}</p>
         <p v-if="viewed.status === 'approved' && viewed.movement_id">Movimiento {{ viewed.movement_id }}</p>
+        <p v-if="viewed.kind === reservationAction && viewed.status === 'approved' && reservationReference(viewed.reservation_reference)">Reserva {{ viewed.reservation_reference }}</p>
         <button type="button" class="text-button" @click="clearPreview">Cerrar vista previa</button>
       </template>
     </section>

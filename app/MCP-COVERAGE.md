@@ -47,3 +47,10 @@ Optional POS catalog proposals let a branch manager approve either a price
 change or an availability change. Each action preserves the other fields
 and adds a native catalog revision. A proposal does not make a sale, collect
 a payment, or rewrite prior sale items or stock movements.
+
+An optional reservation confirmation proposal lets the issuing browser
+login confirm one existing pending reservation for its branch. It shows
+the local start time, party size, and the exact available table. If that
+table changes or becomes unavailable, the approval fails rather than
+booking another table. There are no guest messages, cancellations, or
+changes to venue policy.
