@@ -4,7 +4,7 @@ import App from '../src/App.vue'
 import ProviderSignIn from '../src/components/ProviderSignIn.vue'
 
 const json = (value: unknown, status = 200) => new Response(JSON.stringify(value), { status })
-const config = (providers: unknown[], local_password_enabled = true) => json({ providers, local_password_enabled })
+const config = (providers: unknown[], local_password_enabled: unknown = true, admin_recovery_enabled: unknown = false) => json({ providers, local_password_enabled, admin_recovery_enabled })
 const known = [{ id: 'google', label: 'Google' }, { id: 'apple' }, { id: 'microsoft' }, { id: 'microsoft-work' }]
 const base = '/api/v1/auth/providers'
 
@@ -33,7 +33,7 @@ describe('Ingreso con proveedores', () => {
 
   it('keeps existing password entry when the provider feature is off', async () => {
     const fetch = vi.fn((url: string) => {
-      if (url === base) return Promise.resolve(config([], false))
+      if (url === base) return Promise.resolve(config([], true))
       return Promise.resolve(url.endsWith('/auth/me') ? json({}, 401) : json({}))
     })
     vi.stubGlobal('fetch', fetch)
@@ -41,6 +41,51 @@ describe('Ingreso con proveedores', () => {
     await flushPromises()
     expect(panel.get('form').text()).toContain('Contraseña')
     expect(panel.findAll('button').some(b => b.text().startsWith('Continuar con'))).toBe(false)
+    panel.unmount()
+  })
+
+  it('only hides ordinary password sign-in for an explicit false policy and shows exact recovery only when enabled', async () => {
+    const fetch = vi.fn((url: string) => {
+      if (url === base) return Promise.resolve(config(known, false, true))
+      return Promise.resolve(url.endsWith('/auth/me') ? json({}, 401) : json({}))
+    })
+    vi.stubGlobal('fetch', fetch)
+    const panel = mount(App)
+    await flushPromises()
+    expect(panel.find('form').exists()).toBe(false)
+    expect(panel.get('a[href="/admin/login/"]').text()).toBe('Recuperación para administradores')
+    expect(panel.findAll('button').filter(b => b.text().startsWith('Continuar con'))).toHaveLength(4)
+    expect(fetch.mock.calls.some(([url]) => url.endsWith('/auth/login'))).toBe(false)
+    panel.unmount()
+  })
+
+  it.each([
+    { name: 'network error', options: () => json({}, 503) },
+    { name: 'non-boolean flags', options: () => config([], 'false', 'true') },
+  ])('keeps staged ordinary login and never offers recovery on $name', async ({ options }) => {
+    const fetch = vi.fn((url: string) => {
+      if (url === base) return Promise.resolve(options())
+      return Promise.resolve(url.endsWith('/auth/me') ? json({}, 401) : json({}))
+    })
+    vi.stubGlobal('fetch', fetch)
+    const panel = mount(App)
+    await flushPromises()
+    expect(panel.get('form').text()).toContain('Contraseña')
+    expect(panel.find('a[href="/admin/login/"]').exists()).toBe(false)
+    panel.unmount()
+  })
+
+  it('does not offer passwords when explicitly disabled but the provider list is incomplete', async () => {
+    const fetch = vi.fn((url: string) => {
+      if (url === base) return Promise.resolve(config([known[0]], false, false))
+      return Promise.resolve(url.endsWith('/auth/me') ? json({}, 401) : json({}))
+    })
+    vi.stubGlobal('fetch', fetch)
+    const panel = mount(App)
+    await flushPromises()
+    expect(panel.find('form').exists()).toBe(false)
+    expect(panel.get('[aria-label="Ingreso con un proveedor"]').text()).toContain('no están disponibles')
+    expect(panel.find('a[href="/admin/login/"]').exists()).toBe(false)
     panel.unmount()
   })
 

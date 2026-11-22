@@ -3,7 +3,10 @@ import { onBeforeUnmount, onMounted, ref } from 'vue'
 import { request } from '../api'
 
 const props = defineProps<{ disabled: boolean }>()
-const emit = defineEmits<{ busy: [value: boolean] }>()
+const emit = defineEmits<{
+  busy: [value: boolean]
+  options: [value: { passwordEnabled: boolean; recoveryEnabled: boolean }]
+}>()
 const providers = ref<Provider[]>([])
 const loading = ref(true)
 const unavailable = ref(false)
@@ -50,14 +53,22 @@ function cancelStart() {
 onMounted(async () => {
   window.addEventListener('pagehide', cancelStart)
   try {
-    const result = await request<{ providers: { id?: unknown }[] }>('/auth/providers', {
+    const result = await request<{ providers: { id?: unknown }[]; local_password_enabled?: unknown; admin_recovery_enabled?: unknown }>('/auth/providers', {
       cache: 'no-store', signal: lifetime.signal,
     })
     if (lifetime.signal.aborted) return
     if (!Array.isArray(result.providers)) throw new Error('invalid provider list')
     providers.value = [...new Set(result.providers.map(p => p?.id).filter(isProvider))]
+    const providerOnly = result.local_password_enabled === false
+    if (providerOnly && !(['google', 'apple', 'microsoft'] as const).every(id => providers.value.includes(id))) {
+      unavailable.value = true
+    }
+    emit('options', { passwordEnabled: !providerOnly, recoveryEnabled: result.admin_recovery_enabled === true })
   } catch {
-    if (!lifetime.signal.aborted) unavailable.value = true
+    if (!lifetime.signal.aborted) {
+      unavailable.value = true
+      emit('options', { passwordEnabled: true, recoveryEnabled: false })
+    }
   } finally {
     if (!lifetime.signal.aborted) loading.value = false
   }

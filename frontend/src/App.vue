@@ -23,6 +23,11 @@ import type { Document, Entity, EntityManagement, IntakeOperation, OcrConfig, Oc
 const publicVenue = /^\/reservas\/([a-z0-9][a-z0-9-]{0,63})\/?$/.exec(window.location.pathname)?.[1]
 const authenticated = ref(false)
 const providerSignInBusy = ref(false)
+const signInOptions = ref<{ passwordEnabled: boolean; recoveryEnabled: boolean } | null>(null)
+function receiveSignInOptions(options: { passwordEnabled: boolean; recoveryEnabled: boolean }) {
+  signInOptions.value = options
+  if (!options.passwordEnabled) Object.assign(loginForm, { usuario: '', clave: '' })
+}
 const loading = ref(true)
 const busy = ref(false)
 const error = ref('')
@@ -244,7 +249,7 @@ async function initialize() {
 }
 
 async function signIn() {
-  if (providerSignInBusy.value || busy.value) return
+  if (signInOptions.value?.passwordEnabled !== true || providerSignInBusy.value || busy.value) return
   const credentials = { ...loginForm }
   const sessionToken = resetUserState()
   const busyToken = startBusy()
@@ -266,6 +271,7 @@ async function signIn() {
 }
 
 async function signOut() {
+  signInOptions.value = null
   lockOfflinePOS()
   const sessionToken = resetUserState()
   try {
@@ -1007,14 +1013,15 @@ onMounted(() => { if (!publicVenue) return initialize() })
       <div class="brand-mark">G</div>
       <p class="eyebrow">GOMAR</p>
       <h1>Registro de compras</h1>
-      <p class="muted">Ingresá con tu cuenta asignada. No hay registro público.</p>
-      <ProviderSignIn :disabled="busy" @busy="providerSignInBusy = $event" />
-      <form class="stack" @submit.prevent="signIn">
+      <p class="muted">{{ signInOptions?.passwordEnabled === false ? 'Ingresá con una de las cuentas habilitadas.' : 'Ingresá con tu cuenta asignada. No hay registro público.' }}</p>
+      <ProviderSignIn :disabled="busy" @busy="providerSignInBusy = $event" @options="receiveSignInOptions" />
+      <form v-if="signInOptions?.passwordEnabled" class="stack" @submit.prevent="signIn">
         <label>Usuario<input v-model="loginForm.usuario" autocomplete="username" required /></label>
         <label>Contraseña<input v-model="loginForm.clave" type="password" autocomplete="current-password" required /></label>
-        <p v-if="error" class="error" role="alert">{{ error }}</p>
         <button class="primary" :disabled="busy || providerSignInBusy">{{ busy ? 'Ingresando…' : 'Ingresar' }}</button>
       </form>
+      <p v-if="error" class="error" role="alert">{{ error }}</p>
+      <p v-if="signInOptions?.recoveryEnabled"><a href="/admin/login/">Recuperación para administradores</a></p>
     </section>
   </main>
 
