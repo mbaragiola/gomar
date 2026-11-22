@@ -41,6 +41,22 @@ func TestLiveStdioScopedTools(t *testing.T) {
 				t.Errorf("incorrect sales query: %s", r.URL.RawQuery)
 			}
 			_, _ = io.WriteString(w, `{"period":"this_month","timezone":"America/Argentina/Buenos_Aires","from":"2026-11-01T00:00:00-03:00","to":"2026-12-01T00:00:00-03:00","currency":"ARS","sale_count":1,"total_minor":1050,"outlets":[{"id":10,"name":"Centro","sale_count":1,"total_minor":1050}]}`)
+		case "/api/v1/mcp/entities/20/outlets/10/knowledge":
+			if r.URL.Query().Get("q") != "turno & cocina" || len(r.URL.Query()) != 1 {
+				t.Errorf("incorrect knowledge query: %s", r.URL.RawQuery)
+			}
+			_, _ = io.WriteString(w, `{"articles":[{"id":5,"title":"Turno","version":1,"updated_at":"2026-11-01T03:00:00Z","body":"`+secret+`"}],"truncated":false}`)
+		case "/api/v1/mcp/entities/20/outlets/10/knowledge/5":
+			_, _ = io.WriteString(w, `{"id":5,"title":"Turno","version":1,"updated_at":"2026-11-01T03:00:00Z","body":"Texto de prueba"}`)
+		case "/api/v1/mcp/entities/20/outlets/10/stock":
+			if r.URL.RawQuery != "after_product_id=1" {
+				t.Errorf("incorrect stock query: %s", r.URL.RawQuery)
+			}
+			_, _ = io.WriteString(w, `{"enabled":true,"products":[{"id":2,"name":"Pan","enabled":true,"minimum":8,"balance":7,"alert":"low"}]}`)
+		case "/api/v1/mcp/entities/20/outlets/10/delivery-orders":
+			_, _ = io.WriteString(w, `{"orders":[{"id":10,"provider":"rappi","status":"received","received_at":"2026-11-01T03:00:00Z","updated_at":"2026-11-01T03:00:00Z","external_order_id":"`+secret+`"}],"truncated":false}`)
+		case "/api/v1/mcp/entities/20/outlets/10/payables-summary":
+			_, _ = io.WriteString(w, `{"as_of":"2026-11-01","totals":[{"currency":"USD","outstanding_count":1,"outstanding_minor":55,"overdue_count":0,"overdue_minor":0}],"supplier":"`+secret+`"}`)
 		default:
 			w.WriteHeader(http.StatusNotFound)
 			_, _ = io.WriteString(w, secret)
@@ -69,7 +85,7 @@ func TestLiveStdioScopedTools(t *testing.T) {
 	}
 	defer session.Close()
 	metadata, err := session.ListTools(ctx, &mcp.ListToolsParams{})
-	if err != nil || len(metadata.Tools) != 4 {
+	if err != nil || len(metadata.Tools) != 9 {
 		t.Fatal(metadata, err)
 	}
 	for _, tool := range metadata.Tools {
@@ -88,6 +104,13 @@ func TestLiveStdioScopedTools(t *testing.T) {
 		{"gomar_list_outlets", map[string]any{"entity_id": 20}, `"name":"Centro"`, false},
 		{"gomar_sales_summary", map[string]any{"entity_id": 20, "outlet_id": 10, "period": "this_month"}, `"total_minor":1050`, false},
 		{"gomar_sales_summary", map[string]any{"entity_id": 21, "period": "this_month"}, "permisos", true},
+		{"gomar_search_knowledge", map[string]any{"entity_id": 20, "outlet_id": 10, "query": "turno & cocina"}, `"title":"Turno"`, false},
+		{"gomar_read_knowledge_article", map[string]any{"entity_id": 20, "outlet_id": 10, "article_id": 5}, `"body":"Texto de prueba"`, false},
+		{"gomar_list_stock", map[string]any{"entity_id": 20, "outlet_id": 10, "after_product_id": 1}, `"balance":7`, false},
+		{"gomar_list_recent_delivery", map[string]any{"entity_id": 20, "outlet_id": 10}, `"status":"received"`, false},
+		{"gomar_payables_summary", map[string]any{"entity_id": 20, "outlet_id": 10}, `"outstanding_minor":55`, false},
+		{"gomar_payables_summary", map[string]any{"entity_id": 20, "outlet_id": 11}, "permisos", true},
+		{"gomar_list_stock", map[string]any{"entity_id": 20}, "", true},
 		{"gomar_sales_summary", map[string]any{"entity_id": 20, "period": "this_month", "path": "http://forged.invalid"}, "", true},
 	} {
 		result, err := session.CallTool(ctx, &mcp.CallToolParams{Name: test.name, Arguments: test.args})
@@ -104,7 +127,7 @@ func TestLiveStdioScopedTools(t *testing.T) {
 			t.Fatalf("unexpected result for %s: %s", test.name, wire)
 		}
 	}
-	if requests.Load() != 5 {
+	if requests.Load() != 11 {
 		t.Fatalf("wrong number of requests: %d", requests.Load())
 	}
 	if err := session.Close(); err != nil {

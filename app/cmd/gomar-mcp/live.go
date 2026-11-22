@@ -46,6 +46,7 @@ func liveServer(client *mcpclient.Client) *mcp.Server {
 	readTool(server, "gomar_sales_summary", "Responde cuánto vendimos este mes o el anterior a partir de ventas registradas en la caja de Gomar. No incluye pedidos de delivery, facturas de proveedores ni ventas no registradas. Los importes total_minor son centavos de la moneda indicada. Confirmá la empresa con gomar_list_entities y no inventes ventas ni IDs.", func(ctx context.Context, in salesArgs) (mcpclient.Sales, error) {
 		return client.Sales(ctx, in.EntityID, in.OutletID, in.Period)
 	})
+	addWorkspaceTools(server, client)
 	return server
 }
 
