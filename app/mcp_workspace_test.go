@@ -148,6 +148,38 @@ func TestPostgresMCPWorkspaceReadsKeepOutletAndRoleScope(t *testing.T) {
 		strings.Contains(delivery, "secret") || strings.Contains(delivery, "private item") {
 		t.Fatal("unexpected delivery result")
 	}
+	if _, err := db.ExecContext(ctx, `
+ INSERT INTO delivery_sources(provider,external_store_id,outlet_id) VALUES('pedidosya','synthetic-window',1);
+ INSERT INTO delivery_orders(provider,external_store_id,external_order_id,outlet_id,accepted_items,cancelled,received_at,updated_at)
+ SELECT 'pedidosya','synthetic-window','order-'||i,1,'[]',false,'2026-10-01T00:00:00Z','2026-10-01T00:00:00Z'
+ FROM generate_series(1,98) i;
+ INSERT INTO delivery_orders(provider,external_store_id,external_order_id,outlet_id,accepted_items,cancelled,received_at,updated_at)
+ VALUES('rappi','secret-external-store','outside-window',1,'[]',false,'2026-09-01T00:00:00Z','2026-09-01T00:00:00Z')`); err != nil {
+		t.Fatal(err)
+	}
+	var summary mcpclient.DeliveryStatusSummary
+	rawSummary := read("/delivery-status-summary", 200)
+	decode(rawSummary, &summary)
+	if summary != (mcpclient.DeliveryStatusSummary{WindowLimit: 100, Received: 1, Accepted: 98, Cancelled: 1}) ||
+		strings.Contains(rawSummary, "secret") || strings.Contains(rawSummary, "item") {
+		t.Fatal(summary)
+	}
+	var native struct {
+		Orders []struct {
+			Status string `json:"estado"`
+		} `json:"pedidos"`
+	}
+	decode(invoke(mux, "GET", "/api/v1/entities/1/outlets/1/delivery/orders", "", "", true, 200).Body.String(), &native)
+	counts := map[string]int{}
+	for _, item := range native.Orders {
+		counts[item.Status]++
+	}
+	if len(native.Orders) != 100 || counts["recibido"] != summary.Received || counts["aceptado"] != summary.Accepted || counts["cancelado"] != summary.Cancelled {
+		t.Fatal(counts)
+	}
+	read("/delivery-status-summary?limit=10", 422)
+	read("/delivery-status-summary?date=2026-10-01", 422)
+
 	report := read("/payables-summary", 200)
 	var ap mcpclient.Payables
 	decode(report, &ap)
@@ -155,7 +187,7 @@ func TestPostgresMCPWorkspaceReadsKeepOutletAndRoleScope(t *testing.T) {
 		ap.Totals[0].OverdueMinor != 10250 || ap.Totals[1].OutstandingMinor != 275 || ap.Totals[1].OverdueMinor != 0 || strings.Contains(report, "supplier") {
 		t.Fatal("unexpected scoped payables")
 	}
-	for _, suffix := range []string{"/knowledge", "/knowledge/1", "/stock", "/delivery-orders", "/payables-summary"} {
+	for _, suffix := range []string{"/knowledge", "/knowledge/1", "/stock", "/delivery-orders", "/delivery-status-summary", "/payables-summary"} {
 		invoke(mux, "GET", "/api/v1/mcp/entities/1/outlets/2"+suffix, "", token, false, 404)
 		invoke(mux, "GET", "/api/v1/mcp/entities/1/outlets/3"+suffix, "", broader, false, 404)
 		invoke(mux, "GET", "/api/v1/mcp/entities/2/outlets/4"+suffix, "", token, false, 404)
@@ -163,6 +195,7 @@ func TestPostgresMCPWorkspaceReadsKeepOutletAndRoleScope(t *testing.T) {
 	noFeature := (&app{db: db, host: "example.com", enableMCP: true, mcpClock: a.mcpClock}).routes()
 	invoke(noFeature, "GET", base+"/stock", "", token, false, 404)
 	invoke(noFeature, "GET", base+"/delivery-orders", "", token, false, 404)
+	invoke(noFeature, "GET", base+"/delivery-status-summary", "", token, false, 404)
 	if _, err := db.ExecContext(ctx, `UPDATE memberships SET role='read_only' WHERE id=1`); err != nil {
 		t.Fatal(err)
 	}
@@ -173,4 +206,5 @@ func TestPostgresMCPWorkspaceReadsKeepOutletAndRoleScope(t *testing.T) {
 		t.Fatal(err)
 	}
 	read("/knowledge", 404)
+	read("/delivery-status-summary", 404)
 }

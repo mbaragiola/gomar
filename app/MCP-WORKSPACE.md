@@ -50,3 +50,7 @@ authenticated confirmation tied to the user, entity/outlet, exact payload,
 expiry and idempotency key. Recheck permissions and target state inside the
 transaction before applying it. Do not treat words spoken to the chat,
 an assistant's claim of confirmation, or a client-side flag as approval.
+
+`gomar_delivery_status_summary` counts received, accepted, and cancelled orders
+in the latest 100 records of the selected branch inbox. It reads Gomar only
+and returns no individual orders, items, or customer details.

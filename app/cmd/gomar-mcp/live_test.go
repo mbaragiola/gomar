@@ -53,6 +53,11 @@ func TestLiveStdioScopedTools(t *testing.T) {
 				t.Errorf("incorrect stock query: %s", r.URL.RawQuery)
 			}
 			_, _ = io.WriteString(w, `{"enabled":true,"products":[{"id":2,"name":"Pan","enabled":true,"minimum":8,"balance":7,"alert":"low"}]}`)
+		case "/api/v1/mcp/entities/20/outlets/10/delivery-status-summary":
+			if r.URL.RawQuery != "" {
+				t.Error("unexpected delivery summary filter")
+			}
+			_, _ = io.WriteString(w, `{"window_limit":100,"received":2,"accepted":3,"cancelled":1,"item":"`+secret+`"}`)
 		case "/api/v1/mcp/entities/20/outlets/10/delivery-orders":
 			_, _ = io.WriteString(w, `{"orders":[{"id":10,"provider":"rappi","status":"received","received_at":"2026-11-01T03:00:00Z","updated_at":"2026-11-01T03:00:00Z","external_order_id":"`+secret+`"}],"truncated":false}`)
 		case "/api/v1/mcp/entities/20/outlets/10/payables-summary":
@@ -132,7 +137,7 @@ func TestLiveStdioScopedTools(t *testing.T) {
 	}
 	defer session.Close()
 	metadata, err := session.ListTools(ctx, &mcp.ListToolsParams{})
-	if err != nil || len(metadata.Tools) != 30 {
+	if err != nil || len(metadata.Tools) != 31 {
 		t.Fatal(metadata, err)
 	}
 	for _, tool := range metadata.Tools {
@@ -154,6 +159,7 @@ func TestLiveStdioScopedTools(t *testing.T) {
 		{"gomar_search_knowledge", map[string]any{"entity_id": 20, "outlet_id": 10, "query": "turno & cocina"}, `"title":"Turno"`, false},
 		{"gomar_read_knowledge_article", map[string]any{"entity_id": 20, "outlet_id": 10, "article_id": 5}, `"body":"Texto de prueba"`, false},
 		{"gomar_list_stock", map[string]any{"entity_id": 20, "outlet_id": 10, "after_product_id": 1}, `"balance":7`, false},
+		{"gomar_delivery_status_summary", map[string]any{"entity_id": 20, "outlet_id": 10}, `"accepted":3`, false},
 		{"gomar_list_recent_delivery", map[string]any{"entity_id": 20, "outlet_id": 10}, `"status":"received"`, false},
 		{"gomar_payables_summary", map[string]any{"entity_id": 20, "outlet_id": 10}, `"outstanding_minor":55`, false},
 		{"gomar_payables_summary", map[string]any{"entity_id": 20, "outlet_id": 11}, "permisos", true},
@@ -194,7 +200,7 @@ func TestLiveStdioScopedTools(t *testing.T) {
 			t.Fatalf("unexpected result for %s: %s", test.name, wire)
 		}
 	}
-	if requests.Load() != 27 {
+	if requests.Load() != 28 {
 		t.Fatalf("wrong number of requests: %d", requests.Load())
 	}
 	if err := session.Close(); err != nil {

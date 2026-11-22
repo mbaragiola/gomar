@@ -143,6 +143,36 @@ func (c *Client) Stock(ctx context.Context, entity, outlet int64, after *int64) 
 	return result, nil
 }
 
+type DeliveryStatusSummary struct {
+	WindowLimit int `json:"window_limit"`
+	Received    int `json:"received"`
+	Accepted    int `json:"accepted"`
+	Cancelled   int `json:"cancelled"`
+}
+
+func (c *Client) DeliveryStatus(ctx context.Context, entity, outlet int64) (DeliveryStatusSummary, error) {
+	var w struct {
+		WindowLimit *int `json:"window_limit"`
+		Received    *int `json:"received"`
+		Accepted    *int `json:"accepted"`
+		Cancelled   *int `json:"cancelled"`
+	}
+	if err := c.getWorkspace(ctx, entity, outlet, "/delivery-status-summary", nil, &w); err != nil {
+		return DeliveryStatusSummary{}, err
+	}
+	if w.WindowLimit == nil || *w.WindowLimit != 100 || w.Received == nil || w.Accepted == nil || w.Cancelled == nil {
+		return DeliveryStatusSummary{}, invalidResponse
+	}
+	remaining := *w.WindowLimit
+	for _, count := range []int{*w.Received, *w.Accepted, *w.Cancelled} {
+		if count < 0 || count > remaining {
+			return DeliveryStatusSummary{}, invalidResponse
+		}
+		remaining -= count
+	}
+	return DeliveryStatusSummary{WindowLimit: *w.WindowLimit, Received: *w.Received, Accepted: *w.Accepted, Cancelled: *w.Cancelled}, nil
+}
+
 func (c *Client) Delivery(ctx context.Context, entity, outlet int64) (Delivery, error) {
 	var result Delivery
 	err := c.getWorkspace(ctx, entity, outlet, "/delivery-orders", nil, &result)

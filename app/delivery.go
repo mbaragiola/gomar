@@ -175,6 +175,9 @@ func (a *app) registerDelivery(add func(string, string, http.HandlerFunc)) {
 	}
 }
 
+const deliveryInboxLimit = 100
+const deliveryInboxOrder = " ORDER BY updated_at DESC,id DESC"
+
 func listDeliveryOrders(r *http.Request, tx *sql.Tx, m entityMembership, _ []byte) (int, any, error) {
 	outlet, err := pathID(r, "outlet")
 	if err != nil {
@@ -184,7 +187,7 @@ func listDeliveryOrders(r *http.Request, tx *sql.Tx, m entityMembership, _ []byt
 		return 0, nil, err
 	}
 	rows, err := tx.QueryContext(r.Context(), `SELECT id,provider,external_order_id,cancelled,accepted_items,received_at,updated_at
-		FROM delivery_orders WHERE outlet_id=$1 ORDER BY updated_at DESC,id DESC LIMIT 100`, outlet)
+		FROM delivery_orders WHERE outlet_id=$1`+deliveryInboxOrder+` LIMIT $2`, outlet, deliveryInboxLimit)
 	if err != nil {
 		return 0, nil, err
 	}
