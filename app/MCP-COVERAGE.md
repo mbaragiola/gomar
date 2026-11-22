@@ -42,3 +42,8 @@ An optional document draft edit proposes dates and amounts only. It shows
 the old and new values, currency, and reason to the issuing browser login.
 Approval applies one native draft revision and audit entry. It cannot
 change supplier, branch, currency, files, review status, payables, or payments.
+
+Optional POS catalog proposals let a branch manager approve either a price
+change or an availability change. Each action preserves the other fields
+and adds a native catalog revision. A proposal does not make a sale, collect
+a payment, or rewrite prior sale items or stock movements.

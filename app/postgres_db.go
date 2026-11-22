@@ -36,6 +36,7 @@ var postgresMigrationNames = []string{
 	"012_mcp_reconciliation_draft_proposals.sql",
 	"013_mcp_document_edit_proposals.sql",
 	"014_mcp_stock_adjustment_proposals.sql",
+	"015_mcp_pos_catalog_proposals.sql",
 }
 
 func postgresConfig(dsn string) (*pgx.ConnConfig, error) {
