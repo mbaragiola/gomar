@@ -71,17 +71,25 @@ func TestSupplierLegalNameStdioWire(t *testing.T) {
 	}
 	defer session.Close()
 	listed, err := session.ListTools(t.Context(), nil)
-	if err != nil || len(listed.Tools) != 30 {
+	if err != nil || len(listed.Tools) != 31 {
 		t.Fatal(listed, err)
 	}
+	var hasSupplierProposal, hasReconciliationSetup bool
 	for _, tool := range listed.Tools {
 		if tool.Name == toolName {
+			hasSupplierProposal = true
 			if tool.Annotations == nil || !tool.Annotations.IdempotentHint || tool.Annotations.ReadOnlyHint || !strings.Contains(tool.Description, "toda la empresa") {
 				t.Fatal(tool)
 			}
 		} else if tool.Annotations == nil || !tool.Annotations.ReadOnlyHint {
 			t.Fatal("unexpected proposal tool", tool.Name)
 		}
+		if tool.Name == "gomar_read_reconciliation_setup" {
+			hasReconciliationSetup = true
+		}
+	}
+	if !hasSupplierProposal || !hasReconciliationSetup {
+		t.Fatal("missing the named supplier proposal or reconciliation setup read")
 	}
 	call := func(supplier map[string]any, want string, wantError bool) {
 		t.Helper()
