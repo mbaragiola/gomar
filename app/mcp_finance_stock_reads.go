@@ -15,6 +15,7 @@ import (
 func (a *app) registerMCPFinanceStockReads(add func(string, string, http.HandlerFunc)) {
 	add(mcpWorkspaceBase+"/payable-records", http.MethodGet, a.mcpRead(mcpListPayableRecords))
 	add(mcpWorkspaceBase+"/payable-records/{payable}", http.MethodGet, a.mcpRead(mcpReadPayableRecord))
+	add(mcpWorkspaceBase+"/payable-records/{payable}/movements", http.MethodGet, a.mcpRead(mcpListPayableMovements))
 	add(mcpWorkspaceBase+"/recorded-payments", http.MethodGet, a.mcpRead(mcpListRecordedPayments))
 	add(mcpWorkspaceBase+"/recorded-payments/{payment}", http.MethodGet, a.mcpRead(mcpReadRecordedPayment))
 	if a.enablePOS && a.enableStock {

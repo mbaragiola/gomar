@@ -14,7 +14,7 @@ applied change. Features disabled in the app are not available via MCP.
 | Delivery | Recent order status with limited fields; aggregate status counts for the latest 100 inbox records | No native staff write workflow; provider calls and credentials stay outside the read interface |
 | Documents and intake | Outlet-scoped list, detail, and document totals by currency; propose draft creation, review, or date and amount edits for confirmation in Gomar | Other draft changes and safe handoff for files; app OCR and intake confirmation parity |
 | Suppliers | Active supplier names and IDs in the business | Guarded create and edit |
-| Payables and payment records | Outstanding and overdue totals, counts by status, and outlet-only payable and payment record details | Guarded accounting entries and reviews, not movement of money |
+| Payables and payment records | Outstanding and overdue totals, counts by status, outlet-only payable and payment record details, and one payable’s ledger history | Guarded accounting entries and reviews, not movement of money |
 | Reconciliation | Scoped run counts by status, paged run list, metadata by ID, and proposal for an empty draft | Source handling, matches, decisions, and review stay in Gomar |
 | Reservations and menus | Daily reservation totals, staff setup state, scoped staff queue and detail, available public reservation times by day and party size, published menu metadata, and separate confirmation and cancellation proposals | Booking, menu and venue settings stay in Gomar |
 
