@@ -16,3 +16,8 @@ CREATE TABLE provider_identities (
     created_at BIGINT NOT NULL,
     PRIMARY KEY(provider,issuer,subject)
 );
+
+-- Existing app cookies remain valid in the default compatible mode.
+-- The explicit provider-only mode only accepts sessions issued by OIDC.
+ALTER TABLE sessions ADD COLUMN auth_method TEXT NOT NULL DEFAULT 'password'
+    CHECK(auth_method IN ('password','provider'));

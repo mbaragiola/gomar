@@ -113,7 +113,7 @@ func (a *app) serveAdminPassword(w http.ResponseWriter, r *http.Request, u user)
 			new2 := lastPasswordField(r.PostForm, "new_password2")
 			form = validatePasswordChange(u, old, new1, new2)
 			if form.ErrorCount() == 0 {
-				token, err := a.changeAdminPassword(r.Context(), cookieValue(r, "sessionid"), u, encodePassword(new1))
+				token, err := a.changeAdminPassword(r.Context(), cookieValue(r, a.adminSessionCookie()), u, encodePassword(new1))
 				if errors.Is(err, errPasswordStateChanged) {
 					redirectAdminLogin(w, r)
 					return
@@ -123,18 +123,24 @@ func (a *app) serveAdminPassword(w http.ResponseWriter, r *http.Request, u user)
 					return
 				}
 				// Keep the existing CSRF secret. This is not a new login.
-				setCookie(w, r, "sessionid", token, sessionAge, true)
+				a.updateAdminPasswordCookie(w, r, token)
 				http.Redirect(w, r, adminPasswordDone, http.StatusFound)
 				return
 			}
 		}
 		page.PasswordForm = &form // Only errors, never submitted passwords.
 	}
-	page.Token = ensureCSRF(w, r)
+	page.Token = a.ensureAdminCSRF(w, r)
 	renderAdmin(w, page)
 }
 
 func (a *app) changeAdminPassword(ctx context.Context, oldToken string, u user, newEncoded string) (string, error) {
+	// Table names are fixed by server mode, never request input. Use the
+	// existing optimistic checks for both realms.
+	sessionTable, privileged, age := "sessions", "superuser=TRUE", sessionAge
+	if a.adminRecovery {
+		sessionTable, privileged, age = "admin_recovery_sessions", "staff=TRUE AND superuser=TRUE", adminRecoveryAge
+	}
 	newToken := randomToken()
 	oldKey, newKey := sha256.Sum256([]byte(oldToken)), sha256.Sum256([]byte(newToken))
 	oldDigest, newDigest := sha256.Sum256([]byte(u.password)), sha256.Sum256([]byte(newEncoded))
@@ -148,16 +154,16 @@ func (a *app) changeAdminPassword(ctx context.Context, oldToken string, u user, 
 	// match the authenticated snapshot after verifying/encoding outside the
 	// lock. Never update another user's password or another session row.
 	if err := passwordChangeRow(tx.ExecContext(ctx, `UPDATE users SET password=$1
-		WHERE id=$2 AND active=TRUE AND superuser=TRUE AND username=$3 AND password=$4
-		AND EXISTS (SELECT 1 FROM sessions WHERE token_hash=$5 AND user_id=users.id
+		WHERE id=$2 AND active=TRUE AND `+privileged+` AND username=$3 AND password=$4
+		AND EXISTS (SELECT 1 FROM `+sessionTable+` WHERE token_hash=$5 AND user_id=users.id
 			AND password_digest=$6 AND expires>$7)`,
 		newEncoded, u.id, u.name, u.password, oldKey[:], oldDigest[:], now.Unix())); err != nil {
 		return "", err
 	}
-	if err := passwordChangeRow(tx.ExecContext(ctx, `UPDATE sessions
+	if err := passwordChangeRow(tx.ExecContext(ctx, `UPDATE `+sessionTable+`
 		SET token_hash=$1, password_digest=$2, expires=$3
 		WHERE token_hash=$4 AND user_id=$5 AND password_digest=$6`,
-		newKey[:], newDigest[:], now.Add(sessionAge).Unix(), oldKey[:], u.id, oldDigest[:])); err != nil {
+		newKey[:], newDigest[:], now.Add(age).Unix(), oldKey[:], u.id, oldDigest[:])); err != nil {
 		return "", err
 	}
 	// Peers retain their old digests and are invalidated on next use, as in

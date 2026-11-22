@@ -4,17 +4,19 @@ This change is **off by default**. The executable reads no provider
 settings unless `-enable-provider-auth` is explicitly selected. Existing
 password login and administrator access are unchanged. Migration
 `012_provider_auth.sql` is staged but not in the migrator until the public
-sequence contains 011. The flag refuses startup on this branch without
-opening provider secret files. Tests apply the SQL to disposable PostgreSQL.
-Do not turn on provider login before registration and browser verification.
-Do not remove normal password login before the separate admin-session gate.
+sequence contains 011. Migration `013_admin_recovery.sql` adds the separate
+admin realm. Both are staged. The flags refuse startup on this branch
+without opening provider secrets. Tests apply the SQL to disposable
+PostgreSQL. Do not turn on provider login before registration and browser
+verification. Provider-only cutover is a separate opt-in.
 
 ## Flow and identity
 
 - `GET /api/v1/auth/providers` returns
   `{"providers":[{"id":"google","label":"Google"}],"local_password_enabled":true}`.
-  The list is empty without an enabled configuration. It contains no
-  credentials, issuer claims, or tenant data.
+  The list is empty without an enabled configuration. The reply also
+  contains `admin_recovery_enabled`, true only for the protected recovery
+  realm. It contains no credentials, issuer claims, or tenant data.
 - `POST /api/v1/auth/providers/{id}/start` requires the exact configured
   HTTPS origin, existing browser CSRF and no bearer token. It returns
   `{"authorization_url":"..." }` for top-level navigation.
@@ -111,19 +113,37 @@ Current tests use an in-memory transport with synthetic signatures, not
 actual IdP accounts, endpoints, secrets or logins.
 
 
-## Separate admin recovery (planned, not implemented)
+## Staged admin recovery and provider-only sign-in
 
-Create a separate admin session table and cookie scoped to the admin realm.
-Only existing active local superusers may sign in with their local passwords
-there; normal provider sessions must not authorize admin routes. Admin cookie
-tokens must never authorize app or MCP routes. Recheck the current local
-privilege and password digest on every admin session; use short expiry,
-session rotation, logout and origin/CSRF checks. Test both directions of
-cookie rejection, inactive/non-superuser denial, session expiry and restore
-before exposing an opt-in cutover. Do not convert existing user identities
-or infer membership from provider or admin roles.
+Neither flag is enabled by default:
 
-After the admin recovery rehearsal and owner-approved pilot show that each
-provider to be offered is reachable and works for its intended account type,
-seek a separate explicit cutover. Normal password auth on or off is a choice
-for that later change; this branch enforces no cutover.
+- `-enable-admin-recovery-realm`: protects the existing `/admin/login/` with a
+  separate, 30-minute password session. Requires registered/applied
+  migration 013, protected Unix HTTPS ingress, and an existing active local
+  account with both staff and superuser flags and a usable password hash.
+  No account is created or changed at startup.
+- `-provider-only-sign-in`: additionally requires the recovery flag,
+  `-enable-provider-auth`, registered/applied 012 and 013, and complete
+  Google, Apple, and Microsoft **personal** configurations. Optional work
+  Microsoft cannot stand in for personal. Classic password sign-in is
+  blocked in the app, and classic password sessions no longer authorize
+  ordinary app routes in this mode. Existing records are retained so the
+  default compatible mode does not invalidate them on migration alone.
+  Client-provided identity claims still cannot supply Gomar permissions.
+
+The admin password path accepts only existing active local staff
+superusers. It uses separate admin-only Secure, HttpOnly, SameSite=Strict
+session and CSRF cookies under `/admin/`. Recovery does not issue an app
+session and cannot mint MCP credentials. Provider app sessions cannot
+access the admin panel. Password changes rotate the recovery token;
+logout deletes its row and clears only the recovery cookies. Native
+permission, origin and CSRF checks remain in effect.
+
+Before using either flag outside the synthetic harness, land the migrations
+in order, rehearse recovery locally with both cookie directions denied, and
+agree on how existing permitted people get explicit Gomar access. Before
+an explicit cutover, confirm the authorized pilot for every offered account
+type against the provider itself. Startup checks are offline and cannot
+prove that a real client registration or provider is reachable. This branch
+did not enroll anyone, switch sign-in modes in a running deployment, or
+contact providers.

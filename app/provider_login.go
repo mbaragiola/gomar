@@ -56,7 +56,7 @@ func (a *app) listProviderLoginMethods(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
-	jsonResponse(w, http.StatusOK, map[string]any{"providers": public, "local_password_enabled": true})
+	jsonResponse(w, http.StatusOK, map[string]any{"providers": public, "local_password_enabled": !a.providerOnly, "admin_recovery_enabled": a.adminRecovery && effectiveHTTPS(r)})
 }
 
 func (a *app) providerLoginRoute(next func(http.ResponseWriter, *http.Request) error) http.HandlerFunc {
@@ -251,7 +251,7 @@ func (a *app) startVerifiedProviderSession(w http.ResponseWriter, r *http.Reques
 	if _, err = tx.ExecContext(ctx, `UPDATE users SET last_login=$1 WHERE id=$2`, now.Unix(), u.id); err != nil {
 		return err
 	}
-	if _, err = tx.ExecContext(ctx, `INSERT INTO sessions(token_hash,user_id,password_digest,expires) VALUES($1,$2,$3,$4)`,
+	if _, err = tx.ExecContext(ctx, `INSERT INTO sessions(token_hash,user_id,password_digest,expires,auth_method) VALUES($1,$2,$3,$4,'provider')`,
 		key[:], u.id, digest[:], now.Add(sessionAge).Unix()); err != nil {
 		return err
 	}

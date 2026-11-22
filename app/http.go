@@ -17,9 +17,11 @@ import (
 )
 
 type app struct {
-	db           *sql.DB
-	providerAuth *hostedProviderAuth
-	mcpClock     func() time.Time
+	db            *sql.DB
+	providerAuth  *hostedProviderAuth
+	adminRecovery bool
+	providerOnly  bool
+	mcpClock      func() time.Time
 
 	host                             string
 	payablesClock                    func() time.Time
@@ -133,6 +135,10 @@ func (a *app) protectedWithCache(next func(http.ResponseWriter, *http.Request, u
 
 func (a *app) apiLogin(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
+	if a.providerOnly {
+		failure(w, problem{403, "Ingresá con Google, Apple o Microsoft."})
+		return
+	}
 	var input struct {
 		Username *string `json:"usuario"`
 		Password *string `json:"clave"`
@@ -299,6 +305,9 @@ func (a *app) routes() http.Handler {
 		http.Redirect(w, r, "/admin/", http.StatusMovedPermanently)
 	})
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if a.providerOnly {
+			r = providerOnlyRequest(r)
+		}
 		w.Header().Set("X-Gomar-Experimental", "foundation")
 		w.Header().Set("X-Content-Type-Options", "nosniff")
 		w.Header().Set("X-Frame-Options", "DENY")
