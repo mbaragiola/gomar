@@ -1,9 +1,9 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { ApiError, request } from '../api'
 
 type Status = 'pending' | 'approved' | 'rejected' | 'expired' | 'revoked'
-type Proposal = { id: number; status: Status; expires_at: string; product_id?: number; product_revision?: number; rename?: Rename; document_id?: number; document_revision?: number; review?: Review; run_id?: number; draft?: Draft; edit?: DocumentEdit; movement_id?: number; adjustment?: StockAdjustment; change?: CatalogChange; reservation_reference?: string; confirmation?: ReservationConfirmation; digest?: string }
+type Proposal = { id: number; status: Status; expires_at: string; product_id?: number; product_revision?: number; rename?: Rename; document_id?: number; document_revision?: number; review?: Review; run_id?: number; draft?: Draft; edit?: DocumentEdit; movement_id?: number; adjustment?: StockAdjustment; change?: CatalogChange; reservation_reference?: string; confirmation?: ReservationConfirmation; cancellation?: ReservationCancellation; digest?: string }
 type Rename = {
   product_id: number; expected_revision: number; name: string; current_name: string
   unchanged_price_minor: number; unchanged_active: boolean
@@ -28,7 +28,11 @@ type ReservationConfirmation = {
   reservation_reference: string; start_utc: string; start_local: string; timezone: string
   party_size: number; status: 'pending'; table_label: string; table_capacity: number
 }
-type Action = 'pos_product_rename' | 'document_draft_review' | 'reconciliation_draft_create' | 'document_draft_edit' | 'stock_waste_record' | 'stock_physical_count' | 'pos_product_price_change' | 'pos_product_availability_change' | 'reservation_confirm'
+type ReservationCancellation = {
+  reservation_reference: string; start_utc: string; start_local: string; timezone: string
+  party_size: number; status: 'pending' | 'confirmed'; table_label?: string
+}
+type Action = 'pos_product_rename' | 'document_draft_review' | 'reconciliation_draft_create' | 'document_draft_edit' | 'stock_waste_record' | 'stock_physical_count' | 'pos_product_price_change' | 'pos_product_availability_change' | 'reservation_confirm' | 'reservation_cancel'
 type ScopedProposal = Proposal & { kind: Action }
 type Session = { id: number; expires_at: string; actions: string[] }
 const actionName = 'pos_product_rename'
@@ -40,9 +44,12 @@ const countAction = 'stock_physical_count'
 const priceAction = 'pos_product_price_change'
 const availabilityAction = 'pos_product_availability_change'
 const reservationAction = 'reservation_confirm'
+const cancelAction = 'reservation_cancel'
+const isReservation = (action: Action) => action === reservationAction || action === cancelAction
 const isCatalog = (action: Action) => action === priceAction || action === availabilityAction
 const isStock = (action: Action) => action === wasteAction || action === countAction
 const actionLabels: Record<Action, string> = {
+  reservation_cancel: 'Cancelar una reserva',
   reservation_confirm: 'Confirmar una reserva pendiente',
   pos_product_rename: 'Cambiar el nombre de un producto de caja',
   document_draft_review: 'Marcar un comprobante como revisado',
@@ -57,6 +64,13 @@ const actionUI: Record<Action, {
   path: string; previewSuffix: string; proceed: string; approve: string; confirm: string; rejectConfirm: string
   stale: string; approved: string; rejected: string
 }> = {
+  reservation_cancel: {
+    path: '/reservation-cancel-proposals', previewSuffix: ' de cancelación de reserva', proceed: 'Continuar con la cancelación',
+    approve: 'Cancelar reserva definitivamente', confirm: 'Esta cancelación no se puede deshacer. Gomar no avisará a la persona que reservó.',
+    rejectConfirm: '¿Querés rechazar la propuesta y dejar la reserva sin cambios?',
+    stale: 'No se canceló la reserva. La propuesta o la reserva cambiaron. Revisá el estado antes de preparar otra propuesta.',
+    approved: 'Reserva cancelada. No se envió ningún aviso.', rejected: 'Propuesta rechazada. No se modificó la reserva.',
+  },
   reservation_confirm: {
     path: '/reservation-confirm-proposals', previewSuffix: ' de reserva', proceed: 'Continuar con la reserva',
     approve: 'Confirmar reserva', confirm: '¿Querés confirmar esta reserva para el local, horario y mesa indicados?',
@@ -127,10 +141,8 @@ const reservationWallTime = new Intl.DateTimeFormat('en-GB', {
   hour: '2-digit', minute: '2-digit', second: '2-digit', hourCycle: 'h23',
 })
 const reservationReference = (value: unknown): value is string => typeof value === 'string' && /^[0-9a-f]{32}$/.test(value)
-function validReservation(x: ReservationConfirmation | undefined): x is ReservationConfirmation {
-  if (!x || !reservationReference(x.reservation_reference) || x.status !== 'pending' ||
-    x.timezone !== reservationTimezone || !positive(x.party_size) || !positive(x.table_capacity) ||
-    x.party_size > x.table_capacity || typeof x.table_label !== 'string' || !x.table_label.trim() ||
+function validReservationStart(x: Pick<ReservationCancellation, 'start_utc' | 'start_local' | 'timezone'>) {
+  if (x.timezone !== reservationTimezone ||
     typeof x.start_utc !== 'string' || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/.test(x.start_utc) ||
     typeof x.start_local !== 'string' || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}[+-]\d{2}:\d{2}$/.test(x.start_local)) return false
   const utc = new Date(x.start_utc)
@@ -138,6 +150,17 @@ function validReservation(x: ReservationConfirmation | undefined): x is Reservat
     Date.parse(x.start_local) !== utc.getTime()) return false
   const parts = Object.fromEntries(reservationWallTime.formatToParts(utc).map(part => [part.type, part.value]))
   return x.start_local.slice(0, 19) === `${parts.year}-${parts.month}-${parts.day}T${parts.hour}:${parts.minute}:${parts.second}`
+}
+function validReservation(x: ReservationConfirmation | undefined): x is ReservationConfirmation {
+  return !!x && reservationReference(x.reservation_reference) && x.status === 'pending' &&
+    positive(x.party_size) && positive(x.table_capacity) && x.party_size <= x.table_capacity &&
+    typeof x.table_label === 'string' && !!x.table_label.trim() && validReservationStart(x)
+}
+function validReservationCancellation(x: ReservationCancellation | undefined): x is ReservationCancellation {
+  return !!x && reservationReference(x.reservation_reference) && positive(x.party_size) &&
+    (x.status === 'pending' ? x.table_label === undefined
+      : x.status === 'confirmed' && typeof x.table_label === 'string' && !!x.table_label.trim()) &&
+    validReservationStart(x)
 }
 const documentTypes: Record<string, string> = { invoice: 'Factura', credit_note: 'Nota de crédito', debit_note: 'Nota de débito' }
 const positive = (value: number) => Number.isSafeInteger(value) && value > 0
@@ -187,22 +210,24 @@ const stateLabel = (active: boolean) => active ? 'Activo' : 'Inactivo'
 const prices = new Intl.NumberFormat('es-AR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
 const amount = (value: number | null) => value === null ? 'No informado' : prices.format(value / 100)
 type Decision = 'approve' | 'reject'
-const props = defineProps<{ entity: number; outlet: number; outletName: string; canRename: boolean; canReviewDocuments?: boolean; canCreateReconciliationDraft?: boolean; canEditDocuments?: boolean; canAdjustStock?: boolean; canChangeCatalog?: boolean; canConfirmReservations?: boolean }>()
+const props = defineProps<{ entity: number; outlet: number; outletName: string; canRename: boolean; canReviewDocuments?: boolean; canCreateReconciliationDraft?: boolean; canEditDocuments?: boolean; canAdjustStock?: boolean; canChangeCatalog?: boolean; canConfirmReservations?: boolean; canCancelReservations?: boolean }>()
 const scopePath = `/entities/${props.entity}/outlets/${props.outlet}`
 const base = (kind: Action) => scopePath + actionUI[kind].path
-const allowed = (kind: Action) => kind === reservationAction ? !!props.canConfirmReservations
+const allowed = (kind: Action) => kind === cancelAction ? !!props.canCancelReservations
+  : kind === reservationAction ? !!props.canConfirmReservations
   : isCatalog(kind) ? !!props.canChangeCatalog
   : isStock(kind) ? !!props.canAdjustStock
   : kind === editAction ? !!props.canEditDocuments
   : kind === draftAction ? !!props.canCreateReconciliationDraft
   : kind === reviewAction ? !!props.canReviewDocuments : props.canRename
-const actionChoices = computed(() => ([actionName, reviewAction, draftAction, editAction, wasteAction, countAction, priceAction, availabilityAction, reservationAction] as const).filter(allowed))
+const actionChoices = computed(() => ([actionName, reviewAction, draftAction, editAction, wasteAction, countAction, priceAction, availabilityAction, reservationAction, cancelAction] as const).filter(allowed))
 const setSelected = (kind: Action, event: Event) => {
   if (event.target instanceof HTMLInputElement) selected.value = event.target.checked ? kind : null
 }
 const actionText = (action: string) => Object.hasOwn(actionLabels, action)
   ? actionLabels[action as Action] : 'Acción no reconocida'
-const validPreview = (kind: Action, proposal: Proposal) => kind === reservationAction ? validReservation(proposal.confirmation)
+const validPreview = (kind: Action, proposal: Proposal) => kind === cancelAction ? validReservationCancellation(proposal.cancellation)
+  : kind === reservationAction ? validReservation(proposal.confirmation)
   : isCatalog(kind) ? validCatalog(kind, proposal.change)
   : isStock(kind) ? validStock(kind, proposal.adjustment)
   : kind === editAction ? isDocumentEdit(proposal.edit)
@@ -237,8 +262,10 @@ const labels: Record<Status, string> = {
 const displayExpiry = (time: number) => new Intl.DateTimeFormat('es-AR', {
   hour: '2-digit', minute: '2-digit', timeZoneName: 'short',
 }).format(time)
-const closedReservationDecisions = new Set<number>()
-const canDecide = computed(() => viewed.value?.status === 'pending' && (viewed.value.kind !== reservationAction || !closedReservationDecisions.has(viewed.value.id)) && allowed(viewed.value.kind) && validPreview(viewed.value.kind, viewed.value) &&
+const closedReservationDecisions = reactive(new Set<string>())
+const decisionKey = (kind: Action, id: number) => `${kind}:${id}`
+const cancelAcknowledged = ref(false)
+const canDecide = computed(() => viewed.value?.status === 'pending' && (!isReservation(viewed.value.kind) || !closedReservationDecisions.has(decisionKey(viewed.value.kind, viewed.value.id))) && allowed(viewed.value.kind) && validPreview(viewed.value.kind, viewed.value) &&
   /^[a-f0-9]{64}$/.test(viewed.value.digest ?? ''))
 
 function hideKey() {
@@ -318,11 +345,12 @@ async function perform(message: string, action: (run: number) => Promise<void>, 
   } catch (cause) {
     if (!active(run)) return
     if (cause instanceof ApiError && (cause.status === 409 || cause.status === 410)) {
-      if (kind === reservationAction && deciding.value) closedReservationDecisions.add(deciding.value.id)
+      if (isReservation(kind) && deciding.value) closedReservationDecisions.add(decisionKey(kind, deciding.value.id))
       clearPreview()
       error.value = cause.status === 410 ? 'La propuesta venció o se revocó su clave.' : actionUI[kind].stale
       try { await list(run) } catch { /* Keep the decision error. */ }
     } else {
+      if (kind === cancelAction && deciding.value) clearPreview()
       error.value = message
     }
   } finally {
@@ -345,6 +373,7 @@ async function preview(id: number, kind: Action) {
 
 function begin(action: Decision) {
   if (!canDecide.value || busy.value || !viewed.value?.digest) return
+  cancelAcknowledged.value = false
   deciding.value = { id: viewed.value.id, digest: viewed.value.digest, action, kind: viewed.value.kind }
 }
 
@@ -352,15 +381,20 @@ async function decide() {
   const target = deciding.value
   const proposed = viewed.value
   if (busy.value || !target || !proposed || !canDecide.value || target.id !== proposed.id ||
-    target.digest !== proposed.digest || target.kind !== proposed.kind) return
-  await perform('No pude resolver la propuesta.', async run => {
+    target.digest !== proposed.digest || target.kind !== proposed.kind ||
+    (target.kind === cancelAction && target.action === 'approve' && !cancelAcknowledged.value)) return
+  if (target.kind === cancelAction) closedReservationDecisions.add(decisionKey(target.kind, target.id))
+  await perform(target.kind === cancelAction
+    ? 'No pude verificar el resultado. Revisá el estado en Reservas antes de hacer otro cambio.'
+    : 'No pude resolver la propuesta.', async run => {
     const result = await request<Proposal>(`${base(target.kind)}/${target.id}/decision`, {
       method: 'POST', cache: 'no-store',
       body: JSON.stringify({ decision: target.action, digest: target.digest, confirm: true }),
     })
     if (!active(run)) return
-    const validApproval = target.kind === reservationAction
-      ? reservationReference(result.reservation_reference) && result.reservation_reference === proposed.confirmation?.reservation_reference
+    const validApproval = isReservation(target.kind)
+      ? reservationReference(result.reservation_reference) &&
+        result.reservation_reference === (target.kind === cancelAction ? proposed.cancellation : proposed.confirmation)?.reservation_reference
       : isCatalog(target.kind)
       ? result.product_id === proposed.change?.product_id && result.product_revision === (proposed.change?.expected_revision ?? -1) + 1
       : isStock(target.kind) ? positive(result.movement_id ?? 0)
@@ -372,9 +406,9 @@ async function decide() {
       : result.product_id === proposed.rename?.product_id && result.product_revision === (proposed.rename?.expected_revision ?? -1) + 1
     if (result.id !== target.id || result.status !== (target.action === 'approve' ? 'approved' : 'rejected') ||
       (target.action === 'approve' && !validApproval) ||
-      (target.kind === reservationAction && target.action === 'reject' && result.reservation_reference !== undefined)) {
-      if (target.kind === reservationAction) {
-        closedReservationDecisions.add(target.id)
+      (isReservation(target.kind) && target.action === 'reject' && result.reservation_reference !== undefined)) {
+      if (isReservation(target.kind)) {
+        closedReservationDecisions.add(decisionKey(target.kind, target.id))
         clearPreview()
       }
       throw new Error('unexpected decision receipt')
@@ -517,7 +551,16 @@ onBeforeUnmount(() => {
     <section v-if="viewed && allowed(viewed.kind)" class="card subsection gomar-feature" aria-label="Vista previa de la propuesta">
       <h3>Vista previa</h3>
       <template v-if="viewed.status === 'pending'">
-        <div v-if="viewed.kind === reservationAction && viewed.confirmation">
+        <div v-if="viewed.kind === cancelAction && viewed.cancellation">
+          <p>Local: <strong>{{ outletName }}</strong></p>
+          <p>Referencia: <strong>{{ viewed.cancellation.reservation_reference }}</strong></p>
+          <p>Horario de Buenos Aires: <strong>{{ viewed.cancellation.start_local.slice(0, 10) }} · {{ viewed.cancellation.start_local.slice(11, 16) }}</strong></p>
+          <p>Personas: <strong>{{ viewed.cancellation.party_size }}</strong> · Estado actual: {{ viewed.cancellation.status === 'confirmed' ? 'Confirmada' : 'Pendiente' }}.</p>
+          <p v-if="viewed.cancellation.table_label">Mesa asignada: <strong>{{ viewed.cancellation.table_label }}</strong>. La mesa quedará libre.</p>
+          <p v-else>No hay mesa asignada.</p>
+          <p>La cancelación no se puede deshacer y no envía aviso.</p>
+        </div>
+        <div v-else-if="viewed.kind === reservationAction && viewed.confirmation">
           <p>Local: <strong>{{ outletName }}</strong></p>
           <p>Referencia: <strong>{{ viewed.confirmation.reservation_reference }}</strong></p>
           <p>Horario de Buenos Aires: <strong>{{ viewed.confirmation.start_local.slice(0, 10) }} · {{ viewed.confirmation.start_local.slice(11, 16) }}</strong></p>
@@ -597,7 +640,15 @@ onBeforeUnmount(() => {
         </div>
         <div v-else class="gomar-feature-actions" role="group" aria-label="Confirmar decisión">
           <p>{{ deciding.action === 'approve' ? actionUI[viewed.kind].confirm : actionUI[viewed.kind].rejectConfirm }}</p>
-          <button type="button" :class="deciding.action === 'approve' ? 'primary' : 'danger'" :disabled="busy" @click="decide">
+          <label v-if="deciding.kind === cancelAction && deciding.action === 'approve'">
+            <input v-model="cancelAcknowledged" type="checkbox" :disabled="busy">
+            Entiendo que la cancelación es definitiva.
+          </label>
+          <button
+            type="button" :class="deciding.action === 'approve' && deciding.kind !== cancelAction ? 'primary' : 'danger'"
+            :disabled="busy || (deciding.kind === cancelAction && deciding.action === 'approve' && !cancelAcknowledged)"
+            @click="decide"
+          >
             {{ deciding.action === 'approve' ? actionUI[viewed.kind].approve : 'Sí, rechazar' }}
           </button>
           <button type="button" class="secondary" :disabled="busy" @click="deciding = null">Volver sin cambios</button>
@@ -609,7 +660,7 @@ onBeforeUnmount(() => {
         <p v-if="viewed.status === 'approved' && viewed.document_id">Comprobante {{ viewed.document_id }} · Versión {{ viewed.document_revision }}</p>
         <p v-if="viewed.status === 'approved' && viewed.run_id">Conciliación {{ viewed.run_id }}</p>
         <p v-if="viewed.status === 'approved' && viewed.movement_id">Movimiento {{ viewed.movement_id }}</p>
-        <p v-if="viewed.kind === reservationAction && viewed.status === 'approved' && reservationReference(viewed.reservation_reference)">Reserva {{ viewed.reservation_reference }}</p>
+        <p v-if="isReservation(viewed.kind) && viewed.status === 'approved' && reservationReference(viewed.reservation_reference)">Reserva {{ viewed.reservation_reference }}</p>
         <button type="button" class="text-button" @click="clearPreview">Cerrar vista previa</button>
       </template>
     </section>
