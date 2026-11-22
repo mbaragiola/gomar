@@ -1,6 +1,7 @@
 package main
 
 import (
+	"database/sql"
 	"fmt"
 	"net/http/httptest"
 	"net/url"
@@ -113,4 +114,80 @@ func TestPostgresSupplierRevisionFoundation(t *testing.T) {
 	if err := db.QueryRowContext(ctx, `SELECT count(*) FROM admin_supplier_history WHERE supplier_id=101 AND active_changed`).Scan(&activeEvents); err != nil || activeEvents != 2 {
 		t.Fatal("administrator status history changed")
 	}
+	r := httptest.NewRequestWithContext(ctx, "POST", "http://example.com/", nil)
+	for _, c := range cookies {
+		r.AddCookie(c)
+	}
+	scope := documentReviewScope{101, 101, 101}
+	prepare := func(scope documentReviewScope, in supplierNameInput) (supplierNamePreview, error) {
+		t.Helper()
+		tx, err := db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+		if err != nil {
+			return supplierNamePreview{}, err
+		}
+		defer tx.Rollback()
+		return prepareSupplierName(r, tx, scope, in)
+	}
+	input := supplierNameInput{101, 6, "  Chat proposal  "}
+	preview, err := prepare(scope, input)
+	if err != nil || !preview.BusinessWide || preview.CurrentName != "Original" || preview.Name != "Chat proposal" {
+		t.Fatal(preview, err)
+	}
+	if _, err := prepare(scope, supplierNameInput{102, 1, "Other rename"}); err == nil {
+		t.Fatal("foreign supplier accepted")
+	}
+	if _, err := prepare(documentReviewScope{101, 101, 102}, input); err == nil {
+		t.Fatal("ungranted outlet accepted")
+	}
+	apply := func(p supplierNamePreview, approved [32]byte, commit bool) (int64, error) {
+		t.Helper()
+		tx, err := db.BeginTx(ctx, nil)
+		if err != nil {
+			return 0, err
+		}
+		defer tx.Rollback()
+		rev, err := applySupplierName(r, tx, user{id: 101}, scope, p, approved)
+		if err != nil || !commit {
+			return rev, err
+		}
+		return rev, tx.Commit()
+	}
+	admin("Intervening", true)
+	staff(101, 101, "Original", originalRef, 200)
+	check(8, "Original", originalRef, true)
+	if _, err := apply(preview, preview.digest(), true); err != supplierNameStale {
+		t.Fatal("restored-name proposal was not stale", err)
+	}
+	input.Revision = 8
+	preview, err = prepare(scope, input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	digest := preview.digest()
+	changed := preview
+	changed.BusinessWide = false
+	if _, err := apply(changed, digest, true); err != supplierNameStale {
+		t.Fatal("changed scope effect accepted")
+	}
+	if _, err := db.ExecContext(ctx, `UPDATE memberships SET role='read_only' WHERE id=101`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := apply(preview, digest, true); err != forbiddenRole {
+		t.Fatal("role downgrade not rejected", err)
+	}
+	if _, err := db.ExecContext(ctx, `UPDATE memberships SET role='purchasing' WHERE id=101`); err != nil {
+		t.Fatal(err)
+	}
+	if rev, err := apply(preview, digest, false); err != nil || rev != 9 {
+		t.Fatal(rev, err)
+	}
+	check(8, "Original", originalRef, true)
+	if rev, err := apply(preview, digest, true); err != nil || rev != 9 {
+		t.Fatal(rev, err)
+	}
+	if _, err := apply(preview, digest, true); err != supplierNameStale {
+		t.Fatal("repeat not stale", err)
+	}
+	check(9, "Chat proposal", originalRef, true)
+
 }
