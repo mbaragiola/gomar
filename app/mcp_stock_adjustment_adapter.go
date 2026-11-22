@@ -156,6 +156,18 @@ func (a *app) applyStockAdjustment(r *http.Request, tx *sql.Tx, u user, s stockR
 		if product != p.Preview.ProductID || actor != s.Actor || prior.Kind != p.Operation.kind() || prior.Quantity != p.Preview.Quantity || prior.Delta != p.Preview.Delta {
 			return empty, stockAdjustmentStale
 		}
+		// Native request IDs outlive proposal retention. A new preparation
+		// reusing an old UUID must not adopt its earlier movement.
+		var head, balance int64
+		err = tx.QueryRowContext(ctx, `SELECT coalesce(max(id),0),coalesce(CAST(sum(delta) AS BIGINT),0)
+            FROM stock_movements WHERE outlet_id=$1 AND product_id=$2 AND id<$3`,
+			s.Outlet, product, prior.ID).Scan(&head, &balance)
+		if err != nil {
+			return empty, err
+		}
+		if head != p.Preview.LatestMovement || balance != p.Preview.Before {
+			return empty, stockAdjustmentStale
+		}
 		return prior, nil
 	}
 	if !errors.Is(err, sql.ErrNoRows) {
