@@ -28,11 +28,13 @@ func NewProposalClient(origin, token string) (*ProposalClient, error) {
 	return &ProposalClient{transport: transport}, nil
 }
 
-type WikiCreateReceipt struct {
+type ProposalReceipt struct {
 	ID        int64  `json:"id"`
 	Status    string `json:"status"`
 	ExpiresAt string `json:"expires_at"`
 }
+
+type WikiCreateReceipt = ProposalReceipt
 
 func (c *ProposalClient) ProposeWikiCreate(ctx context.Context, entity, outlet int64, requestID, title, body string) (WikiCreateReceipt, error) {
 	var out WikiCreateReceipt
@@ -53,8 +55,14 @@ func (c *ProposalClient) ProposeWikiCreate(ctx context.Context, entity, outlet i
 	if err != nil {
 		return out, errors.New("no se pudo preparar la propuesta")
 	}
+	return c.postProposal(ctx, entity, outlet, "/wiki-create-proposals", payload)
+}
+
+// path is a compile-time suffix from a typed proposal method, never tool input.
+func (c *ProposalClient) postProposal(ctx context.Context, entity, outlet int64, path string, payload []byte) (ProposalReceipt, error) {
+	var out ProposalReceipt
 	u := c.transport.origin
-	u.Path = entityPath(entity) + "/outlets/" + strconv.FormatInt(outlet, 10) + "/wiki-create-proposals"
+	u.Path = entityPath(entity) + "/outlets/" + strconv.FormatInt(outlet, 10) + path
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, u.String(), bytes.NewReader(payload))
 	if err != nil {
 		return out, errors.New("no se pudo preparar la propuesta")
@@ -88,15 +96,15 @@ func (c *ProposalClient) ProposeWikiCreate(ctx context.Context, entity, outlet i
 	}
 	result, err := io.ReadAll(io.LimitReader(resp.Body, 4097))
 	if err != nil || len(result) > 4096 || json.Unmarshal(result, &out) != nil || out.ID < 1 {
-		return WikiCreateReceipt{}, invalidResponse
+		return ProposalReceipt{}, invalidResponse
 	}
 	if _, err := time.Parse(time.RFC3339, out.ExpiresAt); err != nil {
-		return WikiCreateReceipt{}, invalidResponse
+		return ProposalReceipt{}, invalidResponse
 	}
 	switch out.Status {
 	case "pending", "approved", "rejected", "expired", "revoked":
 		return out, nil
 	default:
-		return WikiCreateReceipt{}, invalidResponse
+		return ProposalReceipt{}, invalidResponse
 	}
 }

@@ -28,6 +28,7 @@ var postgresMigrationNames = []string{
 	"004_full_invariants.sql",
 	"005_mcp_read_access.sql",
 	"006_mcp_wiki_proposals.sql",
+	"007_mcp_document_proposals.sql",
 }
 
 func postgresConfig(dsn string) (*pgx.ConnConfig, error) {

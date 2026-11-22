@@ -10,9 +10,9 @@ applied change. Features disabled in the app are not available via MCP.
 | Identity and business scope | Current user, businesses, and outlets | Management views; changes to access stay in Gomar |
 | POS | Recorded sales totals and product catalog | Shift reads; register operations and review |
 | Inventory | Tracked balances and thresholds; movement totals by type | Movement detail; catalog, adjustments, and BOM workflows |
-| Wiki | Search and read by ID | Draft, preview, confirm, and edit |
+| Wiki | Search and read by ID; propose a new page for confirmation in Gomar | Guarded edits to existing pages |
 | Delivery | Recent order status with limited fields | Confirmed local actions; credentials and provider calls stay outside the read interface |
-| Documents and intake | Outlet-scoped document metadata | Document detail and safe handoff for files; draft and review; app OCR and confirmation parity |
+| Documents and intake | Outlet-scoped document metadata; propose a draft for confirmation in Gomar | Document detail and safe handoff for files; separate review; app OCR and confirmation parity |
 | Suppliers | Active supplier names and IDs in the business | Guarded create and edit |
 | Payables and payment records | Outstanding and overdue totals; counts by payment status | Recorded payment detail; guarded accounting entries and reviews, not movement of money |
 | Reconciliation | Scoped run counts by status | Workflow for source handling, matches, decisions, and review |
