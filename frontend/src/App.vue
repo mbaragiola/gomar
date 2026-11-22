@@ -1076,12 +1076,12 @@ onMounted(() => { if (!publicVenue) return initialize() })
     <main class="workspace">
       <section v-if="entities.length" class="context card staff-context" aria-label="Lugar de trabajo">
         <label>Entidad
-          <select aria-label="Entidad" v-model="selectedEntityId" @change="changeEntity">
+          <select v-model="selectedEntityId" aria-label="Entidad" @change="changeEntity">
             <option v-for="entity in entities" :key="entity.id" :value="entity.id">{{ entity.nombre }}</option>
           </select>
         </label>
         <label>Local
-          <select aria-label="Local" v-model="selectedOutletId" :disabled="!outlets.length" @change="changeOutlet">
+          <select v-model="selectedOutletId" aria-label="Local" :disabled="!outlets.length" @change="changeOutlet">
             <option v-if="!outlets.length" :value="null">Sin locales asignados</option>
             <option v-for="outlet in outlets" :key="outlet.id" :value="outlet.id">{{ outlet.nombre }}</option>
           </select>
