@@ -17,9 +17,9 @@ type discardOutput struct{ io.Writer }
 func (discardOutput) Close() error { return nil }
 
 func TestDemoFlagMustBeExplicitAndAlone(t *testing.T) {
-	for _, args := range [][]string{nil, {"--synthetic-demo", "/example"}, {"--synthetic-demo=true"}, {"--synthetic-demo", "--synthetic-demo"}} {
+	for _, args := range [][]string{nil, {"--synthetic-demo", "/example"}, {"--synthetic-demo=true"}, {"--synthetic-demo", "--synthetic-demo"}, {"--synthetic-claude", "--synthetic-demo"}, {"--synthetic-whatsapp", "--synthetic-claude"}, {"--synthetic-claude=true"}, {"--synthetic-claude", "--listen=0.0.0.0:80"}} {
 		err := run(t.Context(), args, io.NopCloser(strings.NewReader("")), discardOutput{io.Discard})
-		if err == nil || err.Error() != "usage: gomar --synthetic-demo | --synthetic-whatsapp" {
+		if err == nil || err.Error() != usage {
 			t.Fatalf("%v: %v", args, err)
 		}
 	}
