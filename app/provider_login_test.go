@@ -76,26 +76,6 @@ func TestPostgresProviderLoginSynthetic(t *testing.T) {
 	if err := migratePostgres(ctx, db); err != nil {
 		t.Fatal(err)
 	}
-	// 012 is staged until the public 011 registers. Rehearse its additive
-	// schema on this disposable DB without altering migration history.
-	schema, err := postgresMigrations.ReadFile("postgres_migrations/012_provider_auth.sql")
-	if err != nil {
-		t.Fatal(err)
-	}
-	migration, err := db.BeginTx(ctx, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer migration.Rollback()
-	if _, err = migration.ExecContext(ctx, "SET LOCAL search_path TO gomar, pg_catalog"); err != nil {
-		t.Fatal(err)
-	}
-	if _, err = migration.ExecContext(ctx, string(schema)); err != nil {
-		t.Fatal(err)
-	}
-	if err = migration.Commit(); err != nil {
-		t.Fatal(err)
-	}
 	if _, err := db.ExecContext(ctx, `INSERT INTO users(username,password,active,staff,superuser)
 		VALUES('same-email@example.invalid','test-legacy-only',TRUE,TRUE,TRUE)`); err != nil {
 		t.Fatal(err)

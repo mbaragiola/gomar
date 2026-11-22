@@ -2,13 +2,9 @@
 
 This change is **off by default**. The executable reads no provider
 settings unless `-enable-provider-auth` is explicitly selected. Existing
-password login and administrator access are unchanged. Migration
-`012_provider_auth.sql` is staged but not in the migrator until the public
-sequence contains 011. Migration `013_admin_recovery.sql` adds the separate
-admin realm. Both are staged. The flags refuse startup on this branch
-without opening provider secrets. Tests apply the SQL to disposable
-PostgreSQL. Do not turn on provider login before registration and browser
-verification. Provider-only cutover is a separate opt-in.
+password login and administrator access are unchanged. Migrations 012 and
+013 register the provider and admin recovery storage after 011. Do not
+set the opt-in flags until the release gates below pass.
 
 ## Flow and identity
 
@@ -53,7 +49,13 @@ verification. Provider-only cutover is a separate opt-in.
   the operator later. The REST authorization and token descriptions used
   here do not define S256 challenge or verifier fields. This adapter does
   not send unadvertised Apple PKCE parameters. It verifies the server
-  exchange's identity token, not callback profile data.
+  exchange's identity token, not callback profile data. A live web setup
+  needs an existing App Store app that uses Sign in with Apple, associated
+  with the Services ID. The web return URL must match the registered HTTPS
+  callback exactly; Apple does not accept localhost or an IP address. Do
+  not assume an eligible app or developer team is available. Verify repeat
+  sign-in without the first-time browser user object.
+  [Apple environment requirements](https://developer.apple.com/documentation/signinwithapple/configuring-your-environment-for-sign-in-with-apple)
   [Apple authorization](https://developer.apple.com/documentation/signinwithapplerestapi/request-an-authorization-to-the-sign-in-with-apple-server.),
   [Apple token validation](https://developer.apple.com/documentation/signinwithapplerestapi/generate-and-validate-tokens)
 - **Microsoft personal** (`microsoft`): the documented `consumers`
@@ -76,7 +78,9 @@ It is not a deployment instruction and no live configuration was added.
 - `-enable-provider-auth` also requires the protected Unix HTTPS ingress.
   `GOMAR_AUTH_PUBLIC_ORIGIN` must be exactly `https://<unix-https-authority>`,
   with no trailing slash, path, query or alternate host. Incoming proxy
-  headers cannot choose the callback origin.
+  headers cannot choose the callback origin. A stable auth callback host
+  per hosted environment is a design option, not a deployed configuration.
+  Review session handoff separately before adding any other origin.
 - `GOMAR_AUTH_PROVIDERS` is an explicit comma-separated list, with no spaces,
   empty entries or duplicates: `google`, `apple`, `microsoft`, optionally
   `microsoft-work`. Only selected entries are advertised to the browser.
@@ -98,7 +102,7 @@ It is not a deployment instruction and no live configuration was added.
 
 ## Release gates
 
-Register migration 012 after 011 and verify upgrades without changing
+Verify migration 012 and 013 upgrades without changing
 earlier checksums. Use the private credential path above. Do not put
 provider secrets or private Apple signing keys in Git, frontend code,
 logs or test data. Set ingress limits and avoid

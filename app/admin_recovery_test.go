@@ -1,9 +1,7 @@
 package main
 
 import (
-	"context"
 	"crypto/sha256"
-	"database/sql"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -11,28 +9,6 @@ import (
 	"testing"
 	"time"
 )
-
-func applyStagedAuthMigration(t *testing.T, ctx context.Context, db *sql.DB, name string) {
-	t.Helper()
-	schema, err := postgresMigrations.ReadFile("postgres_migrations/" + name)
-	if err != nil {
-		t.Fatal(err)
-	}
-	tx, err := db.BeginTx(ctx, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer tx.Rollback()
-	if _, err = tx.ExecContext(ctx, "SET LOCAL search_path TO gomar, pg_catalog"); err != nil {
-		t.Fatal(err)
-	}
-	if _, err = tx.ExecContext(ctx, string(schema)); err != nil {
-		t.Fatal(err)
-	}
-	if err = tx.Commit(); err != nil {
-		t.Fatal(err)
-	}
-}
 
 func TestSignInModeRequiresReadyRecoveryAndAllProviders(t *testing.T) {
 	ready := []string{providerAuthMigration, adminRecoveryMigration}
@@ -63,7 +39,7 @@ func TestSignInModeRequiresReadyRecoveryAndAllProviders(t *testing.T) {
 
 func TestPostgresAdminRecoveryAndProviderOnlyRealm(t *testing.T) {
 	ctx, db := testPostgresDB(t)
-	if err := migratePostgres(ctx, db); err != nil {
+	if err := migratePostgresThrough(ctx, db, postgresMigrationNames[:11]); err != nil {
 		t.Fatal(err)
 	}
 	if err := verifyLocalAdminRecoveryAccount(ctx, db); err == nil {
@@ -126,8 +102,12 @@ func TestPostgresAdminRecoveryAndProviderOnlyRealm(t *testing.T) {
 	}
 	expect(request(classic, "GET", "/admin/", "", "", "", classicCookies), 200)
 
-	applyStagedAuthMigration(t, ctx, db, providerAuthMigration)
-	applyStagedAuthMigration(t, ctx, db, adminRecoveryMigration)
+	if err := migratePostgres(ctx, db); err != nil {
+		t.Fatal(err)
+	}
+	if err := verifyPostgresMigrations(ctx, db); err != nil {
+		t.Fatal(err)
+	}
 	expect(request(classic, "GET", "/api/v1/auth/me", "", "", "", classicCookies), 200)
 	var method string
 	if err := db.QueryRowContext(ctx, "SELECT auth_method FROM sessions").Scan(&method); err != nil || method != "password" {
