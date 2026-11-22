@@ -706,3 +706,126 @@ describe('Confirmación de una reserva', () => {
     panel.unmount()
   })
 })
+
+describe('Cancelación de una reserva', () => {
+  const path = base + '/reservation-cancel-proposals'
+  const confirmPath = base + '/reservation-confirm-proposals'
+  const reference = '5'.repeat(32)
+  const cancellation = {
+    reservation_reference: reference, start_utc: '2027-09-03T01:30:00Z',
+    start_local: '2027-09-02T22:30:00-03:00', timezone: 'America/Argentina/Buenos_Aires',
+    party_size: 4, status: 'confirmed', table_label: 'Mesa de prueba',
+  }
+  function fakeFetch(reply: () => Promise<Response>, data: object = cancellation) {
+    return vi.fn((url: string) => {
+      if (url.endsWith('/proposal-sessions')) return Promise.resolve(result({ sessions: [] }))
+      if (url === path || url === confirmPath) return Promise.resolve(result({ proposals: [pending()] }))
+      if (url === path + '/8') return Promise.resolve(result({
+        ...pending(), digest, cancellation: { ...data, guest_name: 'name sentinel', guest_phone: 'phone sentinel' },
+      }))
+      if (url === confirmPath + '/8') return Promise.resolve(result({
+        ...pending(), digest, confirmation: { ...cancellation, status: 'pending', table_capacity: 4 },
+      }))
+      if (url === path + '/8/decision') return reply()
+      throw Error('unexpected test request')
+    })
+  }
+  async function show(fetch: unknown, canCancelReservations = true, canConfirmReservations = false) {
+    vi.stubGlobal('fetch', fetch)
+    const panel = mount(McpProposalSessions, {
+      props: { entity: 2, outlet: 7, outletName: 'Centro de prueba', canRename: false, canCancelReservations, canConfirmReservations },
+    })
+    await button(panel, 'Sesiones de propuestas').trigger('click')
+    await flushPromises()
+    return panel
+  }
+  async function read(panel: ReturnType<typeof mount>) {
+    await button(panel, 'Ver propuesta 8 de cancelación de reserva').trigger('click')
+    await flushPromises()
+  }
+  const acknowledgement = '[aria-label="Confirmar decisión"] input[type="checkbox"]'
+  async function decideCancellation(panel: ReturnType<typeof mount>) {
+    await button(panel, 'Continuar con la cancelación').trigger('click')
+    await panel.get(acknowledgement).setValue(true)
+    await button(panel, 'Cancelar reserva definitivamente').trigger('click')
+    await flushPromises()
+  }
+
+  it('shows the exact booking and requires a separate fresh acknowledgement before cancelling', async () => {
+    const fetch = fakeFetch(async () => result({ ...pending(), status: 'approved', reservation_reference: reference }))
+    const panel = await show(fetch)
+    await panel.get('input[type=checkbox]').setValue(true)
+    expect(panel.text()).toContain('--proposal-session-action=reservation_cancel')
+    await read(panel)
+    for (const text of ['Centro de prueba', reference, '2027-09-02 · 22:30', 'Personas: 4', 'Confirmada', 'Mesa de prueba', 'La mesa quedará libre.', 'no envía aviso']) {
+      expect(panel.text()).toContain(text)
+    }
+    expect(panel.text()).not.toContain('sentinel')
+    await button(panel, 'Continuar con la cancelación').trigger('click')
+    expect((panel.get(acknowledgement).element as HTMLInputElement).checked).toBe(false)
+    expect(button(panel, 'Cancelar reserva definitivamente').attributes()).toHaveProperty('disabled')
+    await panel.get(acknowledgement).setValue(true)
+    await button(panel, 'Volver sin cambios').trigger('click')
+    await button(panel, 'Continuar con la cancelación').trigger('click')
+    expect((panel.get(acknowledgement).element as HTMLInputElement).checked).toBe(false)
+    expect(fetch.mock.calls.some(([url]) => url.endsWith('/decision'))).toBe(false)
+    await panel.get(acknowledgement).setValue(true)
+    await button(panel, 'Cancelar reserva definitivamente').trigger('click')
+    await flushPromises()
+    expect(fetch).toHaveBeenLastCalledWith(path + '/8/decision', expect.objectContaining({
+      method: 'POST', body: JSON.stringify({ decision: 'approve', digest, confirm: true }),
+    }))
+    expect(panel.text()).toContain('Reserva cancelada. No se envió ningún aviso.')
+    panel.unmount()
+  })
+
+  it('can reject a pending, unassigned reservation proposal without cancellation acknowledgement', async () => {
+    const fetch = fakeFetch(async () => result({ ...pending(), status: 'rejected' }), { ...cancellation, status: 'pending', table_label: undefined })
+    const panel = await show(fetch)
+    await read(panel)
+    expect(panel.text()).toContain('Estado actual: Pendiente.')
+    expect(panel.text()).toContain('No hay mesa asignada.')
+    expect(panel.text()).not.toContain('La mesa quedará libre.')
+    await button(panel, 'Rechazar propuesta').trigger('click')
+    expect(panel.find(acknowledgement).exists()).toBe(false)
+    await button(panel, 'Sí, rechazar').trigger('click')
+    await flushPromises()
+    expect(fetch).toHaveBeenLastCalledWith(path + '/8/decision', expect.objectContaining({
+      method: 'POST', body: JSON.stringify({ decision: 'reject', digest, confirm: true }),
+    }))
+    expect(panel.text()).toContain('No se modificó la reserva.')
+    panel.unmount()
+  })
+
+  it.each(['stale', 'network', 'wrong receipt'])('blocks retries after %s without blocking a different confirmation action', async outcome => {
+    const fetch = fakeFetch(async () => {
+      if (outcome === 'network') throw Error('synthetic transport failure')
+      return outcome === 'stale' ? result({}, 409)
+        : result({ ...pending(), status: 'approved', reservation_reference: '6'.repeat(32) })
+    })
+    const panel = await show(fetch, true, true)
+    await read(panel)
+    await decideCancellation(panel)
+    expect(panel.get('[role=alert]').text()).toMatch(/No se canceló|No pude verificar/)
+    expect(panel.text()).not.toContain('Reserva cancelada.')
+    await read(panel)
+    expect(button(panel, 'Continuar con la cancelación').attributes()).toHaveProperty('disabled')
+    await button(panel, 'Ver propuesta 8 de reserva').trigger('click')
+    await flushPromises()
+    expect(button(panel, 'Continuar con la reserva').attributes()).not.toHaveProperty('disabled')
+    expect(fetch.mock.calls.filter(([url]) => url.endsWith('/decision'))).toHaveLength(1)
+    panel.unmount()
+  })
+
+  it('hides the cancellation action without capability and refuses a confirmed preview without its table', async () => {
+    const fetch = fakeFetch(async () => result({}), { ...cancellation, table_label: undefined })
+    const absent = await show(fetch, false)
+    expect(fetch.mock.calls.some(([url]) => url === path)).toBe(false)
+    absent.unmount()
+    const panel = await show(fetch)
+    await read(panel)
+    expect(panel.get('[role=alert]').text()).toContain('No pude abrir la propuesta.')
+    expect(button(panel, 'Continuar con la cancelación')).toBeUndefined()
+    panel.unmount()
+  })
+})
