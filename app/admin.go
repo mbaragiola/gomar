@@ -59,12 +59,12 @@ func renderAdmin(w http.ResponseWriter, page adminPage) {
 	adminTemplate.Execute(w, page)
 }
 
-func adminPostValid(w http.ResponseWriter, r *http.Request) bool {
+func (a *app) adminPostValid(w http.ResponseWriter, r *http.Request) bool {
 	if r.Method != http.MethodPost {
 		return true
 	}
 	r.Body = http.MaxBytesReader(w, r.Body, 64<<10)
-	return r.ParseForm() == nil && validCSRF(r)
+	return r.ParseForm() == nil && a.validAdminCSRF(r)
 }
 
 func redirectAdminLogin(w http.ResponseWriter, r *http.Request) {
@@ -74,24 +74,31 @@ func redirectAdminLogin(w http.ResponseWriter, r *http.Request) {
 func (a *app) admin(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("Vary", "Cookie")
+	if a.adminRecovery && !effectiveHTTPS(r) {
+		failure(w, badCSRF)
+		return
+	}
 	path := r.URL.Path
 	passwordPage := path == adminPasswordPath || path == adminPasswordDone
 	var sessionCookies http.ResponseWriter
+	if a.adminRecovery {
+		sessionCookies = w
+	}
 	if passwordPage {
 		w.Header().Set("Content-Language", "es-ar")
 		// On non-POST unsafe methods Django checks the header, not form data.
-		if !adminPostValid(w, r) || (r.Method != http.MethodPost && !safeMethod(r.Method) && !validCSRF(r)) {
+		if !a.adminPostValid(w, r) || (r.Method != http.MethodPost && !safeMethod(r.Method) && !a.validAdminCSRF(r)) {
 			failure(w, badCSRF)
 			return
 		}
 		sessionCookies = w
 	}
-	u, err := currentUser(sessionCookies, r, a.db)
+	u, err := a.currentAdminUser(sessionCookies, r)
 	if err != nil {
 		failure(w, err)
 		return
 	}
-	if !passwordPage && !adminPostValid(w, r) {
+	if !passwordPage && !a.adminPostValid(w, r) {
 		failure(w, badCSRF)
 		return
 	}
@@ -99,7 +106,7 @@ func (a *app) admin(w http.ResponseWriter, r *http.Request) {
 		a.adminLogin(w, r, u)
 		return
 	}
-	if !u.superuser {
+	if !u.superuser && !(a.adminRecovery && path == "/admin/logout/" && r.Method == http.MethodPost) {
 		redirectAdminLogin(w, r)
 		return
 	}
@@ -113,7 +120,7 @@ func (a *app) admin(w http.ResponseWriter, r *http.Request) {
 			w.WriteHeader(http.StatusMethodNotAllowed)
 			return
 		}
-		if err := a.endSession(w, r); err != nil {
+		if err := a.endAdminSession(w, r); err != nil {
 			failure(w, err)
 			return
 		}
@@ -125,31 +132,31 @@ func (a *app) admin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if path == adminLegalEntityAddPath {
-		a.serveAdminLegalEntityAdd(w, r, adminPage{Token: ensureCSRF(w, r), Username: u.name, Links: adminLists}, u.id)
+		a.serveAdminLegalEntityAdd(w, r, adminPage{Token: a.ensureAdminCSRF(w, r), Username: u.name, Links: adminLists}, u.id)
 		return
 	}
 	if path == adminOutletAddPath || path == adminSupplierAddPath {
-		a.serveAdminCatalogAdd(w, r, adminPage{Token: ensureCSRF(w, r), Username: u.name, Links: adminLists}, u.id, path == adminSupplierAddPath)
+		a.serveAdminCatalogAdd(w, r, adminPage{Token: a.ensureAdminCSRF(w, r), Username: u.name, Links: adminLists}, u.id, path == adminSupplierAddPath)
 		return
 	}
 	if list, id, history := adminCatalogHistoryID(path); history {
-		a.serveAdminCatalogHistory(w, r, adminPage{Token: ensureCSRF(w, r), Username: u.name, Links: adminLists}, list, id)
+		a.serveAdminCatalogHistory(w, r, adminPage{Token: a.ensureAdminCSRF(w, r), Username: u.name, Links: adminLists}, list, id)
 		return
 	}
 	if list, id, detail := adminCatalogDetailID(path); detail {
-		a.serveAdminCatalogDetail(w, r, adminPage{Token: ensureCSRF(w, r), Username: u.name, Links: adminLists}, list, id, u.id)
+		a.serveAdminCatalogDetail(w, r, adminPage{Token: a.ensureAdminCSRF(w, r), Username: u.name, Links: adminLists}, list, id, u.id)
 		return
 	}
 	if id, detail := adminAuditDetailID(path); detail {
-		a.serveAdminAuditDetail(w, r, adminPage{Token: ensureCSRF(w, r), Username: u.name, Links: adminLists}, id)
+		a.serveAdminAuditDetail(w, r, adminPage{Token: a.ensureAdminCSRF(w, r), Username: u.name, Links: adminLists}, id)
 		return
 	}
 	if path == documentAuditAdminPath {
-		a.serveAdminAudit(w, r, adminPage{Token: ensureCSRF(w, r), Username: u.name, Links: adminLists})
+		a.serveAdminAudit(w, r, adminPage{Token: a.ensureAdminCSRF(w, r), Username: u.name, Links: adminLists})
 		return
 	}
 	if r.Method == http.MethodGet || r.Method == http.MethodHead {
-		page := adminPage{Title: "Configuración", Token: ensureCSRF(w, r), Username: u.name, Links: adminLists}
+		page := adminPage{Title: "Configuración", Token: a.ensureAdminCSRF(w, r), Username: u.name, Links: adminLists}
 		if path == "/admin/" {
 			renderAdmin(w, page)
 			return
@@ -226,8 +233,8 @@ func (a *app) adminLogin(w http.ResponseWriter, r *http.Request, current user) {
 			failure(w, err)
 			return
 		}
-		if u.id != 0 && u.staff {
-			if err := a.startSession(w, r, u); err != nil {
+		if u.id != 0 && u.staff && (!a.adminRecovery || u.superuser) {
+			if err := a.startAdminSession(w, r, u); err != nil {
 				failure(w, err)
 				return
 			}
@@ -236,6 +243,6 @@ func (a *app) adminLogin(w http.ResponseWriter, r *http.Request, current user) {
 		}
 		page.Error = "Ingresá un usuario y una contraseña válidos para una cuenta de administración."
 	}
-	page.Token = ensureCSRF(w, r)
+	page.Token = a.ensureAdminCSRF(w, r)
 	renderAdmin(w, page)
 }

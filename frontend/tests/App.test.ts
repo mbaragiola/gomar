@@ -82,6 +82,50 @@ describe('aplicación', () => {
     expect(wrapper.find('button').text()).toBe('Ingresar')
   })
 
+  it('moves between branch tasks, preserves feature gates, and returns to purchases on branch change', async () => {
+    vi.stubGlobal('fetch', appFetch((url) => {
+      if (url.endsWith('/entities')) return response([{ id: 1, nombre: 'Entidad Uno SA', cuit: '30111111118',
+        rol: 'administration', rol_nombre: 'Administración', capacidades: [...administrationCapabilities, 'mcp_read'] }])
+      if (url.endsWith('/outlets')) return response([{ id: 10, nombre: 'Centro' }, { id: 11, nombre: 'Norte' }])
+    }))
+    const wrapper = mount(App, { attachTo: window.document.body })
+    await flushPromises()
+    const navigation = wrapper.get('nav[aria-label="Tareas del local"]')
+    const task = (name: string) => navigation.findAll('button').find(button => button.text() === name)!
+    expect(task('Comprobantes').attributes('aria-current')).toBe('page')
+    expect(navigation.get('details').element.open).toBe(false)
+    expect(task('Ver stock del local')).toBeUndefined()
+    expect(wrapper.find('.staff-chat').exists()).toBe(false)
+    await task('Chat y propuestas').trigger('click')
+    expect(wrapper.get('h1').text()).toBe('Chat y propuestas')
+    expect(window.document.activeElement).toBe(wrapper.get('h1').element)
+    expect(wrapper.get('.staff-chat').text()).toContain('Conectar Claude o Codex')
+    expect(wrapper.get('.content-grid').isVisible()).toBe(false)
+    expect(wrapper.findAll('button').find(button => button.text() === 'Nuevo comprobante')).toBeUndefined()
+    await wrapper.get('.staff-context label:nth-child(2) select').setValue('11')
+    await flushPromises()
+    expect(wrapper.find('.staff-chat').exists()).toBe(false)
+    expect(task('Comprobantes').attributes('aria-current')).toBe('page')
+    expect(wrapper.get('.content-grid').isVisible()).toBe(true)
+    wrapper.unmount()
+  })
+
+  it('keeps a selected document ready on resize and lets the active purchases task return to the list', async () => {
+    vi.stubGlobal('fetch', appFetch((url) => {
+      if (url.endsWith('/documents/1')) return response(document)
+      if (url.includes('/documents')) return response([document])
+    }))
+    const wrapper = mount(App, { attachTo: window.document.body })
+    await flushPromises()
+    await wrapper.get('.document-row').trigger('click')
+    await flushPromises()
+    expect(wrapper.get('.content-grid').classes()).toContain('staff-has-document')
+    await wrapper.get('nav button[aria-current="page"]').trigger('click')
+    expect(wrapper.get('.content-grid').classes()).not.toContain('staff-has-document')
+    expect(window.document.activeElement).toBe(wrapper.get('h1').element)
+    wrapper.unmount()
+  })
+
   it('muestra sólo el contexto y los totales asignados', async () => {
     vi.stubGlobal('fetch', appFetch())
     const wrapper = mount(App)

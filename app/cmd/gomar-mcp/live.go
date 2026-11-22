@@ -131,6 +131,11 @@ func runLive(ctx context.Context, args []string, in io.Reader, out io.Writer) er
 			return errors.New(liveUsage)
 		}
 		addSessionTool = addReservationCancelProposalTool
+	case "pos_product_create":
+		if *proposalSessionFile == "" {
+			return errors.New(liveUsage)
+		}
+		addSessionTool = addPOSCreateProposalTool
 	default:
 		return errors.New(liveUsage)
 	}

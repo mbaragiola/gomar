@@ -829,3 +829,64 @@ describe('Cancelación de una reserva', () => {
     panel.unmount()
   })
 })
+
+describe('Alta de un producto de caja', () => {
+  const path = base + '/pos-create-proposals'
+  const product = { name: '<b>Pan</b>', price_minor: 350, active: false, currency: 'ARS', catalog_count: 0, catalog_limit: 500 }
+
+  async function openCreate(fetch: unknown) {
+    vi.stubGlobal('fetch', fetch)
+    const panel = mount(McpProposalSessions, {
+      props: { entity: 2, outlet: 7, outletName: 'Centro de prueba', canRename: false, canCreateProducts: true },
+    })
+    await button(panel, 'Sesiones de propuestas').trigger('click')
+    await flushPromises()
+    return panel
+  }
+
+  it.each(['approve', 'reject', 'stale'] as const)('requires a deliberate decision: %s', async outcome => {
+    const approved = outcome === 'approve'
+    const reject = outcome === 'reject'
+    const fetch = vi.fn()
+      .mockResolvedValueOnce(result({ sessions: [] }))
+      .mockResolvedValueOnce(result({ proposals: [pending()] }))
+      .mockResolvedValueOnce(result({ ...pending(), product, digest }))
+      .mockResolvedValueOnce(outcome === 'stale' ? result({}, 409)
+        : result({ ...pending(), status: approved ? 'approved' : 'rejected', ...(approved ? { product_id: 17, product_revision: 1 } : {}) }))
+      .mockResolvedValueOnce(result({ sessions: [] }))
+      .mockResolvedValueOnce(result({ proposals: [pending()] }))
+    const panel = await openCreate(fetch)
+    const choice = panel.get('input[type=checkbox]')
+    expect((choice.element as HTMLInputElement).checked).toBe(false)
+    expect(button(panel, 'Crear sesión de propuestas').attributes()).toHaveProperty('disabled')
+    await choice.setValue(true)
+    expect(panel.text()).toContain('--proposal-session-action=pos_product_create')
+    expect(fetch.mock.calls[1][0]).toBe(path)
+    await button(panel, 'Ver propuesta 8 de nuevo producto').trigger('click')
+    await flushPromises()
+    const view = panel.get('[aria-label="Vista previa de la propuesta"]')
+    for (const text of ['Centro de prueba', '<b>Pan</b>', 'ARS 3,50', 'Inactivo', '0 de 500']) expect(view.text()).toContain(text)
+    expect(view.find('b').exists()).toBe(false)
+    const proceed = reject ? 'Rechazar propuesta' : 'Continuar con el nuevo producto'
+    await button(panel, proceed).trigger('click')
+    await button(panel, 'Volver sin cambios').trigger('click')
+    expect(fetch).toHaveBeenCalledTimes(3)
+    await button(panel, proceed).trigger('click')
+    await button(panel, reject ? 'Sí, rechazar' : 'Crear producto de caja').trigger('click')
+    await flushPromises()
+    expect(fetch.mock.calls.filter(([url]) => url === path + '/8/decision')).toEqual([
+      [path + '/8/decision', expect.objectContaining({ method: 'POST', body: JSON.stringify({ decision: reject ? 'reject' : 'approve', digest, confirm: true }) })],
+    ])
+    expect(panel.text()).toContain(approved ? 'Producto agregado al catálogo.' : reject ? 'No se agregó ningún producto.' : 'No se agregó el producto.')
+  })
+
+  it.each([{ active: undefined }, { price_minor: 0 }, { currency: 'USD' }, { catalog_count: 500 }])('refuses an invalid preview %j', async overrides => {
+    const panel = await openCreate(vi.fn()
+      .mockResolvedValueOnce(result({ sessions: [] }))
+      .mockResolvedValueOnce(result({ proposals: [pending()] }))
+      .mockResolvedValueOnce(result({ ...pending(), product: { ...product, ...overrides }, digest })))
+    await button(panel, 'Ver propuesta 8 de nuevo producto').trigger('click')
+    await flushPromises()
+    expect(panel.find('[aria-label="Vista previa de la propuesta"]').exists()).toBe(false)
+  })
+})

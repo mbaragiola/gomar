@@ -11,7 +11,9 @@ used by the Codex preview.
 | [Segment encoding](https://github.com/segmentio/encoding/tree/v0.5.4) | v0.5.4 | [LICENSE](licenses/segmentio-encoding/LICENSE) |
 | [Segment assembly routines](https://github.com/segmentio/asm/tree/v1.1.3) | v1.1.3 | [LICENSE](licenses/segmentio-asm/LICENSE) |
 | [URI Templates](https://github.com/yosida95/uritemplate/tree/v3.0.2) | v3.0.2 | [LICENSE](licenses/uritemplate/LICENSE) |
-| [Go OAuth2](https://go.googlesource.com/oauth2/+/refs/tags/v0.35.0) | v0.35.0 | [LICENSE](licenses/golang-x-oauth2/LICENSE) |
+| [Go OIDC](https://github.com/coreos/go-oidc/tree/v3.21.0) | v3.21.0 | [LICENSE](licenses/coreos-go-oidc/LICENSE) |
+| [Go JOSE](https://github.com/go-jose/go-jose/tree/v4.1.4) | v4.1.4 | [LICENSE](licenses/go-jose/LICENSE) |
+| [Go OAuth2](https://go.googlesource.com/oauth2/+/refs/tags/v0.36.0) | v0.36.0 | [LICENSE](licenses/golang-x-oauth2/LICENSE) |
 | [Go sync](https://go.googlesource.com/sync/+/refs/tags/v0.20.0) | v0.20.0 | [LICENSE](licenses/golang-x-sync/LICENSE), [PATENTS](licenses/golang-x-sync/PATENTS) |
 | [Go sys](https://go.googlesource.com/sys/+/refs/tags/v0.41.0) | v0.41.0 | [LICENSE](licenses/golang-x-sys/LICENSE), [PATENTS](licenses/golang-x-sys/PATENTS) |
 | [Go time](https://go.googlesource.com/time/+/refs/tags/v0.15.0) | v0.15.0 | [LICENSE](licenses/golang-x-time/LICENSE), [PATENTS](licenses/golang-x-time/PATENTS) |

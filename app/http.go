@@ -17,13 +17,17 @@ import (
 )
 
 type app struct {
-	db       *sql.DB
-	mcpClock func() time.Time
+	db            *sql.DB
+	providerAuth  *hostedProviderAuth
+	adminRecovery bool
+	providerOnly  bool
+	mcpClock      func() time.Time
 
 	host                                  string
 	payablesClock                         func() time.Time
 	reconciliationClock                   func() time.Time
 	privateRoot                           *os.Root
+	enableMCPPOSCreateProposals           bool
 	enableMCPReservationCancelProposals   bool
 	enableMCPReservationConfirmProposals  bool
 	publicReservations                    bool
@@ -138,6 +142,10 @@ func (a *app) protectedWithCache(next func(http.ResponseWriter, *http.Request, u
 
 func (a *app) apiLogin(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
+	if a.providerOnly {
+		failure(w, problem{403, "Ingresá con Google o Microsoft."})
+		return
+	}
 	var input struct {
 		Username *string `json:"usuario"`
 		Password *string `json:"clave"`
@@ -208,6 +216,7 @@ func (a *app) routes() http.Handler {
 	a.registerDelivery(addAPI)
 	a.registerStock(addAPI, a.enablePOS && a.enableStock)
 	a.registerMCP(addAPI)
+	a.registerProviderLogin(addAPI)
 	a.registerMCPWikiProposals(addAPI)
 	a.registerMCPDocumentProposals(addAPI)
 	a.registerMCPWikiEditProposals(addAPI)
@@ -222,6 +231,7 @@ func (a *app) routes() http.Handler {
 	a.registerReservations(addAPI, a.publicReservations)
 	a.registerMCPReservationConfirmProposals(addAPI)
 	a.registerMCPReservationCancelProposals(addAPI)
+	a.registerMCPPOSCreateProposals(addAPI)
 	a.registerReservationMenus(addAPI, a.publicReservations)
 	unavailableOperation := func(_ *http.Request, _ *sql.Tx, _ entityMembership, _ []byte) (int, any, error) {
 		return 0, nil, unavailable
@@ -309,6 +319,9 @@ func (a *app) routes() http.Handler {
 		http.Redirect(w, r, "/admin/", http.StatusMovedPermanently)
 	})
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if a.providerOnly {
+			r = providerOnlyRequest(r)
+		}
 		w.Header().Set("X-Gomar-Experimental", "foundation")
 		w.Header().Set("X-Content-Type-Options", "nosniff")
 		w.Header().Set("X-Frame-Options", "DENY")

@@ -120,9 +120,13 @@ func currentUser(w http.ResponseWriter, r *http.Request, db sessionStore) (user,
 	var saved []byte
 	var u user
 	var active bool
-	err := db.QueryRowContext(r.Context(), `SELECT u.id,u.username,u.password,u.staff,u.superuser,u.active,s.password_digest
+	query := `SELECT u.id,u.username,u.password,u.staff,u.superuser,u.active,s.password_digest
 		FROM sessions s JOIN users u ON u.id=s.user_id
-		WHERE s.token_hash=$1 AND s.expires>$2`, key[:], time.Now().Unix()).
+		WHERE s.token_hash=$1 AND s.expires>$2`
+	if requiresProviderSession(r) {
+		query += " AND s.auth_method='provider'"
+	}
+	err := db.QueryRowContext(r.Context(), query, key[:], time.Now().Unix()).
 		Scan(&u.id, &u.name, &u.password, &u.staff, &u.superuser, &active, &saved)
 	if errors.Is(err, sql.ErrNoRows) {
 		clearCookie()
@@ -253,6 +257,10 @@ func ensureCSRF(w http.ResponseWriter, r *http.Request) string {
 }
 
 func validCSRF(r *http.Request) bool {
+	return validCSRFWithCookie(r, "csrftoken")
+}
+
+func validCSRFWithCookie(r *http.Request, cookieName string) bool {
 	origin := "http://" + r.Host
 	if effectiveHTTPS(r) {
 		origin = "https://" + r.Host
@@ -276,7 +284,7 @@ func validCSRF(r *http.Request) bool {
 			return false
 		}
 	}
-	secret := csrfSecret(cookieValue(r, "csrftoken"))
+	secret := csrfSecret(cookieValue(r, cookieName))
 	if secret == "" {
 		return false
 	}

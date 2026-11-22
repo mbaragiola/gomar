@@ -39,6 +39,9 @@ var postgresMigrationNames = []string{
 	"015_mcp_pos_catalog_proposals.sql",
 	"016_mcp_reservation_confirm_proposals.sql",
 	"017_mcp_reservation_cancel_proposals.sql",
+	"018_provider_auth.sql",
+	"019_admin_recovery.sql",
+	"020_mcp_pos_create_proposals.sql",
 }
 
 func postgresConfig(dsn string) (*pgx.ConnConfig, error) {
@@ -172,6 +175,11 @@ func verifyPostgresMigrations(ctx context.Context, db *sql.DB) error {
 // migratePostgres is an explicit administration step. The app's regular
 // connection need not own the schema or have permission to change it.
 func migratePostgres(ctx context.Context, db *sql.DB) error {
+	return migratePostgresThrough(ctx, db, postgresMigrationNames)
+}
+
+// Keep the same validation and transaction path for upgrade rehearsals.
+func migratePostgresThrough(ctx context.Context, db *sql.DB, names []string) error {
 	tx, err := db.BeginTx(ctx, &sql.TxOptions{Isolation: sql.LevelReadCommitted})
 	if err != nil {
 		return err
@@ -202,7 +210,7 @@ func migratePostgres(ctx context.Context, db *sql.DB) error {
 			rows.Close()
 			return err
 		}
-		if version != len(installed)+1 || version > len(postgresMigrationNames) {
+		if version != len(installed)+1 || version > len(names) {
 			rows.Close()
 			return errors.New("unknown or incomplete PostgreSQL migration history")
 		}
@@ -212,7 +220,7 @@ func migratePostgres(ctx context.Context, db *sql.DB) error {
 	if err := rows.Err(); err != nil {
 		return err
 	}
-	for i, name := range postgresMigrationNames {
+	for i, name := range names {
 		script, err := postgresMigrations.ReadFile("postgres_migrations/" + name)
 		if err != nil {
 			return err
