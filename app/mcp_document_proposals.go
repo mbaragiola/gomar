@@ -200,7 +200,7 @@ func (a *app) acceptDocumentProposal(w http.ResponseWriter, r *http.Request) err
 	return nil
 }
 
-func (a *app) beginDocumentProposalReview(r *http.Request, u user, decision bool) (*sql.Tx, wikiProposalScope, []byte, error) {
+func (a *app) beginTypedProposalReview(r *http.Request, u user, purpose string, decision bool) (*sql.Tx, wikiProposalScope, []byte, error) {
 	s, err := wikiProposalPath(r)
 	if err != nil {
 		return nil, s, nil, err
@@ -220,7 +220,7 @@ func (a *app) beginDocumentProposalReview(r *http.Request, u user, decision bool
 		}
 	}
 	if err == nil {
-		err = requireProposalScope(r.Context(), tx, s, documentKeyPurpose)
+		err = requireProposalScope(r.Context(), tx, s, purpose)
 	}
 	if err != nil {
 		tx.Rollback()
@@ -230,7 +230,7 @@ func (a *app) beginDocumentProposalReview(r *http.Request, u user, decision bool
 }
 
 func (a *app) listDocumentProposals(w http.ResponseWriter, r *http.Request, u user) error {
-	tx, s, password, err := a.beginDocumentProposalReview(r, u, false)
+	tx, s, password, err := a.beginTypedProposalReview(r, u, documentKeyPurpose, false)
 	if err != nil {
 		return err
 	}
@@ -277,14 +277,14 @@ func lookupDocumentProposal(r *http.Request, tx *sql.Tx, s wikiProposalScope) (d
 		WHERE id=$1 AND actor_id=$2 AND entity_id=$3 AND outlet_id=$4 FOR UPDATE`, id, s.actor, s.entity, s.outlet))
 }
 
-func (a *app) documentProposalState(ctx context.Context, tx *sql.Tx, p documentProposalRow, password []byte) (string, error) {
-	if p.Status != "pending" {
-		return p.Status, nil
+func (a *app) typedProposalState(ctx context.Context, tx *sql.Tx, status string, expiry, tokenID int64, password []byte) (string, error) {
+	if status != "pending" {
+		return status, nil
 	}
-	if p.expiry <= a.tokenTime().Unix() {
+	if expiry <= a.tokenTime().Unix() {
 		return "expired", nil
 	}
-	valid, err := wikiProposalTokenStatus(ctx, tx, p.tokenID, password)
+	valid, err := wikiProposalTokenStatus(ctx, tx, tokenID, password)
 	if err != nil {
 		return "", err
 	}
@@ -309,7 +309,7 @@ func (p documentProposalRow) validatedDraft(s wikiProposalScope) (documentDraftP
 }
 
 func (a *app) viewDocumentProposal(w http.ResponseWriter, r *http.Request, u user) error {
-	tx, s, password, err := a.beginDocumentProposalReview(r, u, false)
+	tx, s, password, err := a.beginTypedProposalReview(r, u, documentKeyPurpose, false)
 	if err != nil {
 		return err
 	}
@@ -321,7 +321,7 @@ func (a *app) viewDocumentProposal(w http.ResponseWriter, r *http.Request, u use
 	if p.expiry <= a.tokenTime().Add(-wikiProposalRetention).Unix() {
 		return wikiProposalMissing
 	}
-	p.Status, err = a.documentProposalState(r.Context(), tx, p, password)
+	p.Status, err = a.typedProposalState(r.Context(), tx, p.Status, p.expiry, p.tokenID, password)
 	if err != nil {
 		return err
 	}
@@ -367,7 +367,7 @@ func (a *app) decideDocumentProposal(w http.ResponseWriter, r *http.Request, u u
 	if _, err = hex.Decode(confirmed[:], []byte(input.Digest)); err != nil {
 		return badInput
 	}
-	tx, s, password, err := a.beginDocumentProposalReview(r, u, true)
+	tx, s, password, err := a.beginTypedProposalReview(r, u, documentKeyPurpose, true)
 	if err != nil {
 		return err
 	}
@@ -386,7 +386,7 @@ func (a *app) decideDocumentProposal(w http.ResponseWriter, r *http.Request, u u
 	case "expired", "revoked":
 		return wikiProposalUnavailable
 	}
-	state, err := a.documentProposalState(ctx, tx, p, password)
+	state, err := a.typedProposalState(ctx, tx, p.Status, p.expiry, p.tokenID, password)
 	if err != nil {
 		return err
 	}
