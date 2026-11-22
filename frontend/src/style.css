@@ -300,3 +300,41 @@ a { color: var(--accent); }
 }
 
 #wiki-proposals { min-width: 0; overflow-wrap: anywhere; }
+
+/* Staff workspace navigation is separate from feature controls. */
+.staff-context { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto; gap: .6rem .85rem; padding: .75rem 1rem; align-items: end; }
+.staff-context > label { min-width: 0; }
+.staff-context select { min-height: 44px; }
+.staff-role { align-self: center; color: var(--muted); font-size: .82rem; }
+.staff-nav { display: flex; flex-wrap: wrap; align-items: start; gap: .35rem; margin-top: .75rem; padding-bottom: .6rem; border-bottom: 1px solid var(--line); }
+.staff-nav button, .staff-admin summary { min-height: 44px; padding: .55rem .7rem; color: var(--ink); background: transparent; border-radius: 6px; font-weight: 600; }
+.staff-nav button:hover, .staff-admin summary:hover { background: var(--passive); }
+.staff-nav button[aria-current="page"] { color: var(--accent); background: var(--passive); box-shadow: inset 0 -2px var(--accent); }
+.staff-admin { min-width: 0; margin-inline-start: auto; }
+.staff-admin summary { cursor: pointer; align-content: center; }
+.staff-admin summary:focus-visible, .staff-view-heading h1:focus-visible, .detail-card h2:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+.staff-admin-items { display: flex; flex-wrap: wrap; gap: .25rem; margin: .25rem 0 0; border-left: 1px solid var(--line); padding-left: .35rem; }
+.staff-view-heading { display: flex; align-items: center; justify-content: space-between; gap: .75rem; margin: 1.1rem 0 .8rem; }
+.staff-view-heading h1 { margin: 0; font-size: clamp(1.3rem, 2.6vw, 1.8rem); }
+.staff-view-heading .new-button { min-width: 0; min-height: 44px; }
+.staff-totals { grid-template-columns: repeat(auto-fit, minmax(min(100%, 9rem), 1fr)); gap: .55rem; }
+.staff-totals .metric { min-width: 0; padding: .75rem 1rem; }
+.staff-totals .metric strong { overflow-wrap: anywhere; }
+.staff-chat { display: grid; gap: .6rem; padding: 1rem; }
+.staff-chat .mcp-connect-launch { justify-content: start; }
+.staff-chat button, .staff-back, .staff-context + .banner button { min-height: 44px; }
+.staff-back { display: none; }
+@media (max-width: 850px) {
+  .staff-context { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .staff-role { grid-column: 1 / -1; }
+  .content-grid:not(.staff-has-document) > .detail-card, .content-grid.staff-has-document > .list-card { display: none; }
+  .staff-back { display: block; margin: .3rem .55rem 0; }
+  .staff-mobile-detail { display: none; }
+}
+@media (max-width: 520px) {
+  .staff-nav { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .staff-nav > button { text-align: start; overflow-wrap: anywhere; }
+  .staff-admin { grid-column: 1 / -1; margin-inline-start: 0; }
+  .staff-view-heading { flex-wrap: wrap; }
+  .staff-view-heading .new-button { margin-inline-start: auto; }
+}
