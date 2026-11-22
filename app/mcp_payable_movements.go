@@ -10,27 +10,38 @@ import (
 	"github.com/mbaragiola/gomar/app/internal/mcpclient"
 )
 
-// The existing payable scope denies direct foreign settlements. The history
-// also fails closed on legacy cross-outlet links from either side of a reversal,
-// including allocation reversals that do not agree with the payment graph.
+// The existing payable scope denies direct foreign settlements. History also
+// fails closed for mixed-outlet splits and reversals (in both directions).
+// Legacy allocation-only reversal links need not match the payment graph.
 const mcpPayableMovementScope = mcpPayableScope + `
  AND NOT EXISTS (
-  SELECT 1 FROM (
+  WITH touched AS (
    SELECT a.payment_id FROM ap_allocations a WHERE a.payable_id=p.id
    UNION
    SELECT l.payment_id FROM ap_ledger l WHERE l.payable_id=p.id AND l.payment_id IS NOT NULL
-  ) touched
-  JOIN ap_payments x ON x.id=touched.payment_id
-  JOIN ap_payments linked ON linked.id=x.reversal_of_id OR linked.reversal_of_id=x.id
-  WHERE linked.entity_id<>p.entity_id OR linked.outlet_id<>p.outlet_id
- )
- AND NOT EXISTS (
-  SELECT 1 FROM ap_allocations a
+  ), related AS (
+   SELECT t.payment_id FROM touched t
+   UNION
+   SELECT x.reversal_of_id FROM touched t JOIN ap_payments x ON x.id=t.payment_id WHERE x.reversal_of_id IS NOT NULL
+   UNION
+   SELECT x.id FROM touched t JOIN ap_payments x ON x.reversal_of_id=t.payment_id
+  ), related_allocations AS (
+   SELECT a.id,a.payable_id,a.reverses_id FROM ap_allocations a JOIN related r ON r.payment_id=a.payment_id
+  )
+  SELECT 1 FROM related r JOIN ap_payments x ON x.id=r.payment_id
+  WHERE x.entity_id<>p.entity_id OR x.outlet_id<>p.outlet_id
+  UNION ALL
+  SELECT 1 FROM related_allocations a JOIN ap_payables q ON q.id=a.payable_id
+  WHERE q.entity_id<>p.entity_id OR q.outlet_id<>p.outlet_id
+  UNION ALL
+  SELECT 1 FROM related r JOIN ap_ledger l ON l.payment_id=r.payment_id JOIN ap_payables q ON q.id=l.payable_id
+  WHERE q.entity_id<>p.entity_id OR q.outlet_id<>p.outlet_id
+  UNION ALL
+  SELECT 1 FROM related_allocations a
   JOIN ap_allocations linked ON linked.id=a.reverses_id OR linked.reverses_id=a.id
   JOIN ap_payables q ON q.id=linked.payable_id
   JOIN ap_payments x ON x.id=linked.payment_id
-  WHERE a.payable_id=p.id
-  AND (q.entity_id<>p.entity_id OR q.outlet_id<>p.outlet_id OR x.entity_id<>p.entity_id OR x.outlet_id<>p.outlet_id)
+  WHERE q.entity_id<>p.entity_id OR q.outlet_id<>p.outlet_id OR x.entity_id<>p.entity_id OR x.outlet_id<>p.outlet_id
  )`
 
 func mcpListPayableMovements(r *http.Request, tx *sql.Tx, s mcpTokenScope) (any, error) {

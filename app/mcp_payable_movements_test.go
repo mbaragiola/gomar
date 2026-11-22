@@ -37,7 +37,7 @@ func TestPostgresMCPPayableMovementsMatchNativeAndDenyForeignLinks(t *testing.T)
  INSERT INTO documents(id,entity_id,outlet_id,supplier_id,issuer_cuit,document_type,letter,point_of_sale,number,issue_date,
  currency,total_minor,description,status,revision,created_at,updated_at)
  SELECT id,1,CASE WHEN id=3 THEN 2 ELSE 1 END,1,'00000000003','invoice','A',1,id,'2026-11-01','ARS',10000,'private-document','reviewed',1,
- '2026-11-01T00:00:00Z','2026-11-01T00:00:00Z' FROM generate_series(1,9) id;
+ '2026-11-01T00:00:00Z','2026-11-01T00:00:00Z' FROM generate_series(1,13) id;
  `)
 	now := time.Date(2026, 11, 3, 2, 59, 59, 0, time.UTC)
 	a := app{db: db, host: "example.com", enableMCP: true, payablesClock: func() time.Time { return now }}
@@ -75,7 +75,7 @@ func TestPostgresMCPPayableMovementsMatchNativeAndDenyForeignLinks(t *testing.T)
 		t.Helper()
 		ask(method, "/api/v1/entities/1"+path, body, "", want, dst)
 	}
-	for i := 1; i <= 9; i++ {
+	for i := 1; i <= 13; i++ {
 		var p payableDetailView
 		native("POST", fmt.Sprintf("/documents/%d/payable", i), `{"motivo":"private-post-reason"}`, 201, &p)
 		if p.ID != int64(i) {
@@ -208,6 +208,36 @@ func TestPostgresMCPPayableMovementsMatchNativeAndDenyForeignLinks(t *testing.T)
 	read(1, 9, "", key, 404, nil)
 	native("POST", foreignPath+"/reverse", `{"motivo":"private-foreign-reversal"}`, 201, nil)
 	read(1, 9, "", key, 404, nil)
+	// A payment from the selected outlet can natively have both a local
+	// and a foreign share. Do not expose either target's movement history.
+	var mixed paymentDetailView
+	native("POST", "/payments", draftBody, 201, &mixed)
+	mixedPath := "/payments/" + strconv.FormatInt(mixed.ID, 10)
+	native("POST", mixedPath+"/post", fmt.Sprintf(`{"idempotency_key":%q,"aplicaciones":[{"payable_id":10,"importe":"12.00"},{"payable_id":3,"importe":"30.00"}]}`, mixed.Key), 200, nil)
+	read(1, 10, "", key, 404, nil)
+	native("POST", mixedPath+"/reverse", `{"motivo":"private-mixed-reversal"}`, 201, nil)
+	read(1, 10, "", key, 404, nil)
+	// Legacy siblings can appear only in the allocations or only in the
+	// ledger of the paired reversal, even when all payment headers are local.
+	exec(`
+ INSERT INTO ap_payments(id,entity_id,outlet_id,supplier_id,currency,total_minor,method,reference,status,kind,reversal_of_id,
+ reversal_reason,created_by_id,created_at,posted_by_id,posted_at,post_key) VALUES
+ (30,1,1,1,'ARS',10,'cash','private-original','reversed','payment',NULL,'',1,'2026-11-03T03:00:00Z',1,'2026-11-03T03:00:00Z','legacy-30'),
+ (31,1,1,1,'ARS',10,'cash','private-local','posted','reversal',30,'private-restore',1,'2026-11-03T03:00:00Z',1,'2026-11-03T03:00:00Z','legacy-31'),
+ (32,1,1,1,'ARS',10,'cash','private-original','reversed','payment',NULL,'',1,'2026-11-03T03:00:00Z',1,'2026-11-03T03:00:00Z','legacy-32'),
+ (33,1,1,1,'ARS',10,'cash','private-local','posted','reversal',32,'private-restore',1,'2026-11-03T03:00:00Z',1,'2026-11-03T03:00:00Z','legacy-33'),
+ (34,1,1,1,'ARS',10,'cash','private-original','posted','payment',NULL,'',1,'2026-11-03T03:00:00Z',1,'2026-11-03T03:00:00Z','legacy-34');
+ INSERT INTO ap_allocations(id,payment_id,payable_id,amount_minor,created_at) VALUES
+ (40,32,3,1,'2026-11-03T03:00:00Z'),(41,34,3,1,'2026-11-03T03:00:00Z');
+ INSERT INTO ap_ledger(payable_id,payment_id,kind,delta_minor,balance_minor,actor_id,reason,occurred_at)
+ VALUES (11,30,'payment',-1,9999,1,'private-local-ledger','2026-11-03T03:00:00Z'),
+ (3,31,'reversal',1,10000,1,'private-sibling-ledger','2026-11-03T03:00:00Z'),
+ (12,33,'reversal',1,10000,1,'private-sibling-allocation','2026-11-03T03:00:00Z'),
+ (13,34,'payment',-1,9999,1,'private-mixed-allocation','2026-11-03T03:00:00Z');
+ `)
+	for id := 11; id <= 13; id++ {
+		read(1, id, "", key, 404, nil)
+	}
 	ask("GET", "/api/v1/mcp/entities/2/outlets/3/payable-records/1/movements", "", broad, 404, nil)
 	exec(`DELETE FROM outlet_grants WHERE membership_id=1 AND outlet_id=1`)
 	read(1, 1, "", key, 404, nil)

@@ -48,37 +48,54 @@ func (c *Client) ListPayableMovements(ctx context.Context, entity, outlet, payab
 		q = url.Values{"cursor": {*cursor}}
 	}
 	path := "/payable-records/" + strconv.FormatInt(payable, 10) + "/movements"
-	if err := c.getWorkspace(ctx, entity, outlet, path, q, &result); err != nil {
+	var wire struct {
+		PayableID int64  `json:"payable_id"`
+		Currency  string `json:"currency"`
+		Movements []struct {
+			Kind         string  `json:"kind"`
+			Date         *string `json:"date"`
+			DeltaMinor   *int64  `json:"delta_minor"`
+			BalanceMinor *int64  `json:"balance_minor"`
+		} `json:"movements"`
+		NextCursor string `json:"next_cursor"`
+	}
+	if err := c.getWorkspace(ctx, entity, outlet, path, q, &wire); err != nil {
 		return PayableMovements{}, err
 	}
-	if result.PayableID != payable || !validFinanceCurrency(result.Currency) ||
-		result.Movements == nil || len(result.Movements) > workspacePageSize {
+	if wire.PayableID != payable || !validFinanceCurrency(wire.Currency) ||
+		wire.Movements == nil || len(wire.Movements) > workspacePageSize {
 		return PayableMovements{}, invalidResponse
 	}
-	if result.NextCursor != "" {
-		next, err := ParsePayableMovementCursor(payable, result.NextCursor)
-		if err != nil || next <= after || len(result.Movements) != workspacePageSize {
+	if wire.NextCursor != "" {
+		next, err := ParsePayableMovementCursor(payable, wire.NextCursor)
+		if err != nil || next <= after || len(wire.Movements) != workspacePageSize {
 			return PayableMovements{}, invalidResponse
 		}
 	}
+	result = PayableMovements{PayableID: wire.PayableID, Currency: wire.Currency, NextCursor: wire.NextCursor, Movements: make([]PayableMovement, 0, len(wire.Movements))}
 	const maxMinor = 99999999999999 // Matches the native payable/ledger limits.
-	for _, row := range result.Movements {
-		if row.Date != nil && !accountingDate(*row.Date) || row.BalanceMinor < 0 || row.BalanceMinor > maxMinor ||
-			row.DeltaMinor < -maxMinor || row.DeltaMinor > maxMinor {
+	for _, row := range wire.Movements {
+		if row.DeltaMinor == nil || row.BalanceMinor == nil {
+			return PayableMovements{}, invalidResponse
+		}
+		delta, balance := *row.DeltaMinor, *row.BalanceMinor
+		if row.Date != nil && !accountingDate(*row.Date) || balance < 0 || balance > maxMinor ||
+			delta < -maxMinor || delta > maxMinor {
 			return PayableMovements{}, invalidResponse
 		}
 		switch row.Kind {
 		case "post", "reversal":
-			if row.DeltaMinor <= 0 {
+			if delta <= 0 {
 				return PayableMovements{}, invalidResponse
 			}
 		case "payment":
-			if row.DeltaMinor >= 0 {
+			if delta >= 0 {
 				return PayableMovements{}, invalidResponse
 			}
 		default:
 			return PayableMovements{}, invalidResponse
 		}
+		result.Movements = append(result.Movements, PayableMovement{Kind: row.Kind, Date: row.Date, DeltaMinor: delta, BalanceMinor: balance})
 	}
 	return result, nil
 }
