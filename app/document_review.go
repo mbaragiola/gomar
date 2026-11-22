@@ -65,6 +65,21 @@ func (a *app) reviewDraft(w http.ResponseWriter, r *http.Request, u user) error 
 	if err := validateDraftRevision(current, revision); err != nil {
 		return err
 	}
+	if err := applyNativeDraftReview(tx, member, documentID, revision, reason); err != nil {
+		return err
+	}
+	document, err := readDocumentView(tx, member, documentID)
+	if err != nil {
+		return err
+	}
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+	jsonResponse(w, http.StatusOK, document)
+	return nil
+}
+
+func applyNativeDraftReview(tx *sql.Tx, member entityMembership, documentID, revision int64, reason string) error {
 	at := time.Now().UTC().Format(time.RFC3339Nano)
 	result, err := tx.Exec(`UPDATE documents SET status='reviewed',revision=revision+1,updated_at=$1,updated_by_id=$2
 		WHERE id=$3 AND entity_id=$4 AND revision=$5 AND status='draft' AND deleted_at IS NULL`,
@@ -79,13 +94,5 @@ func (a *app) reviewDraft(w http.ResponseWriter, r *http.Request, u user) error 
 		VALUES ($1,$2,'review',$3,$4)`, documentID, member.userID, reason, at); err != nil {
 		return err
 	}
-	document, err := readDocumentView(tx, member, documentID)
-	if err != nil {
-		return err
-	}
-	if err := tx.Commit(); err != nil {
-		return err
-	}
-	jsonResponse(w, http.StatusOK, document)
 	return nil
 }
