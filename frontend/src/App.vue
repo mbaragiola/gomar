@@ -101,7 +101,8 @@ const canRenameViaMcp = computed(() => hasCapability('mcp_pos_rename_proposals')
 const canReviewDocViaMcp = computed(() => hasCapability('mcp_document_review_proposals'))
 const canCreateReconciliationViaMcp = computed(() => hasCapability('mcp_reconciliation_draft_proposals'))
 const canEditDocViaMcp = computed(() => hasCapability('mcp_document_edit_proposals'))
-const canManageMcpProposalSessions = computed(() => hasCapability('mcp_proposal_session_management') || canRenameViaMcp.value || canReviewDocViaMcp.value || canCreateReconciliationViaMcp.value || canEditDocViaMcp.value)
+const canAdjustStockViaMcp = computed(() => hasCapability('mcp_stock_adjustment_proposals'))
+const canManageMcpProposalSessions = computed(() => hasCapability('mcp_proposal_session_management') || canRenameViaMcp.value || canReviewDocViaMcp.value || canCreateReconciliationViaMcp.value || canEditDocViaMcp.value || canAdjustStockViaMcp.value)
 const canReviewStockReceiptProposals = computed(() => hasCapability('mcp_stock_receipt_proposals'))
 const canReviewWikiEditProposals = computed(() => hasCapability('mcp_wiki_edit_proposals'))
 const canReviewWikiProposals = computed(() => hasCapability('mcp_wiki_proposals'))
@@ -1099,6 +1100,7 @@ onMounted(() => { if (!publicVenue) return initialize() })
           :can-review-documents="canReviewDocViaMcp"
           :can-create-reconciliation-draft="canCreateReconciliationViaMcp"
           :can-edit-documents="canEditDocViaMcp"
+          :can-adjust-stock="canAdjustStockViaMcp"
           :entity="selectedEntityId"
           :outlet="selectedOutletId"
           :outlet-name="outlets.find((item) => item.id === selectedOutletId)?.nombre ?? 'este local'"

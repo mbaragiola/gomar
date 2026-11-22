@@ -11,7 +11,7 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
-const liveUsage = "uso: gomar-mcp --origin=<origen de Gomar> --token-file=<ruta absoluta privada> [--wiki-proposal-token-file=<ruta privada>] [--document-proposal-token-file=<ruta privada>] [--wiki-edit-proposal-token-file=<ruta privada>] [--stock-receipt-proposal-token-file=<ruta privada>] [--proposal-session-token-file=<ruta privada> --proposal-session-action=pos_product_rename|document_draft_review|reconciliation_draft_create|document_draft_edit]"
+const liveUsage = "uso: gomar-mcp --origin=<origen de Gomar> --token-file=<ruta absoluta privada> [--wiki-proposal-token-file=<ruta privada>] [--document-proposal-token-file=<ruta privada>] [--wiki-edit-proposal-token-file=<ruta privada>] [--stock-receipt-proposal-token-file=<ruta privada>] [--proposal-session-token-file=<ruta privada> --proposal-session-action=<acción autorizada>]"
 
 type noArgs struct{}
 type entityArgs struct {
@@ -100,6 +100,16 @@ func runLive(ctx context.Context, args []string, in io.Reader, out io.Writer) er
 			return errors.New(liveUsage)
 		}
 		addSessionTool = addDocumentEditProposalTool
+	case "stock_waste_record":
+		if *proposalSessionFile == "" {
+			return errors.New(liveUsage)
+		}
+		addSessionTool = addStockWasteProposalTool
+	case "stock_physical_count":
+		if *proposalSessionFile == "" {
+			return errors.New(liveUsage)
+		}
+		addSessionTool = addStockPhysicalCountProposalTool
 	default:
 		return errors.New(liveUsage)
 	}

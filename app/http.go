@@ -33,6 +33,7 @@ type app struct {
 	enableMCPStockReceiptProposals        bool
 	enableMCPProposalSessions             bool
 	enableMCPDocumentEditProposals        bool
+	enableMCPStockAdjustmentProposals     bool
 	enableMCPDocumentReviewProposals      bool
 	enableMCPReconciliationDraftProposals bool
 	enableDelivery                        bool
@@ -212,6 +213,7 @@ func (a *app) routes() http.Handler {
 	a.registerMCPPOSRenameProposals(addAPI)
 	a.registerMCPDocumentReviewProposals(addAPI)
 	a.registerMCPDocumentEditProposals(addAPI)
+	a.registerMCPStockAdjustmentProposals(addAPI)
 	a.registerMCPReconciliationDraftProposals(addAPI)
 	a.registerReservations(addAPI, a.publicReservations)
 	a.registerReservationMenus(addAPI, a.publicReservations)
