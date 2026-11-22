@@ -12,11 +12,11 @@ applied change. Features disabled in the app are not available via MCP.
 | Inventory | Tracked balances, thresholds and movements; propose receipts, waste, and physical counts for confirmation in Gomar | Catalog and tracking settings; bills of materials are not implemented |
 | Wiki | Search and read by ID; propose new pages and versioned edits for confirmation in Gomar | Gomar does not offer deletion |
 | Delivery | Recent order status with limited fields | No native staff write workflow; provider calls and credentials stay outside the read interface |
-| Documents and intake | Outlet-scoped list and detail; propose draft creation, review, or date and amount edits for confirmation in Gomar | Other draft changes and safe handoff for files; app OCR and intake confirmation parity |
+| Documents and intake | Outlet-scoped list, detail, and document totals by currency; propose draft creation, review, or date and amount edits for confirmation in Gomar | Other draft changes and safe handoff for files; app OCR and intake confirmation parity |
 | Suppliers | Active supplier names and IDs in the business | Guarded create and edit |
 | Payables and payment records | Outstanding and overdue totals, counts by status, and outlet-only payable and payment record details | Guarded accounting entries and reviews, not movement of money |
-| Reconciliation | Scoped run counts by status, paged run list, and metadata by ID | Workflow for source handling, matches, decisions, and review |
-| Reservations and menus | Daily reservation totals, scoped staff queue and detail, and published menu metadata | Guarded staff booking and menu operations |
+| Reconciliation | Scoped run counts by status, paged run list, metadata by ID, and proposal for an empty draft | Source handling, matches, decisions, and review stay in Gomar |
+| Reservations and menus | Daily reservation totals, scoped staff queue and detail, published menu metadata, and separate confirmation and cancellation proposals | Booking, menu and venue settings stay in Gomar |
 
 ## Verification levels
 
@@ -55,14 +55,15 @@ table changes or becomes unavailable, the approval fails rather than
 booking another table. There are no guest messages, cancellations, or
 changes to venue policy.
 
-The internal reservation cancellation adapter can preview only an existing
-future request for an authorized branch. It binds prior status and table
-allocation and uses native cancellation to release the table. It does not
-send messages or disclose guest or venue-policy data. There is no MCP
-cancellation tool or approval route in this adapter.
-
 With reservation cancellation proposals enabled, the issuing browser login
 can approve cancellation of one future pending or confirmed reservation.
 The preview shows the existing time, party size, status, and assigned table
 if there is one. Approval releases that table. It does not notify the guest
-or change venue settings or policy.
+or change venue settings or policy. The browser, not the MCP client,
+applies either reservation decision after the issuing login confirms it.
+
+Document totals mirror the selected outlet in Comprobantes. They count
+draft and reviewed documents, omit deleted records, and subtract credit
+notes. ARS and USD are separate. Each `total_minor` is a signed integer
+string in minor units. There is no date filter, and these are not sales,
+payables, or payments.
