@@ -4,7 +4,8 @@ import { ApiError, request } from '../api'
 
 type Status = 'pending' | 'approved' | 'rejected' | 'expired' | 'revoked'
 type ProductCreate = { name: string; price_minor: number; active: boolean; currency: string; catalog_count: number; catalog_limit: number }
-type Proposal = { id: number; status: Status; expires_at: string; product_id?: number; product_revision?: number; rename?: Rename; document_id?: number; document_revision?: number; review?: Review; run_id?: number; draft?: Draft; edit?: DocumentEdit; movement_id?: number; adjustment?: StockAdjustment; change?: CatalogChange; product?: ProductCreate; reservation_reference?: string; confirmation?: ReservationConfirmation; cancellation?: ReservationCancellation; digest?: string }
+type StockMinimum = { product_id: number; expected_revision: number; name: string; current_minimum: number; minimum: number }
+type Proposal = { id: number; status: Status; expires_at: string; product_id?: number; product_revision?: number; rename?: Rename; document_id?: number; document_revision?: number; review?: Review; run_id?: number; draft?: Draft; edit?: DocumentEdit; movement_id?: number; minimum?: number; minimum_change?: StockMinimum; adjustment?: StockAdjustment; change?: CatalogChange; product?: ProductCreate; reservation_reference?: string; confirmation?: ReservationConfirmation; cancellation?: ReservationCancellation; digest?: string }
 type Rename = {
   product_id: number; expected_revision: number; name: string; current_name: string
   unchanged_price_minor: number; unchanged_active: boolean
@@ -33,7 +34,7 @@ type ReservationCancellation = {
   reservation_reference: string; start_utc: string; start_local: string; timezone: string
   party_size: number; status: 'pending' | 'confirmed'; table_label?: string
 }
-type Action = 'pos_product_rename' | 'document_draft_review' | 'reconciliation_draft_create' | 'document_draft_edit' | 'stock_waste_record' | 'stock_physical_count' | 'pos_product_price_change' | 'pos_product_availability_change' | 'reservation_confirm' | 'reservation_cancel' | 'pos_product_create'
+type Action = 'pos_product_rename' | 'document_draft_review' | 'reconciliation_draft_create' | 'document_draft_edit' | 'stock_waste_record' | 'stock_physical_count' | 'pos_product_price_change' | 'pos_product_availability_change' | 'reservation_confirm' | 'reservation_cancel' | 'pos_product_create' | 'stock_minimum_change'
 type ScopedProposal = Proposal & { kind: Action }
 type Session = { id: number; expires_at: string; actions: string[] }
 const actionName = 'pos_product_rename'
@@ -47,12 +48,15 @@ const availabilityAction = 'pos_product_availability_change'
 const reservationAction = 'reservation_confirm'
 const cancelAction = 'reservation_cancel'
 const createAction = 'pos_product_create'
+const minimumAction = 'stock_minimum_change'
 const isReservation = (action: Action) => action === reservationAction || action === cancelAction
+const guardDecisionRetry = (action: Action) => isReservation(action) || action === minimumAction
 const isCatalog = (action: Action) => action === priceAction || action === availabilityAction
 const isStock = (action: Action) => action === wasteAction || action === countAction
 const actionLabels: Record<Action, string> = {
   reservation_cancel: 'Cancelar una reserva',
   reservation_confirm: 'Confirmar una reserva pendiente',
+  stock_minimum_change: 'Cambiar el mínimo de stock',
   pos_product_create: 'Crear un producto de caja',
   pos_product_rename: 'Cambiar el nombre de un producto de caja',
   document_draft_review: 'Marcar un comprobante como revisado',
@@ -80,6 +84,13 @@ const actionUI: Record<Action, {
     rejectConfirm: '¿Querés rechazar la propuesta sin modificar la reserva?',
     stale: 'No se confirmó la reserva. La propuesta, la reserva o la mesa cambiaron. Prepará otra propuesta.',
     approved: 'Reserva confirmada.', rejected: 'Propuesta rechazada. No se modificó la reserva.',
+  },
+  stock_minimum_change: {
+    path: '/stock-minimum-proposals', previewSuffix: ' de mínimo de stock', proceed: 'Continuar con el mínimo de stock',
+    approve: 'Confirmar nuevo mínimo', confirm: '¿Querés cambiar solo el mínimo de stock de este producto en el local indicado?',
+    rejectConfirm: '¿Querés rechazar la propuesta y mantener el mínimo actual?',
+    stale: 'No se cambió el mínimo. El producto, el mínimo actual o la propuesta cambiaron. Prepará otra propuesta.',
+    approved: 'Mínimo de stock actualizado.', rejected: 'Propuesta rechazada. No se cambió el mínimo.',
   },
   pos_product_create: {
     path: '/pos-create-proposals', previewSuffix: ' de nuevo producto', proceed: 'Continuar con el nuevo producto',
@@ -205,6 +216,13 @@ function validStock(kind: Action, x: StockAdjustment | undefined): x is StockAdj
     ![x.before, x.after, x.delta].every(Number.isSafeInteger) || x.after - x.before !== x.delta) return false
   return kind === wasteAction ? x.quantity > 0 && x.delta === -x.quantity : x.after === x.quantity
 }
+const validMinimum = (value: number | undefined): value is number =>
+  typeof value === 'number' && nonnegative(value) && value <= 1_000_000
+function validStockMinimum(x: StockMinimum | undefined): x is StockMinimum {
+  return !!x && positive(x.product_id) && positive(x.expected_revision) &&
+    typeof x.name === 'string' && !!x.name.trim() && validMinimum(x.current_minimum) &&
+    validMinimum(x.minimum) && x.current_minimum !== x.minimum
+}
 const stockUnits = new Intl.NumberFormat('es-AR')
 const stockDelta = new Intl.NumberFormat('es-AR', { signDisplay: 'exceptZero' })
 function validCatalog(kind: Action, x: CatalogChange | undefined): x is CatalogChange {
@@ -226,10 +244,11 @@ const stateLabel = (active: boolean) => active ? 'Activo' : 'Inactivo'
 const prices = new Intl.NumberFormat('es-AR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
 const amount = (value: number | null) => value === null ? 'No informado' : prices.format(value / 100)
 type Decision = 'approve' | 'reject'
-const props = defineProps<{ entity: number; outlet: number; outletName: string; canRename: boolean; canReviewDocuments?: boolean; canCreateReconciliationDraft?: boolean; canEditDocuments?: boolean; canAdjustStock?: boolean; canChangeCatalog?: boolean; canConfirmReservations?: boolean; canCancelReservations?: boolean; canCreateProducts?: boolean }>()
+const props = defineProps<{ entity: number; outlet: number; outletName: string; canRename: boolean; canReviewDocuments?: boolean; canCreateReconciliationDraft?: boolean; canEditDocuments?: boolean; canAdjustStock?: boolean; canChangeCatalog?: boolean; canConfirmReservations?: boolean; canCancelReservations?: boolean; canCreateProducts?: boolean; canSetStockMinimum?: boolean }>()
 const scopePath = `/entities/${props.entity}/outlets/${props.outlet}`
 const base = (kind: Action) => scopePath + actionUI[kind].path
-const allowed = (kind: Action) => kind === cancelAction ? !!props.canCancelReservations
+const allowed = (kind: Action) => kind === minimumAction ? !!props.canSetStockMinimum
+  : kind === cancelAction ? !!props.canCancelReservations
   : kind === reservationAction ? !!props.canConfirmReservations
   : kind === createAction ? !!props.canCreateProducts
   : isCatalog(kind) ? !!props.canChangeCatalog
@@ -237,13 +256,14 @@ const allowed = (kind: Action) => kind === cancelAction ? !!props.canCancelReser
   : kind === editAction ? !!props.canEditDocuments
   : kind === draftAction ? !!props.canCreateReconciliationDraft
   : kind === reviewAction ? !!props.canReviewDocuments : props.canRename
-const actionChoices = computed(() => ([actionName, reviewAction, draftAction, editAction, wasteAction, countAction, priceAction, availabilityAction, reservationAction, cancelAction, createAction] as const).filter(allowed))
+const actionChoices = computed(() => ([actionName, reviewAction, draftAction, editAction, wasteAction, countAction, priceAction, availabilityAction, reservationAction, cancelAction, createAction, minimumAction] as const).filter(allowed))
 const setSelected = (kind: Action, event: Event) => {
   if (event.target instanceof HTMLInputElement) selected.value = event.target.checked ? kind : null
 }
 const actionText = (action: string) => Object.hasOwn(actionLabels, action)
   ? actionLabels[action as Action] : 'Acción no reconocida'
-const validPreview = (kind: Action, proposal: Proposal) => kind === cancelAction ? validReservationCancellation(proposal.cancellation)
+const validPreview = (kind: Action, proposal: Proposal) => kind === minimumAction ? validStockMinimum(proposal.minimum_change)
+  : kind === cancelAction ? validReservationCancellation(proposal.cancellation)
   : kind === reservationAction ? validReservation(proposal.confirmation)
   : kind === createAction ? validProduct(proposal.product)
   : isCatalog(kind) ? validCatalog(kind, proposal.change)
@@ -280,10 +300,10 @@ const labels: Record<Status, string> = {
 const displayExpiry = (time: number) => new Intl.DateTimeFormat('es-AR', {
   hour: '2-digit', minute: '2-digit', timeZoneName: 'short',
 }).format(time)
-const closedReservationDecisions = reactive(new Set<string>())
+const closedScopedDecisions = reactive(new Set<string>())
 const decisionKey = (kind: Action, id: number) => `${kind}:${id}`
 const cancelAcknowledged = ref(false)
-const canDecide = computed(() => viewed.value?.status === 'pending' && (!isReservation(viewed.value.kind) || !closedReservationDecisions.has(decisionKey(viewed.value.kind, viewed.value.id))) && allowed(viewed.value.kind) && validPreview(viewed.value.kind, viewed.value) &&
+const canDecide = computed(() => viewed.value?.status === 'pending' && (!guardDecisionRetry(viewed.value.kind) || !closedScopedDecisions.has(decisionKey(viewed.value.kind, viewed.value.id))) && allowed(viewed.value.kind) && validPreview(viewed.value.kind, viewed.value) &&
   /^[a-f0-9]{64}$/.test(viewed.value.digest ?? ''))
 
 function hideKey() {
@@ -363,12 +383,12 @@ async function perform(message: string, action: (run: number) => Promise<void>, 
   } catch (cause) {
     if (!active(run)) return
     if (cause instanceof ApiError && (cause.status === 409 || cause.status === 410)) {
-      if (isReservation(kind) && deciding.value) closedReservationDecisions.add(decisionKey(kind, deciding.value.id))
+      if (guardDecisionRetry(kind) && deciding.value) closedScopedDecisions.add(decisionKey(kind, deciding.value.id))
       clearPreview()
       error.value = cause.status === 410 ? 'La propuesta venció o se revocó su clave.' : actionUI[kind].stale
       try { await list(run) } catch { /* Keep the decision error. */ }
     } else {
-      if (kind === cancelAction && deciding.value) clearPreview()
+      if ((kind === cancelAction || kind === minimumAction) && deciding.value) clearPreview()
       error.value = message
     }
   } finally {
@@ -401,16 +421,21 @@ async function decide() {
   if (busy.value || !target || !proposed || !canDecide.value || target.id !== proposed.id ||
     target.digest !== proposed.digest || target.kind !== proposed.kind ||
     (target.kind === cancelAction && target.action === 'approve' && !cancelAcknowledged.value)) return
-  if (target.kind === cancelAction) closedReservationDecisions.add(decisionKey(target.kind, target.id))
+  if (target.kind === cancelAction || target.kind === minimumAction) closedScopedDecisions.add(decisionKey(target.kind, target.id))
   await perform(target.kind === cancelAction
     ? 'No pude verificar el resultado. Revisá el estado en Reservas antes de hacer otro cambio.'
-    : 'No pude resolver la propuesta.', async run => {
+    : target.kind === minimumAction
+      ? 'No pude verificar el resultado. Revisá el mínimo de stock antes de preparar otra propuesta.'
+      : 'No pude resolver la propuesta.', async run => {
     const result = await request<Proposal>(`${base(target.kind)}/${target.id}/decision`, {
       method: 'POST', cache: 'no-store',
       body: JSON.stringify({ decision: target.action, digest: target.digest, confirm: true }),
     })
     if (!active(run)) return
-    const validApproval = isReservation(target.kind)
+    const validApproval = target.kind === minimumAction
+      ? result.product_id === proposed.minimum_change?.product_id && validMinimum(result.minimum) &&
+        result.minimum === proposed.minimum_change?.minimum && result.product_revision === undefined
+      : isReservation(target.kind)
       ? reservationReference(result.reservation_reference) &&
         result.reservation_reference === (target.kind === cancelAction ? proposed.cancellation : proposed.confirmation)?.reservation_reference
       : target.kind === createAction ? positive(result.product_id ?? 0) && result.product_revision === 1
@@ -425,9 +450,11 @@ async function decide() {
       : result.product_id === proposed.rename?.product_id && result.product_revision === (proposed.rename?.expected_revision ?? -1) + 1
     if (result.id !== target.id || result.status !== (target.action === 'approve' ? 'approved' : 'rejected') ||
       (target.action === 'approve' && !validApproval) ||
-      (isReservation(target.kind) && target.action === 'reject' && result.reservation_reference !== undefined)) {
-      if (isReservation(target.kind)) {
-        closedReservationDecisions.add(decisionKey(target.kind, target.id))
+      (isReservation(target.kind) && target.action === 'reject' && result.reservation_reference !== undefined) ||
+      (target.kind === minimumAction && target.action === 'reject' &&
+        (result.product_id !== undefined || result.minimum !== undefined || result.product_revision !== undefined))) {
+      if (guardDecisionRetry(target.kind)) {
+        closedScopedDecisions.add(decisionKey(target.kind, target.id))
         clearPreview()
       }
       throw new Error('unexpected decision receipt')
@@ -610,6 +637,13 @@ onBeforeUnmount(() => {
           </template>
           <p>No se modifican el stock ni las ventas ya registradas.</p>
         </div>
+        <div v-else-if="viewed.kind === minimumAction && viewed.minimum_change">
+          <p>Local: <strong>{{ outletName }}</strong></p>
+          <p class="gomar-feature-text">Producto: <strong>{{ viewed.minimum_change.name }}</strong> ({{ viewed.minimum_change.product_id }}) · Versión {{ viewed.minimum_change.expected_revision }}</p>
+          <p>Mínimo actual: <strong>{{ stockUnits.format(viewed.minimum_change.current_minimum) }} unidades</strong></p>
+          <p>Mínimo propuesto: <strong>{{ stockUnits.format(viewed.minimum_change.minimum) }} unidades</strong></p>
+          <p>Solo cambia el mínimo. No se modifica el saldo, el seguimiento de stock ni la versión del catálogo.</p>
+        </div>
         <div v-else-if="isStock(viewed.kind) && viewed.adjustment">
           <p>Local: <strong>{{ outletName }}</strong></p>
           <p class="gomar-feature-text">Producto: <strong>{{ viewed.adjustment.product_name }}</strong> ({{ viewed.adjustment.product_id }}) · Versión {{ viewed.adjustment.revision }}</p>
@@ -683,7 +717,8 @@ onBeforeUnmount(() => {
       </template>
       <template v-else>
         <p>{{ labels[viewed.status] }}</p>
-        <p v-if="viewed.status === 'approved' && viewed.product_id">Producto {{ viewed.product_id }} · Versión {{ viewed.product_revision }}</p>
+        <p v-if="viewed.kind === minimumAction && viewed.status === 'approved' && viewed.product_id && validMinimum(viewed.minimum)">Producto {{ viewed.product_id }} · Mínimo: {{ stockUnits.format(viewed.minimum) }} unidades</p>
+        <p v-if="viewed.kind !== minimumAction && viewed.status === 'approved' && viewed.product_id">Producto {{ viewed.product_id }} · Versión {{ viewed.product_revision }}</p>
         <p v-if="viewed.status === 'approved' && viewed.document_id">Comprobante {{ viewed.document_id }} · Versión {{ viewed.document_revision }}</p>
         <p v-if="viewed.status === 'approved' && viewed.run_id">Conciliación {{ viewed.run_id }}</p>
         <p v-if="viewed.status === 'approved' && viewed.movement_id">Movimiento {{ viewed.movement_id }}</p>

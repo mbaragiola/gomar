@@ -70,6 +70,11 @@ notes. ARS and USD are separate. Each `total_minor` is a signed integer
 string in minor units. There is no date filter, and these are not sales,
 payables, or payments.
 
+An optional stock minimum proposal changes only the warning threshold for
+one actively tracked item at one branch. Zero is a valid threshold. The
+issuing browser login reviews the prior and proposed minimum. This does not
+change tracking, inventory quantity, product availability, or sales.
+
 `gomar_reservation_availability` asks for an exact branch, Buenos Aires date
 (today through 60 days out) and 1–12 people. It returns the same candidate
 times as the guest page, only while public reservations and the venue are
