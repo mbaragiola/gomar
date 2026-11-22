@@ -87,6 +87,11 @@ func TestLiveStdioScopedTools(t *testing.T) {
 				t.Error("unexpected stock detail cursor and dates")
 			}
 			_, _ = io.WriteString(w, `{"timezone":"America/Argentina/Buenos_Aires","start_date":"2026-11-01","end_date_exclusive":"2026-11-02","movements":[{"kind":"merma","delta":-5,"recorded_at":"2026-11-01T00:00:01-03:00","actor":"`+secret+`"}]}`)
+		case "/api/v1/mcp/entities/20/outlets/10/reservation-availability":
+			if r.URL.RawQuery != "date=2026-11-01&party_size=6" {
+				t.Error("unexpected reservation date or party size")
+			}
+			_, _ = io.WriteString(w, `{"date":"2026-11-01","timezone":"America/Argentina/Buenos_Aires","party_size":6,"slots":[{"start_at":"2026-11-01T21:00:00-03:00","table_label":"`+secret+`"}]}`)
 		case "/api/v1/mcp/entities/20/outlets/10/reservation-requests":
 			if r.URL.RawQuery != "after_id=00000000000000000000000000000003&date=2026-11-01" {
 				t.Error("unexpected reservation cursor")
@@ -125,7 +130,7 @@ func TestLiveStdioScopedTools(t *testing.T) {
 	}
 	defer session.Close()
 	metadata, err := session.ListTools(ctx, &mcp.ListToolsParams{})
-	if err != nil || len(metadata.Tools) != 28 {
+	if err != nil || len(metadata.Tools) != 29 {
 		t.Fatal(metadata, err)
 	}
 	for _, tool := range metadata.Tools {
@@ -165,6 +170,8 @@ func TestLiveStdioScopedTools(t *testing.T) {
 		{"gomar_list_stock_movements", map[string]any{"entity_id": 20, "outlet_id": 10, "product_id": 3, "days": 1, "start_date": "2026-11-01", "after_id": 2}, `"delta":-5`, false},
 		{"gomar_read_recorded_payment", map[string]any{"entity_id": 20, "outlet_id": 11, "payment_id": 12}, "permisos", true},
 		{"gomar_list_reservation_requests", map[string]any{"entity_id": 20, "outlet_id": 10, "date": "2026-11-01", "after_id": "00000000000000000000000000000003"}, `"party_size":2`, false},
+		{"gomar_reservation_availability", map[string]any{"entity_id": 20, "outlet_id": 10, "date": "2026-11-01", "party_size": 6}, `"slots":[{"start_at":"2026-11-01T21:00:00-03:00"}]`, false},
+		{"gomar_reservation_availability", map[string]any{"entity_id": 20, "outlet_id": 10, "date": "2026-11-01", "party_size": 0}, "1 a 12", true},
 		{"gomar_read_reservation_request", map[string]any{"entity_id": 20, "outlet_id": 10, "date": "2026-11-01", "reservation_id": "00000000000000000000000000000007"}, `"status":"confirmed"`, false},
 		{"gomar_read_reservation_request", map[string]any{"entity_id": 20, "outlet_id": 11, "date": "2026-11-01", "reservation_id": "00000000000000000000000000000007"}, "permisos", true},
 		{"gomar_read_reservation_request", map[string]any{"entity_id": 20, "outlet_id": 10, "date": "2026-11-01", "reservation_id": "x/path"}, "reservation_id", true},
@@ -184,7 +191,7 @@ func TestLiveStdioScopedTools(t *testing.T) {
 			t.Fatalf("unexpected result for %s: %s", test.name, wire)
 		}
 	}
-	if requests.Load() != 25 {
+	if requests.Load() != 26 {
 		t.Fatalf("wrong number of requests: %d", requests.Load())
 	}
 	if err := session.Close(); err != nil {
