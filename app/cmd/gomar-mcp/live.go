@@ -11,7 +11,7 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
-const liveUsage = "uso: gomar-mcp --origin=<origen de Gomar> --token-file=<ruta absoluta privada> [--wiki-proposal-token-file=<otra ruta absoluta privada>]"
+const liveUsage = "uso: gomar-mcp --origin=<origen de Gomar> --token-file=<ruta absoluta privada> [--wiki-proposal-token-file=<ruta privada>] [--document-proposal-token-file=<otra ruta privada>]"
 
 type noArgs struct{}
 type entityArgs struct {
@@ -62,6 +62,7 @@ func runLive(ctx context.Context, args []string, in io.Reader, out io.Writer) er
 	origin := fs.String("origin", "", "")
 	tokenFile := fs.String("token-file", "", "")
 	proposalFile := fs.String("wiki-proposal-token-file", "", "")
+	documentProposalFile := fs.String("document-proposal-token-file", "", "")
 	if fs.Parse(args) != nil || fs.NArg() != 0 || *origin == "" || !filepath.IsAbs(*tokenFile) {
 		return errors.New(liveUsage)
 	}
@@ -75,22 +76,35 @@ func runLive(ctx context.Context, args []string, in io.Reader, out io.Writer) er
 	}
 	server := liveServer(client)
 	maxLine := 16 * 1024
-	if *proposalFile != "" {
-		if !filepath.IsAbs(*proposalFile) {
+	usedTokens := map[string]bool{token: true}
+	for _, cfg := range []struct {
+		file string
+		add  func(*mcp.Server, *mcpclient.ProposalClient)
+	}{
+		{*proposalFile, addWikiProposalTool},
+		{*documentProposalFile, addDocumentProposalTool},
+	} {
+		if cfg.file == "" {
+			continue
+		}
+		if !filepath.IsAbs(cfg.file) {
 			return errors.New(liveUsage)
 		}
-		proposalToken, err := mcpclient.ReadToken(*proposalFile)
+		proposalToken, err := mcpclient.ReadToken(cfg.file)
 		if err != nil {
 			return err
 		}
-		if proposalToken == token {
-			return errors.New("la consulta y las propuestas requieren claves separadas")
+		if usedTokens[proposalToken] {
+			return errors.New("cada tipo de consulta o propuesta requiere su propia clave")
 		}
 		proposals, err := mcpclient.NewProposalClient(*origin, proposalToken)
 		if err != nil {
 			return err
 		}
-		addWikiProposalTool(server, proposals)
+		usedTokens[proposalToken] = true
+		cfg.add(server, proposals)
+	}
+	if *proposalFile != "" {
 		maxLine = 128 * 1024
 	}
 	return server.Run(ctx, &mcp.IOTransport{Reader: io.NopCloser(in), Writer: quietWriter{out}, MaxLineLength: maxLine})
