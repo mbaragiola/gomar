@@ -55,3 +55,26 @@ directory and database on subsequent runs. The default address is
 Do not treat a loopback setup as a deployment guide. Keep PostgreSQL backups
 and the private file directory together according to your recovery plan.
 See the [application dependency notices](THIRD_PARTY_NOTICES.md).
+
+## Staff MCP connection
+
+Use the real `bin/gomar-mcp` built with the app, not the synthetic preview at
+the repository root. Start the server with `-enable-mcp`; enable POS as well
+to read recorded sales. Browser sign-in and the normal CSRF check are required
+to issue a 15-minute, read-only credential for one entity and optionally one
+outlet (`POST /api/v1/auth/mcp-token`). Revoke it with `DELETE` on that URL plus
+the returned numeric ID. A revoked grant or changed password also invalidates
+the associated access. Keep the token in an owner-only mode-0600 file and do
+not paste it into a chat, a command-line argument, or a shared config.
+
+Configure Codex or Claude Code to run `bin/gomar-mcp` over stdio with arguments
+`--origin`, the HTTPS app origin (or an exact numeric loopback test origin),
+`--token-file`, and the private file's absolute path. Discovery advertises
+current user, entity, outlet, and sales-summary reads. The summary uses the
+Buenos Aires calendar month, accepted POS receipts, integer ARS cents and
+currently granted outlets. It does not combine invoices or marketplace orders.
+
+This slice does not expose business writes through MCP. Document workflows,
+supplier and accounting changes, reconciliation, checkout, stock and staff
+administration need their own scoped tools and approval flows. The web app
+is still the supported interface for those actions.

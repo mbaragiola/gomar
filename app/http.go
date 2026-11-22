@@ -17,7 +17,8 @@ import (
 )
 
 type app struct {
-	db *sql.DB
+	db       *sql.DB
+	mcpClock func() time.Time
 
 	host                string
 	payablesClock       func() time.Time
@@ -25,6 +26,7 @@ type app struct {
 	privateRoot         *os.Root
 	publicReservations  bool
 	enablePOS           bool
+	enableMCP           bool
 	enableDelivery      bool
 	enableStock         bool
 }
@@ -193,6 +195,7 @@ func (a *app) routes() http.Handler {
 	a.registerPOS(addAPI)
 	a.registerDelivery(addAPI)
 	a.registerStock(addAPI, a.enablePOS && a.enableStock)
+	a.registerMCP(addAPI)
 	a.registerReservations(addAPI, a.publicReservations)
 	a.registerReservationMenus(addAPI, a.publicReservations)
 	unavailableOperation := func(_ *http.Request, _ *sql.Tx, _ entityMembership, _ []byte) (int, any, error) {

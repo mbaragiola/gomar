@@ -25,6 +25,7 @@ func main() {
 	admin := flag.String("create-admin", "", "create a local platform administrator (password on stdin)")
 	enableDelivery := flag.Bool("enable-delivery", false, "enable the prototype delivery inbox for permitted staff")
 	enablePOS := flag.Bool("enable-pos", false, "enable the prototype POS for permitted staff")
+	enableMCP := flag.Bool("enable-mcp", false, "allow scoped staff read-only MCP access")
 	enableStock := flag.Bool("enable-stock", false, "enable optional finished-item stock for the prototype POS")
 	publicReservations := flag.Bool("public-reservations", false, "enable the guest reservation routes for explicitly enabled venues")
 	flag.Parse()
@@ -42,7 +43,7 @@ func main() {
 			modes++
 		}
 	}
-	if *state == "" || flag.NArg() != 0 || modes > 1 || modes != 0 && (explicitTCP || unixMode || *publicReservations || *enablePOS || *enableDelivery) {
+	if *state == "" || flag.NArg() != 0 || modes > 1 || modes != 0 && (explicitTCP || unixMode || *publicReservations || *enablePOS || *enableDelivery || *enableMCP) {
 		log.Fatal("provide -state; choose at most one of -init, -check and -create-admin without server flags")
 	}
 	var addr netip.AddrPort
@@ -123,14 +124,14 @@ func main() {
 		server.BaseContext = ingress.baseContext
 		server.ConnContext = ingress.connContext
 		server.Handler = ingress.wrapHTTPS(*unixAuthority,
-			(&app{db: db, host: *unixAuthority, privateRoot: privateRoot, publicReservations: *publicReservations, enablePOS: *enablePOS, enableDelivery: *enableDelivery, enableStock: *enableStock}).routes())
+			(&app{db: db, host: *unixAuthority, privateRoot: privateRoot, publicReservations: *publicReservations, enablePOS: *enablePOS, enableDelivery: *enableDelivery, enableStock: *enableStock, enableMCP: *enableMCP}).routes())
 		fmt.Printf("unix://%s\n", *unixPath)
 	} else {
 		listener, err = net.Listen("tcp", addr.String())
 		if err != nil {
 			log.Fatal(err)
 		}
-		server.Handler = (&app{db: db, host: listener.Addr().String(), privateRoot: privateRoot, publicReservations: *publicReservations, enablePOS: *enablePOS, enableDelivery: *enableDelivery, enableStock: *enableStock}).routes()
+		server.Handler = (&app{db: db, host: listener.Addr().String(), privateRoot: privateRoot, publicReservations: *publicReservations, enablePOS: *enablePOS, enableDelivery: *enableDelivery, enableStock: *enableStock, enableMCP: *enableMCP}).routes()
 		fmt.Printf("http://%s\n", listener.Addr())
 	}
 	log.Fatal(server.Serve(listener))

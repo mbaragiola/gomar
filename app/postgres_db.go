@@ -26,6 +26,7 @@ var postgresMigrationNames = []string{
 	"002_hosted_operations.sql",
 	"003_full_application.sql",
 	"004_full_invariants.sql",
+	"005_mcp_read_access.sql",
 }
 
 func postgresConfig(dsn string) (*pgx.ConnConfig, error) {
