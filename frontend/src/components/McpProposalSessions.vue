@@ -3,7 +3,7 @@ import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { ApiError, request } from '../api'
 
 type Status = 'pending' | 'approved' | 'rejected' | 'expired' | 'revoked'
-type Proposal = { id: number; status: Status; expires_at: string; product_id?: number; product_revision?: number; rename?: Rename; document_id?: number; document_revision?: number; review?: Review; run_id?: number; draft?: Draft; edit?: DocumentEdit; movement_id?: number; adjustment?: StockAdjustment; digest?: string }
+type Proposal = { id: number; status: Status; expires_at: string; product_id?: number; product_revision?: number; rename?: Rename; document_id?: number; document_revision?: number; review?: Review; run_id?: number; draft?: Draft; edit?: DocumentEdit; movement_id?: number; adjustment?: StockAdjustment; change?: CatalogChange; digest?: string }
 type Rename = {
   product_id: number; expected_revision: number; name: string; current_name: string
   unchanged_price_minor: number; unchanged_active: boolean
@@ -20,7 +20,11 @@ type StockAdjustment = {
   product_id: number; product_name: string; revision: number; stock_minimum: number
   quantity: number; latest_movement: number; before: number; after: number; delta: number
 }
-type Action = 'pos_product_rename' | 'document_draft_review' | 'reconciliation_draft_create' | 'document_draft_edit' | 'stock_waste_record' | 'stock_physical_count'
+type CatalogChange = {
+  product_id: number; expected_revision: number; name: string
+  current_price_minor: number; price_minor: number; current_active: boolean; active: boolean
+}
+type Action = 'pos_product_rename' | 'document_draft_review' | 'reconciliation_draft_create' | 'document_draft_edit' | 'stock_waste_record' | 'stock_physical_count' | 'pos_product_price_change' | 'pos_product_availability_change'
 type ScopedProposal = Proposal & { kind: Action }
 type Session = { id: number; expires_at: string; actions: string[] }
 const actionName = 'pos_product_rename'
@@ -29,6 +33,9 @@ const draftAction = 'reconciliation_draft_create'
 const editAction = 'document_draft_edit'
 const wasteAction = 'stock_waste_record'
 const countAction = 'stock_physical_count'
+const priceAction = 'pos_product_price_change'
+const availabilityAction = 'pos_product_availability_change'
+const isCatalog = (action: Action) => action === priceAction || action === availabilityAction
 const isStock = (action: Action) => action === wasteAction || action === countAction
 const actionLabels: Record<Action, string> = {
   pos_product_rename: 'Cambiar el nombre de un producto de caja',
@@ -37,6 +44,8 @@ const actionLabels: Record<Action, string> = {
   document_draft_edit: 'Editar fechas e importes de un borrador',
   stock_waste_record: 'Registrar una merma de stock',
   stock_physical_count: 'Registrar un conteo físico de stock',
+  pos_product_price_change: 'Cambiar el precio de un producto de caja',
+  pos_product_availability_change: 'Cambiar la disponibilidad de un producto de caja',
 }
 const actionUI: Record<Action, {
   path: string; previewSuffix: string; proceed: string; approve: string; confirm: string; rejectConfirm: string
@@ -55,6 +64,20 @@ const actionUI: Record<Action, {
     rejectConfirm: '¿Querés rechazar sin modificar el comprobante?',
     stale: 'No se marcó como revisado. La propuesta o la versión del comprobante cambiaron.',
     approved: 'Comprobante marcado como revisado.', rejected: 'Propuesta rechazada. No se modificó el comprobante.',
+  },
+  pos_product_price_change: {
+    path: '/pos-price-proposals', previewSuffix: ' de precio', proceed: 'Continuar con el precio',
+    approve: 'Confirmar nuevo precio', confirm: '¿Querés guardar únicamente este precio para el local indicado?',
+    rejectConfirm: '¿Querés rechazar sin cambiar el precio?',
+    stale: 'No se cambió el precio. El producto o la propuesta cambiaron. Prepará otra propuesta.',
+    approved: 'Precio actualizado.', rejected: 'Propuesta rechazada. El producto no cambió.',
+  },
+  pos_product_availability_change: {
+    path: '/pos-availability-proposals', previewSuffix: ' de disponibilidad', proceed: 'Continuar con la disponibilidad',
+    approve: 'Confirmar disponibilidad', confirm: '¿Querés cambiar únicamente la disponibilidad para el local indicado?',
+    rejectConfirm: '¿Querés rechazar sin cambiar la disponibilidad?',
+    stale: 'No se cambió la disponibilidad. El producto o la propuesta cambiaron. Prepará otra propuesta.',
+    approved: 'Disponibilidad actualizada.', rejected: 'Propuesta rechazada. El producto no cambió.',
   },
   stock_waste_record: {
     path: '/stock-waste-proposals', previewSuffix: ' de merma', proceed: 'Continuar con la merma',
@@ -120,23 +143,35 @@ function validStock(kind: Action, x: StockAdjustment | undefined): x is StockAdj
 }
 const stockUnits = new Intl.NumberFormat('es-AR')
 const stockDelta = new Intl.NumberFormat('es-AR', { signDisplay: 'exceptZero' })
+function validCatalog(kind: Action, x: CatalogChange | undefined): x is CatalogChange {
+  if (!x || !positive(x.product_id) || !positive(x.expected_revision) || typeof x.name !== 'string' ||
+    !positive(x.current_price_minor) || x.current_price_minor > 100_000_000 ||
+    !positive(x.price_minor) || x.price_minor > 100_000_000 ||
+    typeof x.current_active !== 'boolean' || typeof x.active !== 'boolean') return false
+  return kind === priceAction
+    ? x.current_price_minor !== x.price_minor && x.current_active === x.active
+    : x.current_price_minor === x.price_minor && x.current_active !== x.active
+}
+const stateLabel = (active: boolean) => active ? 'Activo' : 'Inactivo'
 const prices = new Intl.NumberFormat('es-AR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
 const amount = (value: number | null) => value === null ? 'No informado' : prices.format(value / 100)
 type Decision = 'approve' | 'reject'
-const props = defineProps<{ entity: number; outlet: number; outletName: string; canRename: boolean; canReviewDocuments?: boolean; canCreateReconciliationDraft?: boolean; canEditDocuments?: boolean; canAdjustStock?: boolean }>()
+const props = defineProps<{ entity: number; outlet: number; outletName: string; canRename: boolean; canReviewDocuments?: boolean; canCreateReconciliationDraft?: boolean; canEditDocuments?: boolean; canAdjustStock?: boolean; canChangeCatalog?: boolean }>()
 const scopePath = `/entities/${props.entity}/outlets/${props.outlet}`
 const base = (kind: Action) => scopePath + actionUI[kind].path
-const allowed = (kind: Action) => isStock(kind) ? !!props.canAdjustStock
+const allowed = (kind: Action) => isCatalog(kind) ? !!props.canChangeCatalog
+  : isStock(kind) ? !!props.canAdjustStock
   : kind === editAction ? !!props.canEditDocuments
   : kind === draftAction ? !!props.canCreateReconciliationDraft
   : kind === reviewAction ? !!props.canReviewDocuments : props.canRename
-const actionChoices = computed(() => ([actionName, reviewAction, draftAction, editAction, wasteAction, countAction] as const).filter(allowed))
+const actionChoices = computed(() => ([actionName, reviewAction, draftAction, editAction, wasteAction, countAction, priceAction, availabilityAction] as const).filter(allowed))
 const setSelected = (kind: Action, event: Event) => {
   if (event.target instanceof HTMLInputElement) selected.value = event.target.checked ? kind : null
 }
 const actionText = (action: string) => Object.hasOwn(actionLabels, action)
   ? actionLabels[action as Action] : 'Acción no reconocida'
-const validPreview = (kind: Action, proposal: Proposal) => isStock(kind) ? validStock(kind, proposal.adjustment)
+const validPreview = (kind: Action, proposal: Proposal) => isCatalog(kind) ? validCatalog(kind, proposal.change)
+  : isStock(kind) ? validStock(kind, proposal.adjustment)
   : kind === editAction ? isDocumentEdit(proposal.edit)
   : kind === draftAction
   ? typeof proposal.draft?.match_reference === 'boolean'
@@ -289,7 +324,9 @@ async function decide() {
       body: JSON.stringify({ decision: target.action, digest: target.digest, confirm: true }),
     })
     if (!active(run)) return
-    const validApproval = isStock(target.kind) ? positive(result.movement_id ?? 0)
+    const validApproval = isCatalog(target.kind)
+      ? result.product_id === proposed.change?.product_id && result.product_revision === (proposed.change?.expected_revision ?? -1) + 1
+      : isStock(target.kind) ? positive(result.movement_id ?? 0)
       : target.kind === editAction
       ? result.document_id === proposed.edit?.document_id && result.document_revision === (proposed.edit?.expected_revision ?? -1) + 1
       : target.kind === draftAction ? positive(result.run_id ?? 0)
@@ -438,7 +475,22 @@ onBeforeUnmount(() => {
     <section v-if="viewed && allowed(viewed.kind)" class="card subsection gomar-feature" aria-label="Vista previa de la propuesta">
       <h3>Vista previa</h3>
       <template v-if="viewed.status === 'pending'">
-        <div v-if="isStock(viewed.kind) && viewed.adjustment">
+        <div v-if="isCatalog(viewed.kind) && viewed.change">
+          <p>Local: <strong>{{ outletName }}</strong> · Producto {{ viewed.change.product_id }} · Versión {{ viewed.change.expected_revision }}</p>
+          <p class="gomar-feature-text">Nombre sin cambios: <strong>{{ viewed.change.name }}</strong></p>
+          <template v-if="viewed.kind === priceAction">
+            <p>Precio actual: <strong>ARS {{ amount(viewed.change.current_price_minor) }}</strong></p>
+            <p>Precio propuesto: <strong>ARS {{ amount(viewed.change.price_minor) }}</strong></p>
+            <p>Disponibilidad sin cambios: {{ stateLabel(viewed.change.active) }}.</p>
+          </template>
+          <template v-else>
+            <p>Disponibilidad actual: <strong>{{ stateLabel(viewed.change.current_active) }}</strong></p>
+            <p>Disponibilidad propuesta: <strong>{{ stateLabel(viewed.change.active) }}</strong></p>
+            <p>Precio sin cambios: ARS {{ amount(viewed.change.price_minor) }}.</p>
+          </template>
+          <p>No se modifican el stock ni las ventas ya registradas.</p>
+        </div>
+        <div v-else-if="isStock(viewed.kind) && viewed.adjustment">
           <p>Local: <strong>{{ outletName }}</strong></p>
           <p class="gomar-feature-text">Producto: <strong>{{ viewed.adjustment.product_name }}</strong> ({{ viewed.adjustment.product_id }}) · Versión {{ viewed.adjustment.revision }}</p>
           <p>{{ viewed.kind === wasteAction ? 'Unidades de merma' : 'Unidades contadas' }}: <strong>{{ stockUnits.format(viewed.adjustment.quantity) }}</strong></p>
