@@ -83,11 +83,7 @@ func (a *app) editDocument(w http.ResponseWriter, r *http.Request, u user) error
 	if err != nil {
 		return err
 	}
-	if err := requireDraftChange(changed); err != nil {
-		return err
-	}
-	if _, err := tx.Exec(`INSERT INTO document_audit(document_id,actor_id,action,reason,occurred_at)
-		VALUES ($1,$2,'update',$3,$4)`, documentID, member.userID, reason, at); err != nil {
+	if err := recordNativeDraftUpdate(tx, changed, documentID, member.userID, reason, at); err != nil {
 		return err
 	}
 	document, err := readDocumentView(tx, member, documentID)
@@ -99,6 +95,13 @@ func (a *app) editDocument(w http.ResponseWriter, r *http.Request, u user) error
 	}
 	jsonResponse(w, http.StatusOK, document)
 	return nil
+}
+
+func recordNativeDraftUpdate(tx *sql.Tx, changed sql.Result, documentID, actorID int64, reason, at string) error {
+	if err := requireDraftChange(changed); err != nil {
+		return err
+	}
+	return insertDocumentEvent(tx, documentID, actorID, "update", reason, at)
 }
 
 func scopedMutableDocument(tx *sql.Tx, userID, entityID, documentID int64, postedMessage string) (entityMembership, documentListItem, error) {

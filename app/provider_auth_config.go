@@ -17,13 +17,12 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-const providerAuthMigration = "013_provider_auth.sql"
+const providerAuthMigration = "014_provider_auth.sql"
 const providerAppleMaxSecretAge = 15777000 * time.Second
 
 var errProviderNeedsSchema = errors.New("provider login requires its registered and applied PostgreSQL migration")
 var errProviderNeedsHTTPS = errors.New("provider login requires protected HTTPS Unix ingress on the exact configured public origin")
 var errProviderSecretFile = errors.New("provider secret must be in a private service-owned regular file")
-var errAppleSecretFormat = errors.New("Apple client secret must be a current ES256 JWT for this Services ID")
 var appleIdentifier = regexp.MustCompile("^[A-Z0-9]{10}$")
 
 type providerRuntimeSettings struct {
@@ -33,7 +32,6 @@ type providerRuntimeSettings struct {
 	migrations       []string
 	env              func(string) string
 	readSecret       func(string) (string, error)
-	now              time.Time
 	network          http.RoundTripper
 }
 
@@ -49,16 +47,16 @@ func providerRuntimeAuth(cfg providerRuntimeSettings) (*hostedProviderAuth, erro
 	if !slices.Contains(cfg.migrations, providerAuthMigration) {
 		return nil, errProviderNeedsSchema
 	}
-	settings, err := readProviderRuntimeSettings(cfg.env, cfg.readSecret, cfg.now)
+	settings, err := readProviderRuntimeSettings(cfg.env, cfg.readSecret)
 	if err != nil {
 		return nil, err
 	}
 	return newHostedProviderAuth("https://"+cfg.authority, settings, cfg.network)
 }
 
-func readProviderRuntimeSettings(env func(string) string, readSecret func(string) (string, error), now time.Time) (map[string]providerClientSettings, error) {
+func readProviderRuntimeSettings(env func(string) string, readSecret func(string) (string, error)) (map[string]providerClientSettings, error) {
 	selected := strings.Split(env("GOMAR_AUTH_PROVIDERS"), ",")
-	if len(selected) > 4 {
+	if len(selected) > 3 || slices.Contains(selected, "apple") {
 		return nil, errProviderConfig
 	}
 	result := make(map[string]providerClientSettings, len(selected))
@@ -67,8 +65,6 @@ func readProviderRuntimeSettings(env func(string) string, readSecret func(string
 		switch flow {
 		case "google":
 			prefix = "GOMAR_AUTH_GOOGLE"
-		case "apple":
-			prefix = "GOMAR_AUTH_APPLE"
 		case "microsoft":
 			prefix = "GOMAR_AUTH_MICROSOFT"
 		case "microsoft-work":
@@ -96,9 +92,6 @@ func readProviderRuntimeSettings(env func(string) string, readSecret func(string
 		v.ClientSecret = secret
 		if !validProviderSetting(v.ClientSecret, 4096) {
 			return nil, errProviderSecretFile
-		}
-		if flow == "apple" && !validAppleClientSecretShape(secret, v.ClientID, now) {
-			return nil, errAppleSecretFormat
 		}
 		result[flow] = v
 	}

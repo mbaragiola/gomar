@@ -5,7 +5,7 @@ import ProviderSignIn from '../src/components/ProviderSignIn.vue'
 
 const json = (value: unknown, status = 200) => new Response(JSON.stringify(value), { status })
 const config = (providers: unknown[], local_password_enabled: unknown = true, admin_recovery_enabled: unknown = false) => json({ providers, local_password_enabled, admin_recovery_enabled })
-const known = [{ id: 'google', label: 'Google' }, { id: 'apple' }, { id: 'microsoft' }, { id: 'microsoft-work' }]
+const known = [{ id: 'google', label: 'Google' }, { id: 'microsoft' }, { id: 'microsoft-work' }]
 const base = '/api/v1/auth/providers'
 
 afterEach(() => vi.unstubAllGlobals())
@@ -18,10 +18,10 @@ describe('Ingreso con proveedores', () => {
     const panel = mount(ProviderSignIn, { props: { disabled: false } })
     expect(panel.get('[role=status]').text()).toContain('Consultando')
     expect(panel.findAll('button')).toHaveLength(0)
-    complete(config([...known, { id: 'google' }, { id: 'custom', label: '<b>No</b>' }]))
+    complete(config([...known, { id: 'google' }, { id: 'apple' }, { id: 'custom', label: '<b>No</b>' }]))
     await flushPromises()
     expect(panel.findAll('button').map(b => b.text())).toEqual([
-      'Continuar con Google', 'Continuar con Apple', 'Continuar con Microsoft',
+      'Continuar con Google', 'Continuar con Microsoft',
       'Continuar con Microsoft (trabajo o estudio)',
     ])
     expect(fetch).toHaveBeenCalledWith(base, expect.objectContaining({ cache: 'no-store' }))

@@ -24,7 +24,7 @@ func TestSignInModeRequiresReadyRecoveryAndAllProviders(t *testing.T) {
 	if err := validateSignInMode(false, true, true, ready, nil); err != errProviderOnlyUnsafe {
 		t.Fatal(err)
 	}
-	auth := &hostedProviderAuth{providers: map[string]*providerOIDC{"google": {}, "apple": {}, "microsoft-work": {}}}
+	auth := &hostedProviderAuth{providers: map[string]*providerOIDC{"google": {}, "microsoft-work": {}}}
 	if err := validateSignInMode(true, true, true, ready, auth); err != errProviderOnlyUnsafe {
 		t.Fatal(err)
 	}

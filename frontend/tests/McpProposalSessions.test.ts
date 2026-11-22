@@ -310,3 +310,93 @@ describe('Borradores vacíos de conciliación', () => {
     panel.unmount()
   })
 })
+
+describe('Editar fechas e importes de un borrador', () => {
+  const editPath = base + '/document-edit-proposals'
+  const edit = {
+    document_id: 14, expected_revision: 0, reason: '<b>Motivo de prueba</b>\nSin HTML.', currency: 'USD',
+    before: { issue_date: '2026-11-01', due_date: null, net_minor: null, tax_minor: null, total_minor: 120 },
+    after: { issue_date: '2026-11-02', due_date: '2026-11-23', net_minor: 0, tax_minor: 190, total_minor: 190 },
+  }
+  async function openEdit(fetch: unknown) {
+    vi.stubGlobal('fetch', fetch)
+    const panel = mount(McpProposalSessions, { props: { entity: 2, outlet: 7, outletName: 'Centro de prueba', canRename: false, canEditDocuments: true } })
+    await button(panel, 'Sesiones de propuestas').trigger('click')
+    await flushPromises()
+    return panel
+  }
+
+  it('starts unchecked and issues only the edit action with its exact flag', async () => {
+    const action = 'document_draft_edit'
+    const fetch = vi.fn()
+      .mockResolvedValueOnce(result({ sessions: [] }))
+      .mockResolvedValueOnce(result({ proposals: [] }))
+      .mockResolvedValueOnce(result({ ...session(), actions: [action], token }, 201))
+    const panel = await openEdit(fetch)
+    const checkbox = panel.get<HTMLInputElement>('input[type=checkbox]')
+    expect(checkbox.element.checked).toBe(false)
+    expect(button(panel, 'Crear sesión de propuestas').attributes()).toHaveProperty('disabled')
+    await checkbox.setValue(true)
+    expect(panel.text()).toContain('--proposal-session-action=document_draft_edit')
+    await button(panel, 'Crear sesión de propuestas').trigger('click')
+    await flushPromises()
+    expect(fetch).toHaveBeenLastCalledWith(keyPath, expect.objectContaining({
+      method: 'POST', body: JSON.stringify({ entity_id: 2, outlet_id: 7, actions: [action] }),
+    }))
+    expect(panel.text()).toContain('--proposal-session-action=document_draft_edit')
+    expect(panel.text()).not.toContain(token)
+    panel.unmount()
+  })
+
+  it.each(['approve', 'reject', 'stale'] as const)('shows exact nulls, zero, and both dates before %s', async outcome => {
+    const approved = outcome === 'approve'
+    const rejected = outcome === 'reject'
+    const fetch = vi.fn()
+      .mockResolvedValueOnce(result({ sessions: [] }))
+      .mockResolvedValueOnce(result({ proposals: [pending()] }))
+      .mockResolvedValueOnce(result({ ...pending(), edit, digest }))
+      .mockResolvedValueOnce(outcome === 'stale'
+        ? result({ detail: token }, 409)
+        : result({ ...pending(), status: approved ? 'approved' : 'rejected', ...(approved ? { document_id: 14, document_revision: 1 } : {}) }))
+      .mockResolvedValueOnce(result({ sessions: [] }))
+      .mockResolvedValueOnce(result({ proposals: [pending()] }))
+    const panel = await openEdit(fetch)
+    await button(panel, 'Ver propuesta 8 de edición').trigger('click')
+    await flushPromises()
+    const before = panel.get('[aria-label="Antes de la edición"]')
+    const after = panel.get('[aria-label="Después de la edición"]')
+    expect(before.findAll('dd').map(e => e.text())).toEqual(['2026-11-01', 'No informado', 'No informado', 'No informado', 'USD 1,20'])
+    expect(after.findAll('dd').map(e => e.text())).toEqual(['2026-11-02', '2026-11-23', '0,00', '1,90', 'USD 1,90'])
+    expect(panel.get('[aria-label="Motivo de la edición"]').element.textContent).toBe(edit.reason)
+    expect(panel.find('pre b').exists()).toBe(false)
+    expect(panel.text()).toContain('Centro de prueba · Comprobante 14 · Versión 0')
+    expect(panel.text()).toContain('El comprobante sigue en borrador')
+    const begin = rejected ? 'Rechazar propuesta' : 'Continuar con la edición'
+    await button(panel, begin).trigger('click')
+    await button(panel, 'Volver sin cambios').trigger('click')
+    expect(fetch).toHaveBeenCalledTimes(3)
+    await button(panel, begin).trigger('click')
+    await button(panel, rejected ? 'Sí, rechazar' : 'Guardar fechas e importes').trigger('click')
+    await flushPromises()
+    expect(fetch.mock.calls[3]).toEqual([editPath + '/8/decision', expect.objectContaining({
+      method: 'POST', body: JSON.stringify({ decision: rejected ? 'reject' : 'approve', digest, confirm: true }),
+    })])
+    expect(fetch.mock.calls.filter(call => call[1].method === 'POST')).toHaveLength(1)
+    expect(panel.text()).toContain(approved ? 'Fechas e importes del borrador guardados' : rejected ? 'No se modificó el borrador' : 'No se guardó la edición')
+    expect(panel.text()).not.toContain(token)
+    panel.unmount()
+  })
+
+  it('does not confuse absent values with explicit nulls in a pending preview', async () => {
+    const fetch = vi.fn()
+      .mockResolvedValueOnce(result({ sessions: [] }))
+      .mockResolvedValueOnce(result({ proposals: [pending()] }))
+      .mockResolvedValueOnce(result({ ...pending(), edit: { ...edit, after: { ...edit.after, tax_minor: undefined } }, digest }))
+    const panel = await openEdit(fetch)
+    await button(panel, 'Ver propuesta 8 de edición').trigger('click')
+    await flushPromises()
+    expect(panel.get('[role=alert]').text()).toBe('No pude abrir la propuesta.')
+    expect(button(panel, 'Continuar con la edición')).toBeUndefined()
+    panel.unmount()
+  })
+})

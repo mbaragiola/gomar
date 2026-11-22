@@ -28,6 +28,9 @@ func (a *app) registerProviderLogin(add func(string, string, http.HandlerFunc)) 
 		return
 	}
 	for flow, p := range a.providerAuth.providers {
+		if flow == "apple" {
+			continue
+		}
 		base := "/api/v1/auth/providers/" + flow
 		add(base+"/start", http.MethodPost, a.providerLoginRoute(func(w http.ResponseWriter, r *http.Request) error {
 			return a.startProviderLogin(w, r, flow, p)
@@ -50,7 +53,7 @@ func (a *app) listProviderLoginMethods(w http.ResponseWriter, r *http.Request) {
 	}
 	public := []choice{}
 	if p := a.providerAuth; p != nil && effectiveHTTPS(r) && r.Host == p.host {
-		for _, c := range []choice{{"google", "Google"}, {"apple", "Apple"}, {"microsoft", "Microsoft"}, {"microsoft-work", "Microsoft laboral o educativo"}} {
+		for _, c := range []choice{{"google", "Google"}, {"microsoft", "Microsoft"}, {"microsoft-work", "Microsoft laboral o educativo"}} {
 			if p.providers[c.ID] != nil {
 				public = append(public, c)
 			}

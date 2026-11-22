@@ -35,6 +35,7 @@ type app struct {
 	enableMCPWikiEditProposals            bool
 	enableMCPStockReceiptProposals        bool
 	enableMCPProposalSessions             bool
+	enableMCPDocumentEditProposals        bool
 	enableMCPDocumentReviewProposals      bool
 	enableMCPReconciliationDraftProposals bool
 	enableDelivery                        bool
@@ -137,7 +138,7 @@ func (a *app) protectedWithCache(next func(http.ResponseWriter, *http.Request, u
 func (a *app) apiLogin(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
 	if a.providerOnly {
-		failure(w, problem{403, "Ingresá con Google, Apple o Microsoft."})
+		failure(w, problem{403, "Ingresá con Google o Microsoft."})
 		return
 	}
 	var input struct {
@@ -218,6 +219,7 @@ func (a *app) routes() http.Handler {
 	a.registerNamedProposalSessions(addAPI)
 	a.registerMCPPOSRenameProposals(addAPI)
 	a.registerMCPDocumentReviewProposals(addAPI)
+	a.registerMCPDocumentEditProposals(addAPI)
 	a.registerMCPReconciliationDraftProposals(addAPI)
 	a.registerReservations(addAPI, a.publicReservations)
 	a.registerReservationMenus(addAPI, a.publicReservations)

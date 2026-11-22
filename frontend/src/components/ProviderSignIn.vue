@@ -17,7 +17,6 @@ let navigation = 0
 
 const labels = {
   google: 'Google',
-  apple: 'Apple',
   microsoft: 'Microsoft',
   'microsoft-work': 'Microsoft (trabajo o estudio)',
 } as const
@@ -33,9 +32,7 @@ function pinnedAuthorization(provider: Provider, raw: unknown) {
   const microsoft = 'https://login.microsoftonline.com'
   const valid = provider === 'google'
     ? url.origin === 'https://accounts.google.com' && url.pathname === '/o/oauth2/v2/auth'
-    : provider === 'apple'
-      ? url.origin === 'https://appleid.apple.com' && url.pathname === '/auth/authorize'
-      : url.origin === microsoft && (provider === 'microsoft'
+    : url.origin === microsoft && (provider === 'microsoft'
         ? url.pathname === '/consumers/oauth2/v2.0/authorize'
         : /^\/[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}\/oauth2\/v2\.0\/authorize$/.test(url.pathname))
   if (!valid || url.username || url.password || url.hash) throw new Error('invalid authorization')
@@ -60,7 +57,7 @@ onMounted(async () => {
     if (!Array.isArray(result.providers)) throw new Error('invalid provider list')
     providers.value = [...new Set(result.providers.map(p => p?.id).filter(isProvider))]
     const providerOnly = result.local_password_enabled === false
-    if (providerOnly && !(['google', 'apple', 'microsoft'] as const).every(id => providers.value.includes(id))) {
+    if (providerOnly && !(['google', 'microsoft'] as const).every(id => providers.value.includes(id))) {
       unavailable.value = true
     }
     emit('options', { passwordEnabled: !providerOnly, recoveryEnabled: result.admin_recovery_enabled === true })

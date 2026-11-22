@@ -14,14 +14,14 @@ import (
 	"time"
 )
 
-const adminRecoveryMigration = "014_admin_recovery.sql"
+const adminRecoveryMigration = "015_admin_recovery.sql"
 const adminRecoveryCookie = "__Secure-gomar_admin"
 const adminRecoveryCSRF = "__Secure-gomar_admin_csrf"
 const adminRecoveryAge = 30 * time.Minute
 
 var errAdminRecoverySchema = errors.New("admin recovery requires its registered and applied PostgreSQL migration")
 var errAdminRecoveryHTTPS = errors.New("admin recovery requires protected HTTPS Unix ingress")
-var errProviderOnlyUnsafe = errors.New("provider-only sign-in requires isolated admin recovery and configured Google, Apple, and Microsoft personal providers")
+var errProviderOnlyUnsafe = errors.New("provider-only sign-in requires isolated admin recovery and configured Google and Microsoft personal providers")
 
 func validateSignInMode(recovery, providerOnly, protectedIngress bool, migrations []string, providers *hostedProviderAuth) error {
 	if recovery {
@@ -33,7 +33,7 @@ func validateSignInMode(recovery, providerOnly, protectedIngress bool, migration
 		}
 	}
 	if providerOnly && (!recovery || providers == nil || providers.providers["google"] == nil ||
-		providers.providers["apple"] == nil || providers.providers["microsoft"] == nil ||
+		providers.providers["microsoft"] == nil ||
 		!slices.Contains(migrations, providerAuthMigration)) {
 		return errProviderOnlyUnsafe
 	}

@@ -100,14 +100,9 @@ func TestPostgresProviderLoginSynthetic(t *testing.T) {
 	const origin = "https://example.com"
 	settings := map[string]providerClientSettings{
 		"google":         {"synthetic-client", "synthetic-secret", ""},
-		"apple":          {"synthetic-client", "synthetic-secret", ""},
 		"microsoft":      {"synthetic-client", "synthetic-secret", ""},
 		"microsoft-work": {"synthetic-client", "synthetic-secret", "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"},
 	}
-	now := time.Now()
-	apple := settings["apple"]
-	apple.ClientSecret = providerAppleSecretFixture(apple.ClientID, now, nil)
-	settings["apple"] = apple
 	endpoints := map[string]providerEndpoints{}
 	for flow, config := range settings {
 		e, err := pinnedProviderEndpoints(flow, config.Tenant)
@@ -150,9 +145,6 @@ func TestPostgresProviderLoginSynthetic(t *testing.T) {
 		tokenRequests++
 		code, ok := codes[r.Form.Get("code")]
 		secret := "synthetic-secret"
-		if code.settings.Name == "apple" {
-			secret = apple.ClientSecret
-		}
 		if !ok || r.URL.String() != code.settings.Token || r.Form.Get("client_secret") != secret ||
 			r.Form.Get("redirect_uri") != code.authorization.Get("redirect_uri") || r.Form.Get("grant_type") != "authorization_code" {
 			t.Error("unexpected token exchange")
@@ -191,7 +183,7 @@ func TestPostgresProviderLoginSynthetic(t *testing.T) {
 		out.Body = io.NopCloser(strings.NewReader(string(response)))
 		return out, nil
 	})
-	env := map[string]string{"GOMAR_AUTH_PUBLIC_ORIGIN": origin, "GOMAR_AUTH_PROVIDERS": "google,apple,microsoft,microsoft-work"}
+	env := map[string]string{"GOMAR_AUTH_PUBLIC_ORIGIN": origin, "GOMAR_AUTH_PROVIDERS": "google,microsoft,microsoft-work"}
 	secrets := make(map[string]string)
 	for id, v := range settings {
 		prefix := "GOMAR_AUTH_" + strings.ToUpper(strings.ReplaceAll(id, "-", "_"))
@@ -203,7 +195,7 @@ func TestPostgresProviderLoginSynthetic(t *testing.T) {
 	}
 	config, err := providerRuntimeAuth(providerRuntimeSettings{
 		enabled: true, protectedIngress: true, authority: "example.com",
-		migrations: []string{providerAuthMigration}, now: now, network: fake,
+		migrations: []string{providerAuthMigration}, network: fake,
 		env:        func(key string) string { return env[key] },
 		readSecret: func(path string) (string, error) { return secrets[path], nil },
 	})
@@ -236,6 +228,23 @@ func TestPostgresProviderLoginSynthetic(t *testing.T) {
 		if w.Code != status {
 			t.Fatalf("got %d, want %d: %s", w.Code, status, w.Body.String())
 		}
+	}
+	// Even a constructed prototype adapter cannot become a wired web provider.
+	prototype, err := newOIDCProvider(origin, "apple", providerClientSettings{ClientID: "synthetic-client", ClientSecret: "synthetic-secret"}, fake)
+	if err != nil {
+		t.Fatal(err)
+	}
+	config.providers["apple"] = prototype
+	withheld := a.routes()
+	delete(config.providers, "apple")
+	expect(request(withheld, "POST", "/api/v1/auth/providers/apple/start", "", origin, nil), 404)
+	expect(request(withheld, "POST", "/api/v1/auth/providers/apple/callback", "", origin, nil), 404)
+	config.providers["apple"] = prototype
+	advertised := request(withheld, "GET", "/api/v1/auth/providers", "", "", nil)
+	delete(config.providers, "apple")
+	expect(advertised, 200)
+	if strings.Contains(advertised.Body.String(), `"apple"`) {
+		t.Fatal("disabled provider was advertised")
 	}
 	csrf := request(router, "GET", "/api/v1/auth/csrf", "", "", nil).Result().Cookies()
 	const prefix = "/api/v1/auth/providers/"
@@ -317,7 +326,7 @@ func TestPostgresProviderLoginSynthetic(t *testing.T) {
 		t.Fatal("invalid state reached provider transport")
 	}
 	var sessions []*http.Cookie
-	for _, flow := range []string{"google", "apple", "microsoft", "microsoft-work"} {
+	for _, flow := range []string{"google", "microsoft", "microsoft-work"} {
 		v := start(flow)
 		expected := callback(flow, "valid-"+flow, v, v.cookie, nil)
 		expect(expected, 303)
@@ -331,14 +340,14 @@ func TestPostgresProviderLoginSynthetic(t *testing.T) {
 		}
 		expect(callback(flow, "replay-"+flow, v, v.cookie, nil), 401)
 	}
-	if len(sessions) != 4 {
-		t.Fatal("expected four ordinary sessions")
+	if len(sessions) != 3 {
+		t.Fatal("expected three ordinary sessions")
 	}
 	// An email collision never binds an existing administrator, and the
 	// same subject in different issuer realms is independent.
 	var identities, members, admins int
 	if err := db.QueryRowContext(ctx, `SELECT (SELECT count(*) FROM provider_identities),(SELECT count(*) FROM memberships),
-		(SELECT count(*) FROM users WHERE superuser)`).Scan(&identities, &members, &admins); err != nil || identities != 4 || members != 0 || admins != 1 {
+		(SELECT count(*) FROM users WHERE superuser)`).Scan(&identities, &members, &admins); err != nil || identities != 3 || members != 0 || admins != 1 {
 		t.Fatal(identities, members, admins, err)
 	}
 	verify := httptest.NewRequest("GET", origin+"/api/v1/auth/me", nil).WithContext(ctx)
@@ -360,7 +369,7 @@ func TestPostgresProviderLoginSynthetic(t *testing.T) {
 		v := start("microsoft")
 		expect(callback("microsoft", "bad-claim-"+string(rune('a'+i)), v, v.cookie, change), 401)
 	}
-	if err := db.QueryRowContext(context.Background(), "SELECT count(*) FROM provider_identities").Scan(&identities); err != nil || identities != 4 {
+	if err := db.QueryRowContext(context.Background(), "SELECT count(*) FROM provider_identities").Scan(&identities); err != nil || identities != 3 {
 		t.Fatal(identities, err)
 	}
 	if _, err := db.ExecContext(ctx, "UPDATE users SET active=FALSE WHERE id=$1", userRecord.id); err != nil {

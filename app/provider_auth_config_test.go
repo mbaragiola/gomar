@@ -33,14 +33,11 @@ func TestProviderRuntimeAuthFailClosed(t *testing.T) {
 		t.Fatal(a, err)
 	}
 	noNetwork := providerFakeRoundTrip(func(*http.Request) (*http.Response, error) { panic("startup attempted provider discovery") })
-	now := time.Date(2026, 11, 25, 12, 0, 0, 0, time.UTC)
 	env := map[string]string{
 		"GOMAR_AUTH_PUBLIC_ORIGIN":                     "https://auth.example.com",
-		"GOMAR_AUTH_PROVIDERS":                         "google,apple,microsoft,microsoft-work",
+		"GOMAR_AUTH_PROVIDERS":                         "google,microsoft,microsoft-work",
 		"GOMAR_AUTH_GOOGLE_CLIENT_ID":                  "synthetic-goog",
 		"GOMAR_AUTH_GOOGLE_CLIENT_SECRET_FILE":         "/synthetic/google",
-		"GOMAR_AUTH_APPLE_CLIENT_ID":                   "com.example.apple",
-		"GOMAR_AUTH_APPLE_CLIENT_SECRET_FILE":          "/synthetic/apple",
 		"GOMAR_AUTH_MICROSOFT_CLIENT_ID":               "synthetic-ms",
 		"GOMAR_AUTH_MICROSOFT_CLIENT_SECRET_FILE":      "/synthetic/microsoft",
 		"GOMAR_AUTH_MICROSOFT_WORK_CLIENT_ID":          "synthetic-work",
@@ -49,13 +46,10 @@ func TestProviderRuntimeAuthFailClosed(t *testing.T) {
 	}
 	calls := 0
 	settings := providerRuntimeSettings{
-		enabled: true, protectedIngress: true, authority: "auth.example.com", now: now, network: noNetwork,
+		enabled: true, protectedIngress: true, authority: "auth.example.com", network: noNetwork,
 		env: func(key string) string { return env[key] },
 		readSecret: func(path string) (string, error) {
 			calls++
-			if path == "/synthetic/apple" {
-				return providerAppleSecretFixture("com.example.apple", now, nil), nil
-			}
 			if strings.HasPrefix(path, "/synthetic/") {
 				return "synthetic-secret", nil
 			}
@@ -77,13 +71,18 @@ func TestProviderRuntimeAuthFailClosed(t *testing.T) {
 	}
 	env["GOMAR_AUTH_PUBLIC_ORIGIN"] = "https://auth.example.com"
 	got, err := providerRuntimeAuth(settings)
-	if err != nil || got == nil || len(got.providers) != 4 || calls != 4 {
+	if err != nil || got == nil || len(got.providers) != 3 || calls != 3 {
 		t.Fatal(got, err, calls)
 	}
 	for id, p := range got.providers {
 		if p.config.RedirectURL != "https://auth.example.com/api/v1/auth/providers/"+id+"/callback" {
 			t.Fatal("redirect does not use the trusted authority")
 		}
+	}
+	env["GOMAR_AUTH_PROVIDERS"] = "google,apple,microsoft"
+	before := calls
+	if got, err := providerRuntimeAuth(settings); got != nil || err != errProviderConfig || calls != before {
+		t.Fatal(got, err, calls-before)
 	}
 	for _, bad := range []string{"", "google,google", "google,", "google, microsoft", "unknown", "*"} {
 		env["GOMAR_AUTH_PROVIDERS"] = bad
