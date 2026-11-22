@@ -36,6 +36,9 @@ func addWorkspaceTools(server *mcp.Server, client *mcpclient.Client) {
 	readTool(server, "gomar_list_stock", "Consultá el saldo y mínimo de productos de la sucursal autorizada. Devuelve hasta 30 productos; usá next_product_id para pedir la página siguiente. No cambia el stock.", func(ctx context.Context, in stockArgs) (mcpclient.Stock, error) {
 		return client.Stock(ctx, in.EntityID, in.OutletID, in.AfterProductID)
 	})
+	readTool(server, "gomar_stock_alert_summary", "Contá los productos con control de stock activo en una sucursal autorizada: saldo negativo, saldo no negativo en o debajo del mínimo, y saldo por encima del mínimo. Incluye todo el stock de esa sucursal, no solo la primera página. Si el control del local está desactivado no hay estados que contar. No devuelve productos ni saldos individuales.", func(ctx context.Context, in outletArgs) (mcpclient.StockAlertSummary, error) {
+		return client.StockAlerts(ctx, in.EntityID, in.OutletID)
+	})
 	readTool(server, "gomar_list_recent_delivery", "Consultá los últimos 30 pedidos registrados en Gomar para una sucursal autorizada. Un pedido recibido no está confirmado. No consulta proveedores en vivo ni muestra datos del cliente.", func(ctx context.Context, in outletArgs) (mcpclient.Delivery, error) {
 		return client.Delivery(ctx, in.EntityID, in.OutletID)
 	})
