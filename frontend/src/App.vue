@@ -117,7 +117,8 @@ const canAdjustStockViaMcp = computed(() => hasCapability('mcp_stock_adjustment_
 const canChangeCatalogViaMcp = computed(() => hasCapability('mcp_pos_catalog_proposals'))
 const canConfirmReservationsViaMcp = computed(() => hasCapability('mcp_reservation_confirm_proposals'))
 const canCancelReservationsViaMcp = computed(() => hasCapability('mcp_reservation_cancel_proposals'))
-const canManageMcpProposalSessions = computed(() => hasCapability('mcp_proposal_session_management') || canRenameViaMcp.value || canReviewDocViaMcp.value || canCreateReconciliationViaMcp.value || canEditDocViaMcp.value || canAdjustStockViaMcp.value || canChangeCatalogViaMcp.value || canConfirmReservationsViaMcp.value || canCancelReservationsViaMcp.value)
+const canCreateProductsViaMcp = computed(() => hasCapability('mcp_pos_create_proposals'))
+const canManageMcpProposalSessions = computed(() => hasCapability('mcp_proposal_session_management') || canRenameViaMcp.value || canReviewDocViaMcp.value || canCreateReconciliationViaMcp.value || canEditDocViaMcp.value || canAdjustStockViaMcp.value || canChangeCatalogViaMcp.value || canConfirmReservationsViaMcp.value || canCancelReservationsViaMcp.value || canCreateProductsViaMcp.value)
 const canReviewStockReceiptProposals = computed(() => hasCapability('mcp_stock_receipt_proposals'))
 const canReviewWikiEditProposals = computed(() => hasCapability('mcp_wiki_edit_proposals'))
 const canReviewWikiProposals = computed(() => hasCapability('mcp_wiki_proposals'))
@@ -1181,6 +1182,7 @@ onMounted(() => { if (!publicVenue) return initialize() })
             :can-change-catalog="canChangeCatalogViaMcp"
             :can-confirm-reservations="canConfirmReservationsViaMcp"
             :can-cancel-reservations="canCancelReservationsViaMcp"
+            :can-create-products="canCreateProductsViaMcp"
             :entity="selectedEntityId"
             :outlet="selectedOutletId"
             :outlet-name="outlets.find((item) => item.id === selectedOutletId)?.nombre ?? 'este local'"

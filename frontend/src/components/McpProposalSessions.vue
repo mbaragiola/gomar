@@ -3,7 +3,8 @@ import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { ApiError, request } from '../api'
 
 type Status = 'pending' | 'approved' | 'rejected' | 'expired' | 'revoked'
-type Proposal = { id: number; status: Status; expires_at: string; product_id?: number; product_revision?: number; rename?: Rename; document_id?: number; document_revision?: number; review?: Review; run_id?: number; draft?: Draft; edit?: DocumentEdit; movement_id?: number; adjustment?: StockAdjustment; change?: CatalogChange; reservation_reference?: string; confirmation?: ReservationConfirmation; cancellation?: ReservationCancellation; digest?: string }
+type ProductCreate = { name: string; price_minor: number; active: boolean; currency: string; catalog_count: number; catalog_limit: number }
+type Proposal = { id: number; status: Status; expires_at: string; product_id?: number; product_revision?: number; rename?: Rename; document_id?: number; document_revision?: number; review?: Review; run_id?: number; draft?: Draft; edit?: DocumentEdit; movement_id?: number; adjustment?: StockAdjustment; change?: CatalogChange; product?: ProductCreate; reservation_reference?: string; confirmation?: ReservationConfirmation; cancellation?: ReservationCancellation; digest?: string }
 type Rename = {
   product_id: number; expected_revision: number; name: string; current_name: string
   unchanged_price_minor: number; unchanged_active: boolean
@@ -32,7 +33,7 @@ type ReservationCancellation = {
   reservation_reference: string; start_utc: string; start_local: string; timezone: string
   party_size: number; status: 'pending' | 'confirmed'; table_label?: string
 }
-type Action = 'pos_product_rename' | 'document_draft_review' | 'reconciliation_draft_create' | 'document_draft_edit' | 'stock_waste_record' | 'stock_physical_count' | 'pos_product_price_change' | 'pos_product_availability_change' | 'reservation_confirm' | 'reservation_cancel'
+type Action = 'pos_product_rename' | 'document_draft_review' | 'reconciliation_draft_create' | 'document_draft_edit' | 'stock_waste_record' | 'stock_physical_count' | 'pos_product_price_change' | 'pos_product_availability_change' | 'reservation_confirm' | 'reservation_cancel' | 'pos_product_create'
 type ScopedProposal = Proposal & { kind: Action }
 type Session = { id: number; expires_at: string; actions: string[] }
 const actionName = 'pos_product_rename'
@@ -45,12 +46,14 @@ const priceAction = 'pos_product_price_change'
 const availabilityAction = 'pos_product_availability_change'
 const reservationAction = 'reservation_confirm'
 const cancelAction = 'reservation_cancel'
+const createAction = 'pos_product_create'
 const isReservation = (action: Action) => action === reservationAction || action === cancelAction
 const isCatalog = (action: Action) => action === priceAction || action === availabilityAction
 const isStock = (action: Action) => action === wasteAction || action === countAction
 const actionLabels: Record<Action, string> = {
   reservation_cancel: 'Cancelar una reserva',
   reservation_confirm: 'Confirmar una reserva pendiente',
+  pos_product_create: 'Crear un producto de caja',
   pos_product_rename: 'Cambiar el nombre de un producto de caja',
   document_draft_review: 'Marcar un comprobante como revisado',
   reconciliation_draft_create: 'Crear un borrador vacío de conciliación',
@@ -77,6 +80,13 @@ const actionUI: Record<Action, {
     rejectConfirm: '¿Querés rechazar la propuesta sin modificar la reserva?',
     stale: 'No se confirmó la reserva. La propuesta, la reserva o la mesa cambiaron. Prepará otra propuesta.',
     approved: 'Reserva confirmada.', rejected: 'Propuesta rechazada. No se modificó la reserva.',
+  },
+  pos_product_create: {
+    path: '/pos-create-proposals', previewSuffix: ' de nuevo producto', proceed: 'Continuar con el nuevo producto',
+    approve: 'Crear producto de caja', confirm: '¿Querés agregar este producto al catálogo del local indicado?',
+    rejectConfirm: '¿Querés rechazar sin agregar el producto?',
+    stale: 'No se agregó el producto. La propuesta o el catálogo cambiaron. Revisá el estado antes de preparar otra propuesta.',
+    approved: 'Producto agregado al catálogo.', rejected: 'Propuesta rechazada. No se agregó ningún producto.',
   },
   pos_product_rename: {
     path: '/pos-rename-proposals', previewSuffix: '', proceed: 'Continuar con este cambio',
@@ -206,21 +216,28 @@ function validCatalog(kind: Action, x: CatalogChange | undefined): x is CatalogC
     ? x.current_price_minor !== x.price_minor && x.current_active === x.active
     : x.current_price_minor === x.price_minor && x.current_active !== x.active
 }
+function validProduct(x: ProductCreate | undefined): x is ProductCreate {
+  return !!x && typeof x.name === 'string' && x.name.trim() !== '' && [...x.name].length <= 120 &&
+    !x.name.includes('\0') && positive(x.price_minor) && x.price_minor <= 100_000_000 &&
+    typeof x.active === 'boolean' && x.currency === 'ARS' && x.catalog_limit === 500 &&
+    nonnegative(x.catalog_count) && x.catalog_count < x.catalog_limit
+}
 const stateLabel = (active: boolean) => active ? 'Activo' : 'Inactivo'
 const prices = new Intl.NumberFormat('es-AR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
 const amount = (value: number | null) => value === null ? 'No informado' : prices.format(value / 100)
 type Decision = 'approve' | 'reject'
-const props = defineProps<{ entity: number; outlet: number; outletName: string; canRename: boolean; canReviewDocuments?: boolean; canCreateReconciliationDraft?: boolean; canEditDocuments?: boolean; canAdjustStock?: boolean; canChangeCatalog?: boolean; canConfirmReservations?: boolean; canCancelReservations?: boolean }>()
+const props = defineProps<{ entity: number; outlet: number; outletName: string; canRename: boolean; canReviewDocuments?: boolean; canCreateReconciliationDraft?: boolean; canEditDocuments?: boolean; canAdjustStock?: boolean; canChangeCatalog?: boolean; canConfirmReservations?: boolean; canCancelReservations?: boolean; canCreateProducts?: boolean }>()
 const scopePath = `/entities/${props.entity}/outlets/${props.outlet}`
 const base = (kind: Action) => scopePath + actionUI[kind].path
 const allowed = (kind: Action) => kind === cancelAction ? !!props.canCancelReservations
   : kind === reservationAction ? !!props.canConfirmReservations
+  : kind === createAction ? !!props.canCreateProducts
   : isCatalog(kind) ? !!props.canChangeCatalog
   : isStock(kind) ? !!props.canAdjustStock
   : kind === editAction ? !!props.canEditDocuments
   : kind === draftAction ? !!props.canCreateReconciliationDraft
   : kind === reviewAction ? !!props.canReviewDocuments : props.canRename
-const actionChoices = computed(() => ([actionName, reviewAction, draftAction, editAction, wasteAction, countAction, priceAction, availabilityAction, reservationAction, cancelAction] as const).filter(allowed))
+const actionChoices = computed(() => ([actionName, reviewAction, draftAction, editAction, wasteAction, countAction, priceAction, availabilityAction, reservationAction, cancelAction, createAction] as const).filter(allowed))
 const setSelected = (kind: Action, event: Event) => {
   if (event.target instanceof HTMLInputElement) selected.value = event.target.checked ? kind : null
 }
@@ -228,6 +245,7 @@ const actionText = (action: string) => Object.hasOwn(actionLabels, action)
   ? actionLabels[action as Action] : 'Acción no reconocida'
 const validPreview = (kind: Action, proposal: Proposal) => kind === cancelAction ? validReservationCancellation(proposal.cancellation)
   : kind === reservationAction ? validReservation(proposal.confirmation)
+  : kind === createAction ? validProduct(proposal.product)
   : isCatalog(kind) ? validCatalog(kind, proposal.change)
   : isStock(kind) ? validStock(kind, proposal.adjustment)
   : kind === editAction ? isDocumentEdit(proposal.edit)
@@ -395,6 +413,7 @@ async function decide() {
     const validApproval = isReservation(target.kind)
       ? reservationReference(result.reservation_reference) &&
         result.reservation_reference === (target.kind === cancelAction ? proposed.cancellation : proposed.confirmation)?.reservation_reference
+      : target.kind === createAction ? positive(result.product_id ?? 0) && result.product_revision === 1
       : isCatalog(target.kind)
       ? result.product_id === proposed.change?.product_id && result.product_revision === (proposed.change?.expected_revision ?? -1) + 1
       : isStock(target.kind) ? positive(result.movement_id ?? 0)
@@ -567,6 +586,14 @@ onBeforeUnmount(() => {
           <p>Personas: <strong>{{ viewed.confirmation.party_size }}</strong> · Estado actual: Pendiente.</p>
           <p>Mesa: <strong>{{ viewed.confirmation.table_label }}</strong> · Capacidad: <strong>{{ viewed.confirmation.table_capacity }}</strong>.</p>
           <p>Solo se confirma esta reserva. No se envían mensajes.</p>
+        </div>
+        <div v-else-if="viewed.kind === createAction && viewed.product">
+          <p>Local: <strong>{{ outletName }}</strong></p>
+          <p class="gomar-feature-text">Producto nuevo: <strong>{{ viewed.product.name }}</strong></p>
+          <p>Precio: <strong>ARS {{ amount(viewed.product.price_minor) }}</strong></p>
+          <p>Disponibilidad: <strong>{{ stateLabel(viewed.product.active) }}</strong></p>
+          <p>Productos en el catálogo: {{ viewed.product.catalog_count }} de {{ viewed.product.catalog_limit }}.</p>
+          <p>No se modifican el stock ni las ventas ya registradas.</p>
         </div>
         <div v-else-if="isCatalog(viewed.kind) && viewed.change">
           <p>Local: <strong>{{ outletName }}</strong> · Producto {{ viewed.change.product_id }} · Versión {{ viewed.change.expected_revision }}</p>
