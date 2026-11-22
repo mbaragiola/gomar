@@ -148,6 +148,36 @@ describe('Propuestas para revisar comprobantes', () => {
     panel.unmount()
   })
 
+  it('can approve a legacy revision zero and checks the new revision is one', async () => {
+    const fetch = vi.fn()
+      .mockResolvedValueOnce(result({ sessions: [] }))
+      .mockResolvedValueOnce(result({ proposals: [pending()] }))
+      .mockResolvedValueOnce(result({ ...pending(), review: { ...review, expected_revision: 0 }, digest }))
+      .mockResolvedValueOnce(result({ ...pending(), status: 'approved', document_id: 31, document_revision: 1 }))
+    const panel = await openReview(fetch, false)
+    await button(panel, 'Ver propuesta 8 de revisión').trigger('click')
+    await flushPromises()
+    expect(panel.text()).toContain('Comprobante 31 · Versión 0')
+    await button(panel, 'Continuar con la revisión').trigger('click')
+    await button(panel, 'Marcar como revisado').trigger('click')
+    await flushPromises()
+    expect(panel.text()).toContain('Comprobante marcado como revisado')
+    panel.unmount()
+  })
+
+  it.each([null, undefined, -1])('refuses invalid revision %s', async expected_revision => {
+    const fetch = vi.fn()
+      .mockResolvedValueOnce(result({ sessions: [] }))
+      .mockResolvedValueOnce(result({ proposals: [pending()] }))
+      .mockResolvedValueOnce(result({ ...pending(), review: { ...review, expected_revision }, digest }))
+    const panel = await openReview(fetch, false)
+    await button(panel, 'Ver propuesta 8 de revisión').trigger('click')
+    await flushPromises()
+    expect(panel.get('[role=alert]').text()).toBe('No pude abrir la propuesta.')
+    expect(button(panel, 'Continuar con la revisión')).toBeUndefined()
+    panel.unmount()
+  })
+
   it.each(['approve', 'reject', 'stale'] as const)('shows the exact safe preview and handles %s only for the document', async outcome => {
     const fetch = vi.fn()
       .mockResolvedValueOnce(result({ sessions: [] }))

@@ -29,7 +29,7 @@ function isRename(value: Rename | undefined): value is Rename {
     typeof value.unchanged_active === 'boolean'
 }
 function isReview(value: Review | undefined): value is Review {
-  return !!value && positive(value.document_id) && positive(value.expected_revision) &&
+  return !!value && positive(value.document_id) && Number.isSafeInteger(value.expected_revision) && value.expected_revision >= 0 &&
     typeof value.reason === 'string' && !!value.reason && Object.hasOwn(documentTypes, value.type) &&
     (value.currency === 'ARS' || value.currency === 'USD') &&
     Number.isSafeInteger(value.total_minor) && value.total_minor >= 0
