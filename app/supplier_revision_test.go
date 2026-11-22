@@ -11,7 +11,11 @@ import (
 
 func TestPostgresSupplierRevisionFoundation(t *testing.T) {
 	ctx, db := testPostgresDB(t)
-	if err := migratePostgres(ctx, db); err != nil {
+	const prior = 21
+	if len(postgresMigrationNames) <= prior || postgresMigrationNames[prior] != "022_supplier_legal_name_proposals.sql" {
+		t.Fatal("supplier revision upgrade requires the exact published prefix")
+	}
+	if err := migratePostgresThrough(ctx, db, postgresMigrationNames[:prior]); err != nil {
 		t.Fatal(err)
 	}
 	const password = "synthetic-supplier-revision"
@@ -30,22 +34,11 @@ func TestPostgresSupplierRevisionFoundation(t *testing.T) {
  (102,102,'Foreign','00000000000',TRUE,NULL)`); err != nil {
 		t.Fatal("could not seed synthetic business records")
 	}
-	// 023 is not registered until the landing order is resolved. Rehearse
-	// exactly its staged bytes without fabricating a production ledger entry.
-	script, err := postgresMigrations.ReadFile("postgres_migrations/023_supplier_revision.sql")
-	if err != nil {
-		t.Fatal(err)
+	if err := migratePostgres(ctx, db); err != nil {
+		t.Fatal("supplier revision upgrade failed")
 	}
-	tx, err := db.BeginTx(ctx, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer tx.Rollback()
-	if _, err = tx.ExecContext(ctx, string(script)); err != nil {
-		t.Fatal("supplier revision migration failed")
-	}
-	if err = tx.Commit(); err != nil {
-		t.Fatal("supplier revision migration did not commit")
+	if err := verifyPostgresMigrations(ctx, db); err != nil {
+		t.Fatal("supplier revision ledger failed")
 	}
 
 	a := app{db: db, host: "example.com"}

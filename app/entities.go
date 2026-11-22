@@ -218,6 +218,10 @@ func (a *app) entities(w http.ResponseWriter, r *http.Request, u user) error {
 			entry.Capabilities = append(slices.Clone(entry.Capabilities), "mcp_stock_minimum_proposals")
 			slices.Sort(entry.Capabilities)
 		}
+		if a.supplierNameProposalsEnabled() && slices.Contains(entry.Capabilities, "manage_suppliers") {
+			entry.Capabilities = append(slices.Clone(entry.Capabilities), "mcp_supplier_legal_name_proposals")
+			slices.Sort(entry.Capabilities)
+		}
 		if manageProposalSessions {
 			entry.Capabilities = append(slices.Clone(entry.Capabilities), "mcp_proposal_session_management")
 			slices.Sort(entry.Capabilities)
