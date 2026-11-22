@@ -126,7 +126,7 @@ func (a *app) acceptSupplierNameProposal(w http.ResponseWriter, r *http.Request)
 		return err
 	}
 	s := supplierNameScopeFrom(scope)
-	if err = a.lockScopedDocumentCapability(ctx, tx, s, "manage_suppliers"); err != nil {
+	if err = lockScopedDocumentCapability(ctx, tx, s, "manage_suppliers"); err != nil {
 		return err
 	}
 	inputDigest := supplierNameWireInputDigest(s, in)

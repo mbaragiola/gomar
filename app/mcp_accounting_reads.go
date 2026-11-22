@@ -11,7 +11,7 @@ import (
 func (a *app) registerMCPAccountingReads(add func(string, string, http.HandlerFunc)) {
 	add(mcpWorkspaceBase+"/documents", http.MethodGet, a.mcpRead(mcpAccountingDocuments))
 	add(mcpWorkspaceBase+"/document-totals", http.MethodGet, a.mcpRead(mcpDocumentTotals))
-	add(mcpWorkspaceBase+"/suppliers", http.MethodGet, a.mcpRead(mcpAccountingSuppliers))
+	add(mcpWorkspaceBase+"/suppliers", http.MethodGet, a.mcpRead(a.mcpAccountingSuppliers))
 	add(mcpWorkspaceBase+"/payments-summary", http.MethodGet, a.mcpRead(mcpPaymentStatusCounts))
 	add(mcpWorkspaceBase+"/reconciliation-summary", http.MethodGet, a.mcpRead(mcpReconciliationStatusCounts))
 }
@@ -118,7 +118,7 @@ func mcpDocumentTotals(r *http.Request, tx *sql.Tx, s mcpTokenScope) (any, error
 	return result, rows.Err()
 }
 
-func mcpAccountingSuppliers(r *http.Request, tx *sql.Tx, s mcpTokenScope) (any, error) {
+func (a *app) mcpAccountingSuppliers(r *http.Request, tx *sql.Tx, s mcpTokenScope) (any, error) {
 	cursor, err := mcpAccountingCursor(r)
 	if err != nil {
 		return nil, err
@@ -129,19 +129,27 @@ func mcpAccountingSuppliers(r *http.Request, tx *sql.Tx, s mcpTokenScope) (any, 
 	if _, err := mcpWorkspaceOutlet(r, tx, s); err != nil {
 		return nil, err
 	}
-	rows, err := tx.QueryContext(r.Context(), `SELECT id,name FROM suppliers
+	revision := "NULL::bigint"
+	if a.supplierNameProposalsEnabled() && slices.Contains(capabilities[s.role], "manage_suppliers") {
+		revision = "revision"
+	}
+	rows, err := tx.QueryContext(r.Context(), `SELECT id,name,`+revision+` FROM suppliers
 		WHERE entity_id=$1 AND active=TRUE AND id>$2 ORDER BY id LIMIT $3`, s.ID, cursor, mcpPageSize+1)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
+	type supplierItem struct {
+		mcpPlace
+		Revision *int64 `json:"revision,omitempty"`
+	}
 	result := struct {
-		Suppliers []mcpPlace `json:"suppliers"`
-		NextID    int64      `json:"next_id,omitempty"`
-	}{Suppliers: []mcpPlace{}}
+		Suppliers []supplierItem `json:"suppliers"`
+		NextID    int64          `json:"next_id,omitempty"`
+	}{Suppliers: []supplierItem{}}
 	for rows.Next() {
-		var item mcpPlace
-		if err := rows.Scan(&item.ID, &item.Name); err != nil {
+		var item supplierItem
+		if err := rows.Scan(&item.ID, &item.Name, &item.Revision); err != nil {
 			return nil, err
 		}
 		result.Suppliers = append(result.Suppliers, item)

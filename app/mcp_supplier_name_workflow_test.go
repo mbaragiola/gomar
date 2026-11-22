@@ -72,6 +72,27 @@ func TestPostgresMCPSupplierNameWorkflow(t *testing.T) {
 	token := readToken(call("POST", proposalSessionsAuthPath, issue, "", cookies, 201).Body.String())
 	wrongLoginToken := readToken(call("POST", proposalSessionsAuthPath, issue, "", otherLogin, 201).Body.String())
 	read := readToken(call("POST", "/api/v1/auth/mcp-token", `{"entity_id":1,"outlet_id":1}`, "", cookies, 201).Body.String())
+	const suppliers = "/api/v1/mcp/entities/1/outlets/1/suppliers"
+	managed := call("GET", suppliers, "", read, nil, 200).Body.String()
+	if !strings.Contains(managed, `"revision":1`) || strings.Contains(managed, "00000000019") {
+		t.Fatal("manager read did not return only an authorized supplier revision")
+	}
+	call("GET", strings.Replace(suppliers, "outlets/1", "outlets/2", 1), "", read, nil, 404)
+	if _, err := db.ExecContext(ctx, `UPDATE memberships SET role='read_only' WHERE id=1`); err != nil {
+		t.Fatal(err)
+	}
+	low := call("GET", suppliers, "", read, nil, 200).Body.String()
+	if strings.Contains(low, "revision") || strings.Contains(low, "00000000019") || !strings.Contains(low, "Fixture supplier") {
+		t.Fatal("lower role changed existing supplier projection")
+	}
+	if _, err := db.ExecContext(ctx, `UPDATE memberships SET role='purchasing' WHERE id=1`); err != nil {
+		t.Fatal(err)
+	}
+	h = (&app{db: db, host: "example.com", enableMCP: true}).routes()
+	if off := call("GET", suppliers, "", read, nil, 200).Body.String(); off != low {
+		t.Fatal("feature off changed existing supplier projection")
+	}
+	h = a.routes()
 	const one = `{"request_id":"55555555-0000-4000-8000-000000000001","supplier":{"supplier_id":88001,"expected_revision":1,"name":"Fixture renamed"}}`
 	call("POST", api, one, read, nil, 401)
 	call("POST", api, one, token, cookies, 422)
