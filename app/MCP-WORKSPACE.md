@@ -59,3 +59,9 @@ and returns no individual orders, items, or customer details.
 selected branch without listing products or balances. Negative takes priority;
 nonnegative balances at or below the minimum count separately. An inactive
 branch stock feature returns no counted products.
+
+`gomar_read_reservation_setup` reports whether a branch has reservation
+settings, whether the venue is enabled, whether public reservations are
+enabled in Gomar, and the timezone. It does not report contact settings,
+policy text, or venue identity. Enabled flags do not confirm the public
+page is reachable or that a date, party or table can be booked.

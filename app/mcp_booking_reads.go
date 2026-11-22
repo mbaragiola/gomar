@@ -14,6 +14,7 @@ import (
 
 func (a *app) registerMCPBookingReads(add func(string, string, http.HandlerFunc)) {
 	add(mcpWorkspaceBase+"/reservation-status", http.MethodGet, a.mcpRead(mcpReservationStatus))
+	add(mcpWorkspaceBase+"/reservation-setup", http.MethodGet, a.mcpRead(a.mcpReservationSetup))
 	add(mcpWorkspaceBase+"/published-menu", http.MethodGet, a.mcpRead(a.mcpPublishedMenu))
 	if a.enablePOS {
 		add(mcpWorkspaceBase+"/pos-catalog", http.MethodGet, a.mcpRead(mcpPOSCatalog))
@@ -24,6 +25,29 @@ func (a *app) registerMCPBookingReads(add func(string, string, http.HandlerFunc)
 }
 
 const utcSecondPrefix = "2006-01-02T15:04:05"
+
+func (a *app) mcpReservationSetup(r *http.Request, tx *sql.Tx, s mcpTokenScope) (any, error) {
+	outlet, err := mcpWorkspaceOutlet(r, tx, s)
+	if err != nil {
+		return nil, err
+	}
+	if err = requireReservationStaff(r.Context(), tx, s.entityMembership, outlet); err != nil {
+		return nil, err
+	}
+	if r.URL.RawQuery != "" || r.URL.ForceQuery {
+		return nil, badInput
+	}
+	result := mcpclient.ReservationSetup{Timezone: reservationTimezone, PublicFeatureEnabled: a.publicReservations}
+	err = tx.QueryRowContext(r.Context(), `SELECT enabled FROM reservation_venues WHERE outlet_id=$1`, outlet).Scan(&result.VenueEnabled)
+	if errors.Is(err, sql.ErrNoRows) {
+		return result, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	result.VenueConfigured = true
+	return result, nil
+}
 
 func mcpReservationStatus(r *http.Request, tx *sql.Tx, s mcpTokenScope) (any, error) {
 	outlet, err := mcpWorkspaceOutlet(r, tx, s)
