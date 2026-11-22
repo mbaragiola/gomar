@@ -32,3 +32,10 @@ go.work.sum
 # Editor/IDE
 # .idea/
 # .vscode/
+
+# Standalone application build products
+/bin/
+/var/
+/frontend/node_modules/
+/app/frontendembed/web/
+/app/frontendembed/.stage.*/

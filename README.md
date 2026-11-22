@@ -2,6 +2,12 @@
 
 Gomar is a restaurant back-office project in Go. This preview lets Codex or Claude Code read **invented** accounts-payable totals. It does not connect to an app, a database, a restaurant, or a user account. The WhatsApp example runs offline only.
 
+## Run the application
+
+The [standalone Go and PostgreSQL app](app/README.md) uses the Vue frontend
+in this repository. The chat examples below are separate, use invented data,
+and do not access the app.
+
 ## Try it in Codex
 
 The module requires Go 1.25 or newer. The preview has been tested with Go 1.27.4. Build from the repository root:

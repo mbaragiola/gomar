@@ -1,0 +1,11 @@
+{
+  "order_detail": {
+    "order_id": "910001100",
+    "delivery_method": "delivery",
+    "items": [
+      {"id": "901", "name": "Tostado de prueba", "quantity": 2},
+      {"id": "902", "name": "Agua mineral", "quantity": 1}
+    ]
+  },
+  "store": {"internal_id": "901001", "external_id": "demo-rappi-centro"}
+}
