@@ -69,6 +69,8 @@ func TestLiveStdioScopedTools(t *testing.T) {
 				t.Error("unexpected reconciliation cursor")
 			}
 			_, _ = io.WriteString(w, `{"runs":[{"id":8,"revision":1,"status":"draft","created_at":"2026-11-01T03:00:00Z","counts":{"outlets":1,"sources":0,"rows":0,"confirmed":0,"rejected":0}}]}`)
+		case "/api/v1/mcp/entities/20/outlets/10/reconciliation-runs/8/setup":
+			_, _ = io.WriteString(w, `{"id":8,"revision":2,"status":"draft","match_reference":true,"has_payments_source":true,"has_cash_flow_source":false,"reference_mapping_incomplete":true,"unsupported_source_setup":false,"over_row_limit":false}`)
 		case "/api/v1/mcp/entities/20/outlets/10/reconciliation-runs/8":
 			_, _ = io.WriteString(w, `{"id":8,"revision":1,"status":"draft","created_at":"2026-11-01T03:00:00Z","counts":{"outlets":1,"sources":1,"rows":5,"confirmed":0,"rejected":0},"private":"`+secret+`"}`)
 		case "/api/v1/mcp/entities/20/outlets/10/payable-records":
@@ -130,7 +132,7 @@ func TestLiveStdioScopedTools(t *testing.T) {
 	}
 	defer session.Close()
 	metadata, err := session.ListTools(ctx, &mcp.ListToolsParams{})
-	if err != nil || len(metadata.Tools) != 29 {
+	if err != nil || len(metadata.Tools) != 30 {
 		t.Fatal(metadata, err)
 	}
 	for _, tool := range metadata.Tools {
@@ -161,6 +163,7 @@ func TestLiveStdioScopedTools(t *testing.T) {
 		{"gomar_read_document", map[string]any{"entity_id": 20, "outlet_id": 10, "document_id": 7}, `"revision":0`, false},
 		{"gomar_read_document", map[string]any{"entity_id": 20, "outlet_id": 10, "document_id": 0}, "document_id", true},
 		{"gomar_list_reconciliation_runs", map[string]any{"entity_id": 20, "outlet_id": 10, "after_id": 5}, `"id":8`, false},
+		{"gomar_read_reconciliation_setup", map[string]any{"entity_id": 20, "outlet_id": 10, "run_id": 8}, `"has_cash_flow_source":false`, false},
 		{"gomar_read_reconciliation_run", map[string]any{"entity_id": 20, "outlet_id": 10, "run_id": 8}, `"rows":5`, false},
 		{"gomar_read_reconciliation_run", map[string]any{"entity_id": 20, "outlet_id": 11, "run_id": 8}, "permisos", true},
 		{"gomar_list_payables", map[string]any{"entity_id": 20, "outlet_id": 10, "after_id": 4}, `"balance_minor":50`, false},
@@ -191,7 +194,7 @@ func TestLiveStdioScopedTools(t *testing.T) {
 			t.Fatalf("unexpected result for %s: %s", test.name, wire)
 		}
 	}
-	if requests.Load() != 26 {
+	if requests.Load() != 27 {
 		t.Fatalf("wrong number of requests: %d", requests.Load())
 	}
 	if err := session.Close(); err != nil {

@@ -145,14 +145,48 @@ func TestPostgresMCPDetailReadsRespectCurrentScopesAndProjectMetadata(t *testing
 	if len(page.Runs) != 2 || page.Runs[0].ID != 128 || page.Runs[1].ID != 129 || page.NextID != 0 {
 		t.Fatal("incorrect second reconciliation page")
 	}
+	const setupBase = base + runs
+	setup := func(path, key string, want int) mcpclient.ReconciliationSetup {
+		t.Helper()
+		w := ask("GET", setupBase+path, "", key, false, want)
+		var payload mcpclient.ReconciliationSetup
+		if want == 200 {
+			var fields map[string]json.RawMessage
+			if json.Unmarshal(w.Body.Bytes(), &fields) != nil || len(fields) != 9 || json.Unmarshal(w.Body.Bytes(), &payload) != nil ||
+				strings.Contains(w.Body.String(), "sentinel") {
+				t.Fatal("invalid or non-minimal setup response")
+			}
+		}
+		return payload
+	}
+	if _, err := db.ExecContext(ctx, `UPDATE reconciliation_read_runs SET match_reference=TRUE WHERE id=1;
+ UPDATE reconciliation_read_sources SET row_count=20001 WHERE run_id=1 AND side='cash_flow'`); err != nil {
+		t.Fatal(err)
+	}
+	facts := setup("/1/setup", narrow, 200)
+	if facts.ID != 1 || facts.Revision != 2 || facts.Status != "review" || !facts.MatchReference ||
+		!facts.HasPaymentsSource || !facts.HasCashFlowSource || !facts.ReferenceMappingIncomplete || !facts.UnsupportedSourceSetup || !facts.OverRowLimit {
+		t.Fatal(facts)
+	}
+	setup("/2/setup", narrow, 404)
+	if empty := setup("/2/setup", full, 200); empty.Status != "closed" || empty.HasPaymentsSource || empty.HasCashFlowSource || empty.UnsupportedSourceSetup || empty.ReferenceMappingIncomplete || empty.OverRowLimit {
+		t.Fatal(empty)
+	}
+	for _, path := range []string{"/3/setup", "/4/setup", "/5/setup", "/6/setup", "/7/setup"} {
+		setup(path, full, 404)
+	}
+	setup("/1/setup?include=details", narrow, 422)
+	setup("/1/setup", "", 401)
 	if _, err := db.ExecContext(ctx, `DELETE FROM outlet_grants WHERE membership_id=1 AND outlet_id=2`); err != nil {
 		t.Fatal(err)
 	}
+	setup("/2/setup", full, 404)
 	read(runs+"/2", full, 404, nil)
 	if _, err := db.ExecContext(ctx, `UPDATE memberships SET role='read_only' WHERE id=1`); err != nil {
 		t.Fatal(err)
 	}
 	read(runs, full, 403, nil)
 	read(runs+"/1", narrow, 403, nil)
+	setup("/1/setup", narrow, 403)
 	read("/documents/1", narrow, 200, nil)
 }

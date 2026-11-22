@@ -15,6 +15,7 @@ func (a *app) registerMCPDetailReads(add func(string, string, http.HandlerFunc))
 	add(mcpWorkspaceBase+"/documents/{document}", http.MethodGet, a.mcpRead(mcpReadDocument))
 	add(mcpWorkspaceBase+"/reconciliation-runs", http.MethodGet, a.mcpRead(mcpListReconciliationRuns))
 	add(mcpWorkspaceBase+"/reconciliation-runs/{run}", http.MethodGet, a.mcpRead(mcpReadReconciliationRun))
+	add(mcpWorkspaceBase+"/reconciliation-runs/{run}/setup", http.MethodGet, a.mcpRead(mcpReadReconciliationSetup))
 }
 
 var mcpMissingDocument = problem{404, "No se encontró el comprobante."}

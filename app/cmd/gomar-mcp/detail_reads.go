@@ -27,4 +27,8 @@ func addDetailReadTools(server *mcp.Server, client *mcpclient.Client) {
 	readTool(server, "gomar_read_reconciliation_run", "Leé estado, revisión, fechas y cantidades de una conciliación. Requiere acceso a todas las sucursales participantes. No devuelve cuentas, CSV ni filas individuales.", func(ctx context.Context, in reconciliationRunArgs) (mcpclient.ReconciliationRun, error) {
 		return client.ReadReconciliationRun(ctx, in.EntityID, in.OutletID, in.RunID)
 	})
+	readTool(server, "gomar_read_reconciliation_setup", "Consultá sólo la configuración de una conciliación: estado, revisión, presencia de fuentes, regla de referencia y límites conocidos. Requiere acceso a todas las sucursales participantes. No lee archivos, referencias ni filas y no confirma que la conciliación se pueda preparar.", func(ctx context.Context, in reconciliationRunArgs) (mcpclient.ReconciliationSetup, error) {
+		return client.ReadReconciliationSetup(ctx, in.EntityID, in.OutletID, in.RunID)
+	})
+
 }
