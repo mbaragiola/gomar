@@ -16,7 +16,7 @@ applied change. Features disabled in the app are not available via MCP.
 | Suppliers | Active supplier names and IDs in the business | Guarded create and edit |
 | Payables and payment records | Outstanding and overdue totals, counts by status, and outlet-only payable and payment record details | Guarded accounting entries and reviews, not movement of money |
 | Reconciliation | Scoped run counts by status, paged run list, and metadata by ID | Workflow for source handling, matches, decisions, and review |
-| Reservations and menus | Daily reservation totals by status and published menu metadata | Guarded staff booking and menu operations |
+| Reservations and menus | Daily reservation totals, scoped staff queue and detail, and published menu metadata | Guarded staff booking and menu operations |
 
 ## Verification levels
 
