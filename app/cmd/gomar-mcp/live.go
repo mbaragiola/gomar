@@ -51,6 +51,7 @@ func liveServer(client *mcpclient.Client) *mcp.Server {
 	addBookingReadTools(server, client)
 	addDetailReadTools(server, client)
 	addFinanceStockReadTools(server, client)
+	addReservationQueueTools(server, client)
 	return server
 }
 
