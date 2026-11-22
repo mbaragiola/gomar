@@ -110,6 +110,22 @@ describe('aplicación', () => {
     wrapper.unmount()
   })
 
+  it('keeps a selected document ready on resize and lets the active purchases task return to the list', async () => {
+    vi.stubGlobal('fetch', appFetch((url) => {
+      if (url.endsWith('/documents/1')) return response(document)
+      if (url.includes('/documents')) return response([document])
+    }))
+    const wrapper = mount(App, { attachTo: window.document.body })
+    await flushPromises()
+    await wrapper.get('.document-row').trigger('click')
+    await flushPromises()
+    expect(wrapper.get('.content-grid').classes()).toContain('staff-has-document')
+    await wrapper.get('nav button[aria-current="page"]').trigger('click')
+    expect(wrapper.get('.content-grid').classes()).not.toContain('staff-has-document')
+    expect(window.document.activeElement).toBe(wrapper.get('h1').element)
+    wrapper.unmount()
+  })
+
   it('muestra sólo el contexto y los totales asignados', async () => {
     vi.stubGlobal('fetch', appFetch())
     const wrapper = mount(App)

@@ -132,7 +132,10 @@ function focusStaffHeading() {
   void nextTick(() => staffHeading.value?.focus())
 }
 function selectStaffView(view: StaffView) {
-  if (staffView.value === view) return
+  if (staffView.value === view) {
+    if (view === 'documents' && showDocumentDetail.value) returnToDocuments()
+    return
+  }
   staffView.value = view
   mobileDetail.value = false
   if (view === 'access' && !showManagement.value) void toggleManagement()
@@ -148,9 +151,11 @@ function selectStaffView(view: StaffView) {
   focusStaffHeading()
 }
 function showMobileDocument() {
-  if (!window.matchMedia?.('(max-width: 850px)').matches || staffView.value !== 'documents' || !selectedDocument.value) return
+  if (staffView.value !== 'documents' || !selectedDocument.value) return
   mobileDetail.value = true
-  void nextTick(() => documentHeading.value?.focus())
+  if (window.matchMedia?.('(max-width: 850px)').matches) {
+    void nextTick(() => documentHeading.value?.focus())
+  }
 }
 function returnToDocuments() {
   mobileDetail.value = false
