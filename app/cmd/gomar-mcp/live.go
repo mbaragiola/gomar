@@ -5,6 +5,7 @@ import (
 	"errors"
 	"flag"
 	"io"
+	"os"
 	"path/filepath"
 
 	"github.com/mbaragiola/gomar/app/internal/mcpclient"
@@ -70,10 +71,31 @@ func runLive(ctx context.Context, args []string, in io.Reader, out io.Writer) er
 	stockReceiptProposalFile := fs.String("stock-receipt-proposal-token-file", "", "")
 	proposalSessionFile := fs.String("proposal-session-token-file", "", "")
 	proposalSessionAction := fs.String("proposal-session-action", "pos_product_rename", "")
+	var laneFlags proposalLaneFlag
+	fs.Var(&laneFlags, "proposal-lane", "")
+	laneEntity := fs.Int64("proposal-entity", 0, "")
+	laneOutlet := fs.Int64("proposal-outlet", 0, "")
 	if fs.Parse(args) != nil || fs.NArg() != 0 || *origin == "" || !filepath.IsAbs(*tokenFile) {
 		return errors.New(liveUsage)
 	}
-	token, err := mcpclient.ReadToken(*tokenFile)
+	if len(laneFlags) > 0 && repeatedProposalLaneScope(args) {
+		return invalidProposalLanes
+	}
+	lanes, err := parseProposalLanes(fs, laneFlags, *tokenFile, *laneEntity, *laneOutlet)
+	if err != nil {
+		return err
+	}
+	var token string
+	var pins []os.FileInfo
+	if len(lanes) != 0 {
+		pins, err = validateProposalLaneFiles(*tokenFile, lanes)
+		if err != nil {
+			return err
+		}
+		token, err = readBoundLaneToken(*tokenFile, pins[0])
+	} else {
+		token, err = mcpclient.ReadToken(*tokenFile)
+	}
 	if err != nil {
 		return err
 	}
@@ -82,6 +104,12 @@ func runLive(ctx context.Context, args []string, in io.Reader, out io.Writer) er
 		return err
 	}
 	server := liveServer(client)
+	if len(lanes) != 0 {
+		if err := attachProposalLanes(server, lanes, pins, *origin, *laneEntity, *laneOutlet, token); err != nil {
+			return err
+		}
+		return server.Run(ctx, &mcp.IOTransport{Reader: io.NopCloser(in), Writer: quietWriter{out}, MaxLineLength: 16 * 1024})
+	}
 	var addSessionTool func(*mcp.Server, *mcpclient.ProposalClient)
 	switch *proposalSessionAction {
 	case "pos_product_rename":
