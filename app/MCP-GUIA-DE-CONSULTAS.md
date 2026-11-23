@@ -66,3 +66,13 @@ en esta sucursal? ¿Está bajo el mínimo o está apagado el control de stock?»
 control está activo tanto en el local como para el producto. Si está
 apagado en cualquiera de los dos, no calcula una alerta. Sólo consulta
 productos con stock configurado y no cambia el inventario.
+
+
+Para revisar alertas: «Mostrame los productos con stock negativo o bajo
+el mínimo en esta sucursal». Usá `gomar_list_stock` con `alert: any`,
+`negative` (saldo negativo) o `low` (saldo no negativo en o debajo del
+mínimo). El filtro solo incluye productos con control activo en locales
+con control activo; si el local lo tiene apagado, la lista filtrada queda
+vacía. Para seguir, repetí el filtro con el `next_product_id` de la página
+anterior. Si cambiás de filtro, omití el cursor y empezá de nuevo.
+El saldo es estimado y puede no incluir ventas de caja sin sincronizar.

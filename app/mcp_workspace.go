@@ -165,6 +165,67 @@ func mcpStockAlertSummary(r *http.Request, tx *sql.Tx, s mcpTokenScope) (any, er
 	return result, nil
 }
 
+// The existing numeric cursor is an exclusive product-ID bound. It does not
+// encode a filter. Repeat the same filter for continuation; reset the cursor
+// when switching filters to see matches before the prior bound.
+func stockPageQuery(r *http.Request) (after int64, alert string, err error) {
+	q, err := url.ParseQuery(r.URL.RawQuery)
+	if err != nil {
+		return 0, "", badInput
+	}
+	if _, filtered := q["alert"]; !filtered {
+		cursor, err := mcpOptionalQuery(r, "after_product_id")
+		if err != nil || cursor == "" {
+			return 0, "", err
+		}
+		after, err := strconv.ParseInt(cursor, 10, 64)
+		if err != nil || after <= 0 {
+			return 0, "", badInput
+		}
+		return after, "", nil
+	}
+	if len(q["alert"]) != 1 {
+		return 0, "", badInput
+	}
+	alert = q.Get("alert")
+	switch alert {
+	case "negative", "low", "any":
+	default:
+		return 0, "", badInput
+	}
+	q.Del("alert")
+	if len(q) == 0 {
+		return 0, alert, nil
+	}
+	if len(q) != 1 || len(q["after_product_id"]) != 1 {
+		return 0, "", badInput
+	}
+	after, err = strconv.ParseInt(q.Get("after_product_id"), 10, 64)
+	if err != nil || after <= 0 {
+		return 0, "", badInput
+	}
+	return after, alert, nil
+}
+
+type mcpStockPage struct {
+	Enabled       bool           `json:"enabled"`
+	Products      []mcpStockItem `json:"products"`
+	NextProductID int64          `json:"next_product_id,omitempty"`
+	AlertFilter   string         `json:"alert_filter,omitempty"`
+}
+
+// The source is the same projection as native stock. Apply the alert
+// predicate before the lookahead limit, not after fetching a page.
+const filteredOutletStock = `SELECT product_id,name,enabled,minimum,balance FROM (` +
+	currentOutletStock + ` AND t.product_id>$2 AND t.enabled
+	) AS stock_page(product_id,name,enabled,minimum,balance)
+	WHERE CASE $4::text
+		WHEN 'negative' THEN balance < 0
+		WHEN 'low' THEN balance >= 0 AND balance <= minimum
+		WHEN 'any' THEN balance <= minimum
+		ELSE FALSE
+	END ORDER BY product_id LIMIT $3`
+
 func mcpStock(r *http.Request, tx *sql.Tx, s mcpTokenScope) (any, error) {
 	if !stockReadRole(s.role) {
 		return nil, forbiddenRole
@@ -173,31 +234,28 @@ func mcpStock(r *http.Request, tx *sql.Tx, s mcpTokenScope) (any, error) {
 	if err != nil {
 		return nil, err
 	}
-	cursor, err := mcpOptionalQuery(r, "after_product_id")
+	after, alert, err := stockPageQuery(r)
 	if err != nil {
 		return nil, err
-	}
-	var after int64
-	if cursor != "" {
-		after, err = strconv.ParseInt(cursor, 10, 64)
-		if err != nil || after <= 0 {
-			return nil, badInput
-		}
 	}
 	enabled, err := stockOutletActive(r.Context(), tx, outlet)
 	if err != nil {
 		return nil, err
 	}
-	rows, err := tx.QueryContext(r.Context(), currentOutletStock+` AND t.product_id>$2 ORDER BY t.product_id LIMIT $3`, outlet, after, mcpPageSize+1)
+	result := mcpStockPage{Enabled: enabled, Products: []mcpStockItem{}, AlertFilter: alert}
+	if alert != "" && !enabled {
+		return result, nil
+	}
+	var rows *sql.Rows
+	if alert == "" {
+		rows, err = tx.QueryContext(r.Context(), currentOutletStock+` AND t.product_id>$2 ORDER BY t.product_id LIMIT $3`, outlet, after, mcpPageSize+1)
+	} else {
+		rows, err = tx.QueryContext(r.Context(), filteredOutletStock, outlet, after, mcpPageSize+1, alert)
+	}
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	result := struct {
-		Enabled       bool           `json:"enabled"`
-		Products      []mcpStockItem `json:"products"`
-		NextProductID int64          `json:"next_product_id,omitempty"`
-	}{Enabled: enabled, Products: []mcpStockItem{}}
 	for rows.Next() {
 		var item mcpStockItem
 		if err := rows.Scan(&item.ID, &item.Name, &item.Enabled, &item.Minimum, &item.Balance); err != nil {

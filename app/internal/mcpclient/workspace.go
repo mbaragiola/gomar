@@ -41,6 +41,7 @@ type Stock struct {
 	Enabled       bool           `json:"enabled"`
 	Products      []StockProduct `json:"products"`
 	NextProductID int64          `json:"next_product_id,omitempty"`
+	AlertFilter   string         `json:"alert_filter,omitempty"`
 }
 
 type DeliveryOrder struct {
@@ -149,6 +150,10 @@ func (c *Client) StockAlerts(ctx context.Context, entity, outlet int64) (StockAl
 }
 
 func (c *Client) Stock(ctx context.Context, entity, outlet int64, after *int64) (Stock, error) {
+	return c.StockWithAlert(ctx, entity, outlet, after, nil)
+}
+
+func (c *Client) StockWithAlert(ctx context.Context, entity, outlet int64, after *int64, alert *string) (Stock, error) {
 	var result Stock
 	query := url.Values{}
 	var last int64
@@ -159,16 +164,45 @@ func (c *Client) Stock(ctx context.Context, entity, outlet int64, after *int64) 
 		last = *after
 		query.Set("after_product_id", strconv.FormatInt(*after, 10))
 	}
-	err := c.getWorkspace(ctx, entity, outlet, "/stock", query, &result)
-	if err != nil {
-		return result, err
+	if alert != nil {
+		switch *alert {
+		case "negative", "low", "any":
+			query.Set("alert", *alert)
+		default:
+			return result, errors.New("indicá alert como negative, low o any, u omitilo")
+		}
 	}
-	if result.Products == nil || len(result.Products) > workspacePageSize {
+	if alert == nil {
+		if err := c.getWorkspace(ctx, entity, outlet, "/stock", query, &result); err != nil {
+			return result, err
+		}
+	} else {
+		var err error
+		result, err = c.filteredStockPage(ctx, entity, outlet, query)
+		if err != nil {
+			return Stock{}, err
+		}
+	}
+	if result.Products == nil || len(result.Products) > workspacePageSize ||
+		(alert != nil && (result.AlertFilter != *alert || (!result.Enabled && len(result.Products) != 0))) ||
+		(alert == nil && result.AlertFilter != "") {
 		return result, invalidResponse
 	}
 	for _, p := range result.Products {
 		if p.ID <= last || strings.TrimSpace(p.Name) == "" || p.Minimum < 0 || (p.Alert != "" && p.Alert != "low" && p.Alert != "negative") {
 			return result, invalidResponse
+		}
+		if alert != nil {
+			expected := ""
+			switch {
+			case p.Balance < 0:
+				expected = "negative"
+			case p.Balance <= p.Minimum:
+				expected = "low"
+			}
+			if !p.Enabled || expected == "" || p.Alert != expected || (*alert != "any" && *alert != expected) {
+				return Stock{}, invalidResponse
+			}
 		}
 		last = p.ID
 	}
@@ -176,6 +210,38 @@ func (c *Client) Stock(ctx context.Context, entity, outlet int64, after *int64) 
 		return result, invalidResponse
 	}
 	return result, nil
+}
+
+func (c *Client) filteredStockPage(ctx context.Context, entity, outlet int64, query url.Values) (Stock, error) {
+	var wire struct {
+		Enabled  *bool `json:"enabled"`
+		Products []struct {
+			ID      *int64 `json:"id"`
+			Name    string `json:"name"`
+			Enabled *bool  `json:"enabled"`
+			Minimum *int64 `json:"minimum"`
+			Balance *int64 `json:"balance"`
+			Alert   string `json:"alert"`
+		} `json:"products"`
+		NextProductID int64  `json:"next_product_id"`
+		AlertFilter   string `json:"alert_filter"`
+	}
+	if err := c.getWorkspace(ctx, entity, outlet, "/stock", query, &wire); err != nil {
+		return Stock{}, err
+	}
+	if wire.Enabled == nil || wire.Products == nil || len(wire.Products) > workspacePageSize {
+		return Stock{}, invalidResponse
+	}
+	out := Stock{Enabled: *wire.Enabled, NextProductID: wire.NextProductID, AlertFilter: wire.AlertFilter,
+		Products: make([]StockProduct, 0, len(wire.Products))}
+	for _, p := range wire.Products {
+		if p.ID == nil || p.Enabled == nil || p.Minimum == nil || *p.Minimum > 1_000_000 || p.Balance == nil {
+			return Stock{}, invalidResponse
+		}
+		out.Products = append(out.Products, StockProduct{Named: Named{ID: *p.ID, Name: p.Name},
+			Enabled: *p.Enabled, Minimum: *p.Minimum, Balance: *p.Balance, Alert: p.Alert})
+	}
+	return out, nil
 }
 
 type DeliveryStatusSummary struct {

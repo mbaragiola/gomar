@@ -59,10 +59,29 @@ func TestLiveStdioScopedTools(t *testing.T) {
 			w.WriteHeader(http.StatusNotFound)
 			_, _ = io.WriteString(w, secret)
 		case "/api/v1/mcp/entities/20/outlets/10/stock":
-			if r.URL.RawQuery != "after_product_id=1" {
-				t.Errorf("incorrect stock query: %s", r.URL.RawQuery)
+			switch r.URL.RawQuery {
+			case "after_product_id=1&alert=low":
+				_, _ = io.WriteString(w, `{"enabled":true,"alert_filter":"low","products":[{"id":2,"name":"Pan","enabled":true,"minimum":8,"balance":8,"alert":"low"}]}`)
+			case "alert=negative":
+				// Simulate an older server silently ignoring the filter.
+				_, _ = io.WriteString(w, `{"enabled":true,"products":[]}`)
+			case "alert=any":
+				// Acknowledging a filter is not enough if returned rows do not match.
+				_, _ = io.WriteString(w, `{"enabled":true,"alert_filter":"any","products":[{"id":2,"name":"Pan","enabled":false,"minimum":8,"balance":-1,"alert":"negative"}]}`)
+			case "after_product_id=2&alert=low":
+				_, _ = io.WriteString(w, `{"enabled":true,"alert_filter":"low","products":[{"id":3,"name":"Pan","enabled":true,"minimum":0,"alert":"low"}]}`)
+			case "after_product_id=3&alert=low":
+				_, _ = io.WriteString(w, `{"enabled":true,"alert_filter":"low","products":[{"id":4,"name":"Pan","enabled":true,"minimum":null,"balance":0,"alert":"low"}]}`)
+			case "after_product_id=4&alert=low":
+				_, _ = io.WriteString(w, `{"enabled":null,"alert_filter":"low","products":[]}`)
+			case "after_product_id=5&alert=low":
+				_, _ = io.WriteString(w, `{"enabled":true,"alert_filter":"low","products":[{"id":6,"name":"Pan","enabled":null,"minimum":0,"balance":0,"alert":"low"}]}`)
+			default:
+				if r.URL.RawQuery != "after_product_id=1" {
+					t.Errorf("incorrect stock query: %s", r.URL.RawQuery)
+				}
+				_, _ = io.WriteString(w, `{"enabled":true,"products":[{"id":2,"name":"Pan","enabled":true,"minimum":8,"balance":7,"alert":"low"}]}`)
 			}
-			_, _ = io.WriteString(w, `{"enabled":true,"products":[{"id":2,"name":"Pan","enabled":true,"minimum":8,"balance":7,"alert":"low"}]}`)
 		case "/api/v1/mcp/entities/20/outlets/10/delivery-status-summary":
 			if r.URL.RawQuery != "" {
 				t.Error("unexpected delivery summary filter")
@@ -196,6 +215,14 @@ func TestLiveStdioScopedTools(t *testing.T) {
 		{"gomar_read_knowledge_article", map[string]any{"entity_id": 20, "outlet_id": 10, "article_id": 5}, `"body":"Texto de prueba"`, false},
 		{"gomar_stock_alert_summary", map[string]any{"entity_id": 20, "outlet_id": 10}, `"tracked":36`, false},
 		{"gomar_list_stock", map[string]any{"entity_id": 20, "outlet_id": 10, "after_product_id": 1}, `"balance":7`, false},
+		{"gomar_list_stock", map[string]any{"entity_id": 20, "outlet_id": 10, "after_product_id": 1, "alert": "low"}, `"alert_filter":"low"`, false},
+		{"gomar_list_stock", map[string]any{"entity_id": 20, "outlet_id": 10, "alert": "negative"}, "", true},
+		{"gomar_list_stock", map[string]any{"entity_id": 20, "outlet_id": 10, "alert": "any"}, "", true},
+		{"gomar_list_stock", map[string]any{"entity_id": 20, "outlet_id": 10, "alert": ""}, "alert", true},
+		{"gomar_list_stock", map[string]any{"entity_id": 20, "outlet_id": 10, "after_product_id": 2, "alert": "low"}, "", true},
+		{"gomar_list_stock", map[string]any{"entity_id": 20, "outlet_id": 10, "after_product_id": 3, "alert": "low"}, "", true},
+		{"gomar_list_stock", map[string]any{"entity_id": 20, "outlet_id": 10, "after_product_id": 4, "alert": "low"}, "", true},
+		{"gomar_list_stock", map[string]any{"entity_id": 20, "outlet_id": 10, "after_product_id": 5, "alert": "low"}, "", true},
 		{"gomar_read_stock_product", map[string]any{"entity_id": 20, "outlet_id": 10, "product_id": 2}, `"alert":"low"`, false},
 		{"gomar_read_stock_product", map[string]any{"entity_id": 20, "outlet_id": 11, "product_id": 2}, "permisos", true},
 		{"gomar_read_stock_product", map[string]any{"entity_id": 21, "outlet_id": 10, "product_id": 2}, "permisos", true},
@@ -253,7 +280,7 @@ func TestLiveStdioScopedTools(t *testing.T) {
 			t.Fatalf("unexpected result for %s: %s", test.name, wire)
 		}
 	}
-	if requests.Load() != 40 {
+	if requests.Load() != 47 {
 		t.Fatalf("wrong number of requests: %d", requests.Load())
 	}
 	if err := session.Close(); err != nil {

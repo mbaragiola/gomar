@@ -277,13 +277,79 @@ func TestPostgresMCPWorkspaceReadsKeepOutletAndRoleScope(t *testing.T) {
 		ap.Totals[0].OverdueMinor != 10250 || ap.Totals[1].OutstandingMinor != 275 || ap.Totals[1].OverdueMinor != 0 || strings.Contains(report, "supplier") {
 		t.Fatal("unexpected scoped payables")
 	}
-	for _, suffix := range []string{"/knowledge", "/knowledge/1", "/stock", "/stock/1", "/stock-alert-summary", "/delivery-orders", "/delivery-status-summary", "/payables-summary"} {
+	for _, suffix := range []string{"/knowledge", "/knowledge/1", "/stock", "/stock?alert=any", "/stock/1", "/stock-alert-summary", "/delivery-orders", "/delivery-status-summary", "/payables-summary"} {
 		invoke(mux, "GET", "/api/v1/mcp/entities/1/outlets/2"+suffix, "", token, false, 404)
 		invoke(mux, "GET", "/api/v1/mcp/entities/1/outlets/3"+suffix, "", broader, false, 404)
 		invoke(mux, "GET", "/api/v1/mcp/entities/2/outlets/4"+suffix, "", token, false, 404)
 	}
+	// Sparse matches span multiple filtered pages; unfiltered rows and
+	// disabled rows before and between matches must not consume the limit.
+	if _, err := db.ExecContext(ctx, `
+ INSERT INTO pos_products(id,outlet_id,current_revision) SELECT i,1,1 FROM generate_series(110,239) i;
+ INSERT INTO pos_product_versions(product_id,outlet_id,revision,name,price_minor,active)
+ SELECT i,1,1,'Filtered fixture '||i,100,true FROM generate_series(110,239) i;
+ INSERT INTO stock_products(outlet_id,product_id,enabled,minimum)
+ SELECT 1,i,i%5<>0,0 FROM generate_series(110,239) i;
+ INSERT INTO stock_movements(outlet_id,product_id,actor_id,kind,quantity,delta,recorded_at,request_id)
+ SELECT 1,i,1,'recepcion',1,1,'2026-11-01T00:00:00Z','22222222-0000-4000-8000-'||lpad(i::text,12,'0')
+ FROM generate_series(110,239) i WHERE i%2=0;`); err != nil {
+		t.Fatal(err)
+	}
+	var first, second, switched, negative, disabledPage mcpclient.Stock
+	raw := read("/stock", 200)
+	if strings.Contains(raw, "alert_filter") {
+		t.Fatal("unfiltered response changed")
+	}
+	decode(read("/stock?alert=low&after_product_id=110", 200), &first)
+	if first.AlertFilter != "low" || !first.Enabled || len(first.Products) != 30 ||
+		first.Products[0].ID != 111 || first.NextProductID != 183 || first.Products[29].ID != 183 {
+		t.Fatal("wrong first sparse page", first)
+	}
+	decode(read(fmt.Sprintf("/stock?alert=low&after_product_id=%d", first.NextProductID), 200), &second)
+	if second.AlertFilter != "low" || len(second.Products) != 22 || second.Products[0].ID != 187 ||
+		second.Products[21].ID != 239 || second.NextProductID != 0 {
+		t.Fatal("wrong last sparse page", second)
+	}
+	for _, p := range append(first.Products, second.Products...) {
+		if p.ID%2 != 1 || p.ID%5 == 0 || p.Alert != "low" || p.Balance != 0 || p.Minimum != 0 {
+			t.Fatal("filter admitted a non-match", p)
+		}
+	}
+	decode(read("/stock?alert=negative", 200), &negative)
+	if negative.AlertFilter != "negative" || len(negative.Products) != 1 || negative.Products[0].ID != 2 ||
+		negative.Products[0].Alert != "negative" {
+		t.Fatal("negative must win over low", negative)
+	}
+	decode(read("/stock?alert=negative&after_product_id=183", 200), &switched)
+	if switched.AlertFilter != "negative" || len(switched.Products) != 0 || switched.NextProductID != 0 {
+		t.Fatal("numeric cursor must remain an exclusive ID bound", switched)
+	}
+	var anyPage mcpclient.Stock
+	decode(read("/stock?alert=any", 200), &anyPage)
+	if anyPage.AlertFilter != "any" || len(anyPage.Products) != 30 || anyPage.Products[0].Alert != "low" ||
+		anyPage.Products[1].Alert != "negative" {
+		t.Fatal("any must include both alert classes", anyPage)
+	}
+	decode(invoke(mux, "GET", "/api/v1/mcp/entities/1/outlets/2/stock?alert=any", "", broader, false, 200).Body.String(), &disabledPage)
+	if disabledPage.AlertFilter != "any" || disabledPage.Enabled || disabledPage.Products == nil || len(disabledPage.Products) != 0 || disabledPage.NextProductID != 0 {
+		t.Fatal("disabled outlet must not expose filtered stock", disabledPage)
+	}
+	for _, query := range []string{"alert=", "alert=LOW", "alert=unknown", "alert=any&alert=any", "alert=low&after_product_id=", "alert=negative&after_product_id=0", "alert=any&after_product_id=1&after_product_id=2", "alert=low&invalid=1"} {
+		read("/stock?"+query, 422)
+	}
+	for _, role := range []string{"purchasing", "accounting", "read_only", "administration"} {
+		if _, err := db.ExecContext(ctx, `UPDATE memberships SET role=$1 WHERE id=1`, role); err != nil {
+			t.Fatal(err)
+		}
+		status := 200
+		if role == "read_only" {
+			status = 403
+		}
+		read("/stock?alert=any", status)
+	}
 	noFeature := (&app{db: db, host: "example.com", enableMCP: true, mcpClock: a.mcpClock}).routes()
 	invoke(noFeature, "GET", base+"/stock", "", token, false, 404)
+	invoke(noFeature, "GET", base+"/stock?alert=any", "", token, false, 404)
 	invoke(noFeature, "GET", base+"/stock/1", "", token, false, 404)
 	for _, enabled := range []struct{ pos, stock bool }{{true, false}, {false, true}} {
 		app := (&app{db: db, host: "example.com", enableMCP: true, enablePOS: enabled.pos, enableStock: enabled.stock, mcpClock: a.mcpClock}).routes()
