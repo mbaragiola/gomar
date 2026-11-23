@@ -60,15 +60,17 @@ func (a *app) readPOSTableCheck(r *http.Request, tx *sql.Tx, m entityMembership,
 
 func loadPOSTableCheck(ctx context.Context, tx *sql.Tx, outlet, number, id int64) (posTableCheck, error) {
 	row := posTableCheck{ID: strconv.FormatInt(id, 10), State: "sin_cobro", Table: number, Items: []posSaleItem{}}
-	var retired bool
-	err := tx.QueryRowContext(ctx, `SELECT c.total_minor,r.check_id IS NOT NULL
+	var retired, hasTender bool
+	err := tx.QueryRowContext(ctx, `SELECT c.total_minor,r.check_id IS NOT NULL, EXISTS (SELECT 1 FROM pos_table_tender_events e WHERE e.outlet_id=c.outlet_id AND e.check_id=c.id)
  FROM pos_table_checks c LEFT JOIN pos_table_check_retirements r ON r.check_id=c.id
- WHERE c.outlet_id=$1 AND c.table_number=$2 AND c.id=$3`, outlet, number, id).Scan(&row.Total, &retired)
+ WHERE c.outlet_id=$1 AND c.table_number=$2 AND c.id=$3`, outlet, number, id).Scan(&row.Total, &retired, &hasTender)
 	if err != nil {
 		return posTableCheck{}, err
 	}
 	if retired {
 		row.State = "retirada"
+	} else if hasTender {
+		row.State = "con_registros"
 	}
 	items, err := tx.QueryContext(ctx, `SELECT i.product_id,i.revision,i.quantity,v.name,v.price_minor
  FROM pos_table_check_items i JOIN pos_product_versions v
@@ -210,18 +212,23 @@ func mcpPOSTableCheck(r *http.Request, tx *sql.Tx, s mcpTokenScope) (any, error)
 		return nil, badInput
 	}
 	var total int64
-	err = tx.QueryRowContext(r.Context(), `SELECT c.total_minor FROM pos_table_check_slots s JOIN pos_table_checks c ON c.id=s.check_id WHERE s.outlet_id=$1 AND s.table_number=$2`,
-		outlet, number).Scan(&total)
+	var hasTender bool
+	err = tx.QueryRowContext(r.Context(), `SELECT c.total_minor, EXISTS (SELECT 1 FROM pos_table_tender_events e WHERE e.outlet_id=s.outlet_id AND e.check_id=s.check_id) FROM pos_table_check_slots s JOIN pos_table_checks c ON c.id=s.check_id WHERE s.outlet_id=$1 AND s.table_number=$2`,
+		outlet, number).Scan(&total, &hasTender)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, posTableCheckMissing
 	}
 	if err != nil {
 		return nil, err
 	}
+	state := "untendered"
+	if hasTender {
+		state = "manual_records"
+	}
 	return struct {
 		Table int64  `json:"table_number"`
 		Total int64  `json:"total_minor"`
 		State string `json:"state"`
 		URL   string `json:"handoff_url"`
-	}{number, total, "untendered", fmt.Sprintf("/pos#entity=%d&outlet=%d&table=%d", s.ID, outlet, number)}, nil
+	}{number, total, state, fmt.Sprintf("/pos#entity=%d&outlet=%d&table=%d", s.ID, outlet, number)}, nil
 }

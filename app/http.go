@@ -46,6 +46,7 @@ type app struct {
 	publicReservations                        bool
 	enablePOS                                 bool
 	enablePOSTableChecks                      bool
+	enablePOSManualTender                     bool
 	enableMCP                                 bool
 	enableMCPWikiProposals                    bool
 	enableMCPDocumentProposals                bool

@@ -64,6 +64,10 @@ func (a *app) registerPOS(add func(string, string, http.HandlerFunc)) {
 		add(posPath+"/table-checks", http.MethodPost, a.scopedRequest("read_business_data", a.lockOutletForOperation(a.savePOSTableCheck), true))
 		add(posPath+"/table-checks/{table}", http.MethodGet, a.scoped("read_business_data", a.readPOSTableCheck))
 		add(posPath+"/table-checks/{table}/retire", http.MethodPost, a.scopedRequest("read_business_data", a.lockOutletForOperation(a.retirePOSTableCheck), true))
+		if a.enablePOSManualTender {
+			add(posPath+"/table-checks/{table}/tender", http.MethodGet, a.scoped("read_business_data", a.readPOSTender))
+			add(posPath+"/table-checks/{table}/tender", http.MethodPost, a.scopedRequest("read_business_data", a.lockOutletForOperation(a.writePOSTender), true))
+		}
 	}
 	add(posPath+"/catalog", "POST", a.scopedRequest("manage_entity_access", a.lockOutletForOperation(savePOSProduct), true))
 	add(posPath+"/catalog/{product}", "PUT", a.scopedRequest("manage_entity_access", a.lockOutletForOperation(savePOSProduct), true))
@@ -125,10 +129,11 @@ func (a *app) listPOSCatalog(r *http.Request, tx *sql.Tx, m entityMembership, _ 
 		products = append(products, p)
 	}
 	return 200, struct {
-		Actor       int64        `json:"actor_id"`
-		Products    []posProduct `json:"productos"`
-		TableChecks bool         `json:"cuentas_mesa,omitempty"`
-	}{m.userID, products, a.enablePOSTableChecks && posSellingRole(m.role)}, rows.Err()
+		Actor        int64        `json:"actor_id"`
+		Products     []posProduct `json:"productos"`
+		TableChecks  bool         `json:"cuentas_mesa,omitempty"`
+		ManualTender bool         `json:"registro_medios_pago,omitempty"`
+	}{m.userID, products, a.enablePOSTableChecks && posSellingRole(m.role), a.enablePOSManualTender && a.enablePOSTableChecks && posSellingRole(m.role)}, rows.Err()
 }
 
 func savePOSProduct(r *http.Request, tx *sql.Tx, m entityMembership, raw []byte) (int, any, error) {
