@@ -45,9 +45,37 @@ explicit retry of the same request; reconciliation never issues.
 
 This simulator can look up a sale ID directly; a particular printer may
 not support that. If an adapter cannot prove the exact outcome, it must
-remain blocked for operator reconciliation. The in-memory state here
-cannot survive crashes and is not safe for production. The request is a
+remain blocked for operator reconciliation. The default in-memory controller does not survive a restart. The file-backed
+fixture below tests reopening a controller against the same live in-process
+fake device; it is not safe for production. The request is a
 test envelope, not the data needed to issue real fiscal documents.
+
+## Local restart fixture
+
+Use a private scratch directory on a local filesystem. Create a new fixture
+with `CreateSimulatorJournal` and resume it with `OpenSimulatorJournal`.
+These are different operations: resume fails when storage is missing or
+invalid; it never creates an empty journal. Close the old controller
+before reopening and retain the same simulator instance, which stands in
+for the device and its separate memory. Another simulator with the same
+point of sale is not the same device.
+
+The fixture records an unknown attempt and syncs the snapshot before any
+device call. It syncs file data, atomically replaces the snapshot, and
+syncs its directory before reporting completion. If a write fails it
+stops that controller, leaving recovery to a fresh read of the last
+complete snapshot. A restart never triggers device I/O. Corrupt snapshots
+fail closed and are not repaired. A checksum catches accidental damage;
+it does not protect against malicious edits or restoring an old snapshot.
+Never replace a journal with an older copy or recreate a missing journal
+for an unresolved device.
+
+The fixture prevents two simultaneous opens in one process, not two
+processes or a production worker takeover. It does not authorize payment
+or fiscal issuance, hold real credentials, run a local print bridge, or
+test a physical restart. The test closes and recreates the controller
+while retaining the fake device, then verifies the exact device document
+count before and after reconciliation.
 
 ## Hardware pilot prerequisites
 
