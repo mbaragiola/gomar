@@ -202,6 +202,7 @@ four fields are required for a lookup; omitting the lookup preserves the
 ordinary list. Results use the current branch grant and business reading
 permission. Different issuers can print the same reference. If several
 documents match, open the right one explicitly in Gomar rather than using
-the first. With `next_id`, request the next page using the same reference
-and branch. Pages are not a snapshot. The filter does not disclose new
+the first. Opening a match in Gomar rechecks the same branch and reference
+in case the document moved or was corrected. With `next_id`, request the
+next page using the same reference and branch. Pages are not a snapshot. The filter does not disclose new
 supplier details, retrieve files, change a record, or approve a review.

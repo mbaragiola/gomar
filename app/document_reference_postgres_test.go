@@ -163,11 +163,41 @@ func TestPostgresPrintedReferenceFindersScopeAndPagination(t *testing.T) {
 	if !reflect.DeepEqual(other, []int64{71}) || next != 0 {
 		t.Fatal("other granted outlet incorrectly included target results", other)
 	}
+	// Read a matching draft in outlet 1, then use the genuine native edit to
+	// move that same draft to outlet 2. The old outlet's stale button must
+	// not turn into an entity-wide detail read, even with grants on both.
+	detail1 := "entities/1/outlets/1/documents/37/printed-reference-detail?" + query
+	detail2 := "entities/1/outlets/2/documents/37/printed-reference-detail?" + query
+	readNative(detail1, 200)
+	notFound := readNative("entities/1/outlets/1/documents/999/printed-reference-detail?"+query, 404)
+	if wrong := readNative(strings.Replace(detail1, "number=345", "number=346", 1), 404); string(wrong) != string(notFound) {
+		t.Fatalf("wrong reference differed from missing detail: %s", wrong)
+	}
+	readMCP(detail1, narrow, 401)
+	if _, err := db.ExecContext(ctx, `UPDATE memberships SET role='administration';
+		UPDATE suppliers SET cuit='30711111111' WHERE id=37;
+		UPDATE documents SET issuer_cuit='30711111111' WHERE id=37`); err != nil {
+		t.Fatal(err)
+	}
+	const move = `{"outlet_id":2,"supplier_id":37,"issuer_cuit":"30711111111","tipo":"credit_note","letra":"",
+		"punto_venta":12,"numero":345,"moneda":"ARS","fecha_emision":"2026-11-01","total":"0.25",
+		"descripcion":"native move private description","expected_revision":1,"motivo":"native move private audit"}`
+	req("PUT", "entities/1/documents/37", move, "", true, 200)
+	if stale := readNative(detail1, 404); string(stale) != string(notFound) {
+		t.Fatalf("stale result exposed data or differed from missing detail: %s", stale)
+	}
+	for _, path := range []string{detail2, "entities/1/documents/37"} {
+		current := string(readNative(path, 200))
+		if !strings.Contains(current, `"outlet":{"id":2`) || !strings.Contains(current, "native move private audit") {
+			t.Fatalf("legitimate current native detail not available on %s", path)
+		}
+	}
 	if _, err := db.ExecContext(ctx, "UPDATE memberships SET role='unassigned'"); err != nil {
 		t.Fatal(err)
 	}
 	readMCP(mcp1+"?"+query, narrow, 403)
 	readNative(native1+"?outlet_id=1&"+query, 403)
+	readNative(detail2, 403)
 	if _, err := db.ExecContext(ctx, "UPDATE memberships SET role='purchasing'; DELETE FROM outlet_grants WHERE outlet_id=1"); err != nil {
 		t.Fatal(err)
 	}

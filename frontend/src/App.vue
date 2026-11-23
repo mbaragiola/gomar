@@ -668,23 +668,49 @@ async function changeOutlet() {
   }
 }
 
-async function openDocument(id: number) {
+function openReferenceDocument(id: number) {
+  const reference = appliedReference.value
+  if (reference) void openDocument(id, reference)
+}
+
+async function openDocument(id: number, reference?: PrintedReference) {
   clearHandoffLocation()
-  if (!selectedEntityId.value) return
+  if (!selectedEntityId.value || reference && !selectedOutletId.value) return
   const sessionToken = sessionGeneration
   const contextToken = contextGeneration
   const entityId = selectedEntityId.value
   const detailToken = ++detailGeneration
+  const outlet = selectedOutletId.value
+  const current = () => contextIsCurrent(sessionToken, contextToken, entityId) && detailToken === detailGeneration &&
+    (!reference || selectedOutletId.value === outlet && appliedReference.value === reference)
   selectedDocument.value = null
   error.value = ''
+  if (reference) referenceError.value = ''
   try {
-    const detail = await request<Document>(`/entities/${entityId}/documents/${id}`)
-    if (contextIsCurrent(sessionToken, contextToken, entityId) && detailToken === detailGeneration) {
+    let detail: Document
+    if (reference) {
+      const query = new URLSearchParams({
+        document_type: reference.document_type, letter: reference.letter,
+        point_of_sale: String(reference.point_of_sale), number: String(reference.number),
+      })
+      detail = await request<Document>(`/entities/${entityId}/outlets/${outlet}/documents/${id}/printed-reference-detail?${query}`, {
+        cache: 'no-store', referrerPolicy: 'no-referrer',
+      })
+      if (detail.id !== id || detail.entity_id !== entityId || detail.outlet.id !== outlet ||
+        detail.tipo !== reference.document_type || detail.letra !== reference.letter ||
+        detail.punto_venta !== reference.point_of_sale || detail.numero !== reference.number) throw new Error('No se encontró el comprobante.')
+    } else {
+      detail = await request<Document>(`/entities/${entityId}/documents/${id}`)
+    }
+    if (current()) {
       selectedDocument.value = detail
       showMobileDocument()
     }
   } catch (value) {
-    if (contextIsCurrent(sessionToken, contextToken, entityId) && detailToken === detailGeneration) showError(value)
+    if (current()) {
+      if (reference) referenceError.value = 'El comprobante ya no coincide en este local. Hacé la búsqueda de nuevo.'
+      else showError(value)
+    }
   }
 }
 
@@ -1486,8 +1512,8 @@ onBeforeUnmount(() => window.removeEventListener('hashchange', syncAttachmentHan
         </section>
 
         <section v-show="staffView === 'documents'" class="summary-grid staff-totals" :class="{ 'staff-mobile-detail': showDocumentDetail || showCreate }">
-          <article class="metric card"><span>Comprobantes</span><strong>{{ total.cantidad }}</strong></article>
-          <article v-for="row in total.totales" :key="row.moneda" class="metric card"><span>Total {{ row.moneda }}</span><strong>{{ money(row.total, row.moneda) }}</strong></article>
+          <article class="metric card"><span>{{ appliedReference ? 'Todos los comprobantes del local' : 'Comprobantes' }}</span><strong>{{ total.cantidad }}</strong></article>
+          <article v-for="row in total.totales" :key="row.moneda" class="metric card"><span>{{ appliedReference ? 'Total del local' : 'Total' }} {{ row.moneda }}</span><strong>{{ money(row.total, row.moneda) }}</strong></article>
         </section>
 
         <ReconciliationPanel
@@ -1655,7 +1681,7 @@ onBeforeUnmount(() => window.removeEventListener('hashchange', syncAttachmentHan
                 <template v-else-if="!referenceError">No hay coincidencias en este local.</template>
               </p>
               <div v-if="referenceMatches.length" class="document-list">
-                <button v-for="match in referenceMatches" :key="match.id" type="button" class="document-row" :class="{ active: selectedDocument?.id === match.id }" @click="openDocument(match.id)">
+                <button v-for="match in referenceMatches" :key="match.id" type="button" class="document-row" :class="{ active: selectedDocument?.id === match.id }" @click="openReferenceDocument(match.id)">
                   <span><strong>Comprobante {{ match.id }}</strong><small>{{ localDate(match.issue_date) }}</small></span>
                   <span class="status" :class="match.status">{{ match.status === 'draft' ? 'Pendiente' : 'Revisado' }}</span>
                 </button>

@@ -249,6 +249,65 @@ func documentDetail(r *http.Request, tx *sql.Tx, m entityMembership, _ []byte) (
 	return 200, item, err
 }
 
+// Only the filtered row click uses this read. An operator can legitimately
+// have grants on two outlets, but must not land in the other outlet if a
+// native edit moved the document after the list was loaded.
+func (a *app) printedReferenceDocumentDetail(w http.ResponseWriter, r *http.Request, u user) error {
+	w.Header().Set("Referrer-Policy", "no-referrer")
+	if len(r.Header.Values("Authorization")) != 0 {
+		return missingDocumentDetail
+	}
+	entity, err := pathID(r, "entity")
+	if err != nil {
+		return missingDocumentDetail
+	}
+	outlet, err := pathID(r, "outlet")
+	if err != nil {
+		return missingDocumentDetail
+	}
+	id, err := pathID(r, "document")
+	if err != nil {
+		return missingDocumentDetail
+	}
+	query, err := url.ParseQuery(r.URL.RawQuery)
+	if err != nil {
+		return badInput
+	}
+	reference, valid := documentref.TakeQuery(query)
+	if !valid || reference == nil || len(query) != 0 {
+		return badInput
+	}
+	// Check the branch and printed reference, then read the authorized
+	// attachment metadata and audit in one read-only database snapshot.
+	// A concurrent native move/correction cannot mix rows from both versions.
+	tx, err := a.db.BeginTx(r.Context(), &sql.TxOptions{Isolation: sql.LevelRepeatableRead, ReadOnly: true})
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	m, err := scopedMembership(tx, u.id, entity, "read_business_data")
+	if err != nil {
+		return err
+	}
+	item, err := scanDocument(tx.QueryRowContext(r.Context(), selectDocuments+
+		` AND d.id=$4 AND d.document_type=$5 AND d.letter=$6 AND d.point_of_sale=$7 AND d.number=$8`,
+		m.ID, m.id, outlet, id, reference.DocumentType, reference.Letter, reference.PointOfSale, reference.Number), m.ID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return missingDocumentDetail
+	}
+	if err != nil {
+		return err
+	}
+	view, err := readVisibleDocumentDetail(tx, item)
+	if err != nil {
+		return err
+	}
+	jsonResponse(w, http.StatusOK, view)
+	return nil
+}
+
+var missingDocumentDetail = problem{404, "No se encontró el comprobante."}
+
 var documentAuditLabels = map[string]string{
 	"create": "Alta", "update": "Modificación", "delete": "Baja", "review": "Revisión", "attach": "Adjunto",
 }
@@ -270,18 +329,22 @@ type documentView struct {
 func readDocumentView(tx *sql.Tx, m entityMembership, id int64) (documentView, error) {
 	item, err := scanDocument(tx.QueryRow(selectDocuments+" AND d.id=$4", m.ID, m.id, nil, id), m.ID)
 	if errors.Is(err, sql.ErrNoRows) {
-		return documentView{}, problem{404, "No se encontró el comprobante."}
+		return documentView{}, missingDocumentDetail
 	}
 	if err != nil {
 		return documentView{}, err
 	}
-	attachments, err := readDocumentAttachments(tx, id)
+	return readVisibleDocumentDetail(tx, item)
+}
+
+func readVisibleDocumentDetail(tx *sql.Tx, item documentListItem) (documentView, error) {
+	attachments, err := readDocumentAttachments(tx, item.ID)
 	if err != nil {
 		return documentView{}, err
 	}
 	rows, err := tx.Query(`SELECT a.action,u.username,a.occurred_at,a.reason
 		FROM document_audit a JOIN users u ON u.id=a.actor_id
-		WHERE a.document_id=$1 ORDER BY a.occurred_at,a.id`, id)
+		WHERE a.document_id=$1 ORDER BY a.occurred_at,a.id`, item.ID)
 	if err != nil {
 		return documentView{}, err
 	}
