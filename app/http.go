@@ -36,6 +36,7 @@ type app struct {
 	enableMCPReservationCancelProposals   bool
 	enableMCPReservationConfirmProposals  bool
 	enableMCPReservationTableAddProposals bool
+	enableMCPReservationSlotAddProposals  bool
 	publicReservations                    bool
 	enablePOS                             bool
 	enableMCP                             bool
@@ -237,6 +238,7 @@ func (a *app) routes() http.Handler {
 	a.registerReservations(addAPI, a.publicReservations)
 	a.registerMCPReservationConfirmProposals(addAPI)
 	a.registerMCPReservationTableAddProposals(addAPI)
+	a.registerMCPReservationSlotAddProposals(addAPI)
 	a.registerMCPReservationCancelProposals(addAPI)
 	a.registerMCPPOSCreateProposals(addAPI)
 	a.registerMCPStockMinimumProposals(addAPI)

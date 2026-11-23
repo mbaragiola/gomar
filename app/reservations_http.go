@@ -266,8 +266,12 @@ func reservationSlotCreate(r *http.Request, tx *sql.Tx, outlet int64, body []byt
 		return 0, nil, err
 	}
 	input.StartAt = start
-	_, err = tx.ExecContext(r.Context(), `INSERT INTO reservation_slots(outlet_id,start_at) VALUES($1,$2)`, outlet, start)
-	return 201, input, reservationWriteError(err)
+	return 201, input, insertReservationSlot(r.Context(), tx, outlet, start)
+}
+
+func insertReservationSlot(ctx context.Context, tx *sql.Tx, outlet int64, start string) error {
+	_, err := tx.ExecContext(ctx, `INSERT INTO reservation_slots(outlet_id,start_at) VALUES($1,$2)`, outlet, start)
+	return reservationWriteError(err)
 }
 func reservationConstraintCode(err error) string {
 	var pg interface{ SQLState() string }
