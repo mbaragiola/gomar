@@ -228,7 +228,9 @@ Scanning and the cart stay in the register browser tab. Open **Punto de
 venta**, select the business and branch, enable the register in that tab,
 then scan or type a code and press Enter. An offline register uses its
 saved catalog while its grant is valid. Enable it again online to get new
-codes. A scan adds to the cart; it never checks out or charges a sale.
+codes. Before moving a code to a different product, refresh every
+register: an offline register can still match the old product until its
+grant expires or the register is re-enabled. A scan adds to the cart; it never checks out or charges a sale.
 
 ### Paper table check (native only)
 
