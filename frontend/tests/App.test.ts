@@ -634,13 +634,18 @@ describe('aplicación', () => {
     await wrapper.find('.document-row').trigger('click')
     await flushPromises()
 
+    const picker = wrapper.get('input[aria-label="Archivo adjunto"]')
+    expect(picker.attributes('accept')?.split(',')).toEqual(['.png', '.jpg', '.jpeg', 'image/png', 'image/jpeg'])
+    const hint = wrapper.get('#' + picker.attributes('aria-describedby')).text()
+    expect(hint).toBe('Una imagen PNG o JPEG por carga. Máximo 10 MiB y 40 megapíxeles por imagen.')
+
     async function chooseFile(name: string) {
       const input = wrapper.find('input[type="file"]')
-      Object.defineProperty(input.element, 'files', { configurable: true, value: [new File(['pdf'], name, { type: 'application/pdf' })] })
+      Object.defineProperty(input.element, 'files', { configurable: true, value: [new File(['synthetic PNG'], name, { type: 'image/png' })] })
       await input.trigger('change')
     }
 
-    await chooseFile('primero.pdf')
+    await chooseFile('primero.png')
     await wrapper.find('form.upload').trigger('submit')
     expect(wrapper.find('form.upload button').attributes('disabled')).toBeDefined()
 
@@ -648,7 +653,7 @@ describe('aplicación', () => {
     await flushPromises()
     await wrapper.find('.document-row').trigger('click')
     await flushPromises()
-    await chooseFile('segundo.pdf')
+    await chooseFile('segundo.png')
     expect(wrapper.find('form.upload button').attributes('disabled')).toBeUndefined()
     await wrapper.find('form.upload').trigger('submit')
 
@@ -658,7 +663,7 @@ describe('aplicación', () => {
 
     currentUpload.resolve(new Response(JSON.stringify({ id: 8 }), { status: 201, headers: { 'Content-Type': 'application/json' } }))
     await flushPromises()
-    await chooseFile('tercero.pdf')
+    await chooseFile('tercero.png')
     expect(wrapper.find('form.upload button').attributes('disabled')).toBeUndefined()
   })
 

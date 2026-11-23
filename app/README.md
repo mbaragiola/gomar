@@ -98,4 +98,6 @@ Google or Microsoft after opening the link, reopen it once signed in.
 
 An MCP document result can help you identify the draft, but it does not
 contain attachment data or a handoff link. Open, upload, and download files
-only in Gomar using its existing controls.
+only in Gomar using its existing controls. The private attachment picker
+accepts one PNG or JPEG per upload, up to 10 MiB and 40 megapixels per
+image. It does not accept PDFs.
