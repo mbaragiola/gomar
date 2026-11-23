@@ -10,6 +10,21 @@ import (
 
 var missingDraftAttachmentHandoff = problem{404, "No se encontró un borrador disponible en ese local."}
 
+type attachmentHandoffItem struct {
+	ID   int64  `json:"id"`
+	Name string `json:"nombre"`
+	Size int64  `json:"tamano"`
+}
+
+type attachmentHandoffView struct {
+	Entity      int64                   `json:"entity_id"`
+	Outlet      int64                   `json:"outlet_id"`
+	Document    int64                   `json:"document_id"`
+	CanDownload bool                    `json:"can_download"`
+	CanUpload   bool                    `json:"can_upload"`
+	Attachments []attachmentHandoffItem `json:"adjuntos"`
+}
+
 func attachmentHandoffID(r *http.Request, name string) (int64, bool) {
 	raw := r.PathValue(name)
 	id, err := strconv.ParseInt(raw, 10, 64)
@@ -41,7 +56,9 @@ func (a *app) draftAttachmentHandoff(w http.ResponseWriter, r *http.Request, u u
 		}
 		return err
 	}
-	if !slices.Contains(capabilities[m.role], draftCapability) && !slices.Contains(capabilities[m.role], "download_attachments") {
+	canUpload := slices.Contains(capabilities[m.role], draftCapability)
+	canDownload := slices.Contains(capabilities[m.role], "download_attachments")
+	if !canUpload && !canDownload {
 		return forbiddenRole
 	}
 	if err := requireSelectedDocumentOutlet(tx, m, outlet); err != nil {
@@ -50,17 +67,33 @@ func (a *app) draftAttachmentHandoff(w http.ResponseWriter, r *http.Request, u u
 		}
 		return err
 	}
-	item, err := scanDocument(tx.QueryRowContext(ctx, selectDocuments+`
-		AND d.id=$4 AND d.status='draft'
-		AND NOT EXISTS (SELECT 1 FROM ap_payables p WHERE p.source_document_id=d.id)`, m.ID, m.id, outlet, id), m.ID)
+	var documentID int64
+	err = tx.QueryRowContext(ctx, `SELECT d.id FROM documents d
+		WHERE d.id=$1 AND d.entity_id=$2 AND d.outlet_id=$3 AND d.status='draft' AND d.deleted_at IS NULL
+		AND EXISTS (SELECT 1 FROM suppliers s WHERE s.id=d.supplier_id AND s.entity_id=d.entity_id)
+		AND NOT EXISTS (SELECT 1 FROM ap_payables p WHERE p.source_document_id=d.id)`, id, m.ID, outlet).Scan(&documentID)
 	if errors.Is(err, sql.ErrNoRows) {
 		return missingDraftAttachmentHandoff
 	}
 	if err != nil {
 		return err
 	}
-	view, err := completeDocumentView(tx, item)
+	view := attachmentHandoffView{Entity: m.ID, Outlet: outlet, Document: documentID,
+		CanDownload: canDownload, CanUpload: canUpload, Attachments: []attachmentHandoffItem{}}
+	rows, err := tx.QueryContext(ctx, `SELECT id,original_filename,size FROM document_attachments
+		WHERE document_id=$1 ORDER BY created_at,id`, documentID)
 	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var item attachmentHandoffItem
+		if err := rows.Scan(&item.ID, &item.Name, &item.Size); err != nil {
+			return err
+		}
+		view.Attachments = append(view.Attachments, item)
+	}
+	if err := rows.Err(); err != nil {
 		return err
 	}
 	if err := tx.Commit(); err != nil {

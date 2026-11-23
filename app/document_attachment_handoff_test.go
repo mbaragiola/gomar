@@ -59,13 +59,28 @@ func TestPostgresDraftAttachmentHandoffBrowserScope(t *testing.T) {
 		return w
 	}
 	const route = "/api/v1/entities/1/outlets/1/documents/1/attachment-handoff"
-	for _, login := range [][]*http.Cookie{buyer, accounting} {
-		w := call(route, "", login, 200)
-		var v documentView
-		if err := json.Unmarshal(w.Body.Bytes(), &v); err != nil || v.ID != 1 || v.Outlet.ID != 1 ||
-			len(v.Attachments) != 1 || v.Attachments[0].Name != "synthetic-only.png" ||
-			strings.Contains(w.Body.String(), "document-00000000000000000000000000000001") {
-			t.Fatal("invalid browser-only draft metadata", err)
+	for _, test := range []struct {
+		login  []*http.Cookie
+		upload bool
+	}{{buyer, true}, {accounting, false}} {
+		w := call(route, "", test.login, 200)
+		var v attachmentHandoffView
+		if err := json.Unmarshal(w.Body.Bytes(), &v); err != nil || v.Entity != 1 || v.Document != 1 || v.Outlet != 1 ||
+			!v.CanDownload || v.CanUpload != test.upload || len(v.Attachments) != 1 ||
+			v.Attachments[0] != (attachmentHandoffItem{1, "synthetic-only.png", 42}) {
+			t.Fatal("invalid browser-only draft metadata and capabilities", err)
+		}
+		var top map[string]json.RawMessage
+		var attachments []map[string]json.RawMessage
+		if json.Unmarshal(w.Body.Bytes(), &top) != nil || len(top) != 6 ||
+			json.Unmarshal(top["adjuntos"], &attachments) != nil || len(attachments) != 1 || len(attachments[0]) != 3 {
+			t.Fatal("handoff returned unexpected metadata")
+		}
+		for _, private := range []string{"30711111111", "Synthetic supplier", "actor", "auditoria", "descripcion",
+			"total", "creado", "tipo", "path", "document-00000000000000000000000000000001"} {
+			if strings.Contains(w.Body.String(), private) {
+				t.Fatal("handoff exposed unrelated detail", private)
+			}
 		}
 	}
 	call(route, "", reader, 403)

@@ -2,6 +2,15 @@
 // nor an attachment link, and the server authorizes every requested ID.
 export type DraftAttachmentHandoff = { entity: number; outlet: number; document: number }
 
+export type AttachmentHandoffDetail = {
+  entity_id: number
+  outlet_id: number
+  document_id: number
+  can_download: boolean
+  can_upload: boolean
+  adjuntos: { id: number; nombre: string; tamano: number }[]
+}
+
 export const draftHandoffPrefix = '#comprobante='
 const positiveID = (id: number) => Number.isSafeInteger(id) && id > 0
 
