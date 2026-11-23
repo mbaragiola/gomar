@@ -12,10 +12,13 @@ import urllib.request
 
 from playwright.sync_api import expect, sync_playwright
 
+from codex_stock_transport import codex_tools
+
 if not __debug__:
     raise RuntimeError("Run this check without Python optimization so assertions stay enabled")
 
 root, pg, chrome = map(Path, sys.argv[1:4])
+codex = Path(sys.argv[4]) if len(sys.argv) == 5 else None
 scope = {"entity_id": 1, "outlet_id": 1}
 base = "/api/v1/entities/1/outlets/1"
 rename_tool = "gomar_propose_pos_rename"
@@ -107,6 +110,24 @@ def issue(page, alias, action=None):
     return path, credential.get("id")
 
 
+def tool_caller(tools, invoke, proposal_lanes):
+    writes = {tool["name"] for tool in tools if not tool["annotations"].get("readOnlyHint")}
+    assert writes == ({rename_tool, minimum_tool} if proposal_lanes else set())
+    reads = {"gomar_read_pos_product", "gomar_read_stock_product", "gomar_list_stock"}
+    assert reads.issubset({tool["name"] for tool in tools})
+
+    def call(name, arguments, denied=False):
+        result = invoke(name, arguments)
+        assert result.get("isError", False) == denied, f"wrong permission result for {name}"
+        if denied:
+            assert "structuredContent" not in result
+            assert "QA otro local" not in json.dumps(result)
+            return None
+        return result["structuredContent"]
+
+    return call
+
+
 @contextlib.contextmanager
 def connection(read, rename=None, minimum=None):
     args = [root / "gomar-mcp", "--origin", origin, "--token-file", read]
@@ -114,6 +135,10 @@ def connection(read, rename=None, minimum=None):
         args.extend(["--proposal-entity", "1", "--proposal-outlet", "1",
                      f"--proposal-lane=pos_product_rename={rename}",
                      f"--proposal-lane=stock_minimum_change={minimum}"])
+    if codex:
+        with codex_tools(codex, args, root) as (tools, invoke):
+            yield tool_caller(tools, invoke, rename is not None)
+        return
     with subprocess.Popen(args, env=env, text=True, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                           stderr=subprocess.DEVNULL) as mcp:
         seq = 0
@@ -139,19 +164,8 @@ def connection(read, rename=None, minimum=None):
                                "clientInfo": {"name": "gomar-stock-journey-qa", "version": "1"}})
             rpc("notifications/initialized", notify=True)
             tools = rpc("tools/list")["tools"]
-            writes = {tool["name"] for tool in tools if not tool["annotations"].get("readOnlyHint")}
-            assert writes == ({rename_tool, minimum_tool} if rename else set())
-
-            def call(name, arguments, denied=False):
-                result = rpc("tools/call", {"name": name, "arguments": arguments})
-                assert result.get("isError", False) == denied, f"wrong permission result for {name}"
-                if denied:
-                    assert "structuredContent" not in result
-                    assert "QA otro local" not in json.dumps(result)
-                    return None
-                return result["structuredContent"]
-
-            yield call
+            yield tool_caller(tools, lambda name, arguments: rpc(
+                "tools/call", {"name": name, "arguments": arguments}), rename is not None)
         finally:
             mcp.stdin.close()
             try:
@@ -330,7 +344,8 @@ def main():
         finally:
             server.terminate()
             server.wait(timeout=8)
-    print("PASS: one packaged MCP session, Chrome review, denials, revocation, and exact stock readback")
+    transport = "one installed Codex dual-lane session" if codex else "one packaged MCP session"
+    print(f"PASS: {transport}, Chrome review, denials, revocation, and exact stock readback")
 
 
 if __name__ == "__main__":
