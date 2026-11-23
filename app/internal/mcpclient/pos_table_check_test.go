@@ -45,7 +45,7 @@ func TestPOSTableCheckRequiresExactSameOriginHandoff(t *testing.T) {
 				}
 				return
 			}
-			if err != nil || got != (POSTableCheck{7, 1234, "untendered", native}) {
+			if err != nil || got != (POSTableCheck{7, 1234, tt.state, native}) {
 				t.Fatalf("wrong result: %+v %v", got, err)
 			}
 		})
