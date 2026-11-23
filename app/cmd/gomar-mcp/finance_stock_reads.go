@@ -2,10 +2,31 @@ package main
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
 
 	"github.com/mbaragiola/gomar/app/internal/mcpclient"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
+
+// The zero value is reserved for omission; explicit null or an empty string
+// must not turn a filtered financial query into the unfiltered operation.
+type payableDateArg string
+
+func (d *payableDateArg) UnmarshalJSON(raw []byte) error {
+	var value string
+	if err := json.Unmarshal(raw, &value); err != nil || value == "" {
+		return errors.New("indicá una fecha de vencimiento YYYY-MM-DD")
+	}
+	*d = payableDateArg(value)
+	return nil
+}
+
+type payablePageArgs struct {
+	accountingPageArgs
+	DueFrom payableDateArg `json:"due_from,omitempty" jsonschema:"Fecha local de vencimiento desde (inclusive), YYYY-MM-DD; requiere due_to."`
+	DueTo   payableDateArg `json:"due_to,omitempty" jsonschema:"Fecha local de vencimiento hasta (inclusive), YYYY-MM-DD; requiere due_from."`
+}
 
 type payableDetailArgs struct {
 	outletArgs
@@ -25,8 +46,11 @@ type stockMovementDetailArgs struct {
 }
 
 func addFinanceStockReadTools(server *mcp.Server, client *mcpclient.Client) {
-	readTool(server, "gomar_list_payables", "Listá cuentas a pagar de una sucursal autorizada, con fechas y centavos por moneda. Omite cuentas con aplicaciones de otra sucursal. Hasta 30; usá next_id para seguir.", func(ctx context.Context, in accountingPageArgs) (mcpclient.FinanceRecords[mcpclient.PayableRecord], error) {
-		return client.ListPayables(ctx, in.EntityID, in.OutletID, in.AfterID)
+	readTool(server, "gomar_list_payables", "Listá cuentas a pagar de una sucursal autorizada, con fechas y centavos por moneda. Omite cuentas con aplicaciones de otra sucursal. Hasta 30 en orden de ID. Podés filtrar por vencimiento con due_from y due_to (fechas locales inclusive; excluye cuentas sin vencimiento). Para seguir usá next_id y mantené las mismas fechas.", func(ctx context.Context, in payablePageArgs) (mcpclient.FinanceRecords[mcpclient.PayableRecord], error) {
+		if in.DueFrom == "" && in.DueTo == "" {
+			return client.ListPayables(ctx, in.EntityID, in.OutletID, in.AfterID)
+		}
+		return client.ListPayablesDue(ctx, in.EntityID, in.OutletID, in.AfterID, string(in.DueFrom), string(in.DueTo))
 	})
 	readTool(server, "gomar_read_payable", "Consultá el saldo y estado de una cuenta a pagar de esta sucursal. Excluye aplicaciones de otra sucursal. No incluye proveedor, comprobante ni medio de pago.", func(ctx context.Context, in payableDetailArgs) (mcpclient.PayableRecord, error) {
 		return client.ReadPayable(ctx, in.EntityID, in.OutletID, in.PayableID)
