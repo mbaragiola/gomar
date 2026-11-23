@@ -219,6 +219,11 @@ func readDocumentView(tx *sql.Tx, m entityMembership, id int64) (documentView, e
 	if err != nil {
 		return documentView{}, err
 	}
+	return completeDocumentView(tx, item)
+}
+
+func completeDocumentView(tx *sql.Tx, item documentListItem) (documentView, error) {
+	id := item.ID
 	attachments, err := readDocumentAttachments(tx, id)
 	if err != nil {
 		return documentView{}, err

@@ -85,3 +85,16 @@ chat, a command-line argument, or a shared config.
 See the [read tools](MCP-WORKSPACE.md) for what each query returns and the
 [coverage matrix](MCP-COVERAGE.md) for opt-in proposals, workflows that stay
 in the app, and verification levels.
+
+### Open a draft's private attachments in Gomar
+
+In Comprobantes, open a draft and use **Enlace interno a los adjuntos del
+borrador**. The link opens the draft's existing private attachment section
+in the browser. It is not a download link and grants no access. You still
+need your own Gomar sign-in, access to that exact active outlet, and a role
+that can manage draft files or download attachments. If you sign in with
+Google or Microsoft after opening the link, reopen it once signed in.
+
+An MCP document result can help you identify the draft, but it does not
+contain attachment data or a handoff link. Open, upload, and download files
+only in Gomar using its existing controls.

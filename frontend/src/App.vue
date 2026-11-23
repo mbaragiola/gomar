@@ -1,7 +1,9 @@
 <script setup lang="ts">
-import { computed, nextTick, onMounted, reactive, ref } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
 import { lockOfflinePOS } from './pos/storage'
 import { ApiError, download, request } from './api'
+import { draftAttachmentHandoffHref, draftHandoffPrefix, parseDraftAttachmentHandoff } from './document-attachment-handoff'
+import type { DraftAttachmentHandoff } from './document-attachment-handoff'
 import ThemeSelect from './components/ThemeSelect.vue'
 import McpDocumentProposals from './components/McpDocumentProposals.vue'
 import McpProposalSessions from './components/McpProposalSessions.vue'
@@ -40,6 +42,9 @@ const total = ref<{ cantidad: number; totales: { moneda: string; cantidad: numbe
 const selectedEntityId = ref<number | null>(null)
 const selectedOutletId = ref<number | null>(null)
 const selectedDocument = ref<Document | null>(null)
+const shownHandoff = ref<DraftAttachmentHandoff | null>(null)
+const attachmentHeading = ref<HTMLHeadingElement | null>(null)
+let handoffGeneration = 0
 const payables = ref<Payable[]>([])
 const payments = ref<Payment[]>([])
 const paymentDraft = ref<Payment | null>(null)
@@ -148,9 +153,10 @@ const viewNames: Record<StaffView, string> = {
 function focusStaffHeading() {
   void nextTick(() => staffHeading.value?.focus())
 }
-function selectStaffView(view: StaffView) {
+function selectStaffView(view: StaffView, preserveHandoff = false) {
+  if (!preserveHandoff) clearHandoffLocation()
   if (staffView.value === view) {
-    if (view === 'documents' && showDocumentDetail.value) returnToDocuments()
+    if (!preserveHandoff && view === 'documents' && showDocumentDetail.value) returnToDocuments()
     return
   }
   staffView.value = view
@@ -175,12 +181,21 @@ function showMobileDocument() {
   }
 }
 function returnToDocuments() {
+  clearHandoffLocation()
   mobileDetail.value = false
   focusStaffHeading()
 }
 const canManageSelectedDocument = computed(() => selectedDocument.value?.estado === 'reviewed'
   ? hasCapability('manage_reviewed_documents')
   : canManageDrafts.value)
+const attachmentHandoffHref = computed(() => {
+  const doc = selectedDocument.value
+  const entity = selectedEntityId.value
+  const outlet = selectedOutletId.value
+  if (!doc || !entity || !outlet || doc.estado !== 'draft' || doc.outlet.id !== outlet || doc.payable_id ||
+      (!canManageDrafts.value && !canDownload.value)) return undefined
+  return draftAttachmentHandoffHref({ entity, outlet, document: doc.id })
+})
 const paymentForm = reactive({ supplier_id: 0, moneda: 'ARS', total: '', metodo: 'bank_transfer', referencia: '' })
 const allocationAmounts = reactive<Record<number, string>>({})
 const eligiblePayables = computed(() => payables.value.filter((item) => (
@@ -230,6 +245,7 @@ function clearDocumentState(resetBusy = true) {
   documents.value = []
   total.value = { cantidad: 0, totales: [] }
   selectedDocument.value = null
+  shownHandoff.value = null
   showCreate.value = false
   showSupplier.value = false
   showSupplierManagement.value = false
@@ -304,11 +320,17 @@ async function initialize() {
     if (!sessionIsCurrent(sessionToken)) return
     username.value = me.usuario
     await loadEntities(sessionToken)
-    if (sessionIsCurrent(sessionToken)) authenticated.value = true
+    if (sessionIsCurrent(sessionToken)) {
+      authenticated.value = true
+      await syncAttachmentHandoff()
+    }
   } catch (value) {
     if (sessionIsCurrent(sessionToken) && (!(value instanceof ApiError) || value.status !== 401)) showError(value)
   } finally {
-    if (sessionIsCurrent(sessionToken)) loading.value = false
+    if (sessionIsCurrent(sessionToken)) {
+      loading.value = false
+      if (shownHandoff.value) void nextTick(() => { if (shownHandoff.value) attachmentHeading.value?.focus() })
+    }
   }
 }
 
@@ -323,7 +345,10 @@ async function signIn() {
     lockOfflinePOS()
     username.value = result.usuario
     await loadEntities(sessionToken)
-    if (sessionIsCurrent(sessionToken)) authenticated.value = true
+    if (sessionIsCurrent(sessionToken)) {
+      authenticated.value = true
+      await syncAttachmentHandoff()
+    }
   } catch (value) {
     if (sessionIsCurrent(sessionToken)) {
       resetUserState()
@@ -335,6 +360,7 @@ async function signIn() {
 }
 
 async function signOut() {
+  clearHandoffLocation()
   signInOptions.value = null
   lockOfflinePOS()
   const sessionToken = resetUserState()
@@ -353,13 +379,15 @@ async function loadEntities(sessionToken: number) {
   if (selectedEntityId.value) await loadContext(sessionToken, false)
 }
 
-async function loadContext(sessionToken = sessionGeneration, resetBusy = true) {
+async function loadContext(sessionToken = sessionGeneration, resetBusy = true, preferredOutlet?: number) {
   const contextToken = ++contextGeneration
   clearContextState(resetBusy)
   error.value = ''
   const entityId = selectedEntityId.value
   if (!entityId) return
   const nextOutlets = await request<Outlet[]>(`/entities/${entityId}/outlets`)
+  if (!contextIsCurrent(sessionToken, contextToken, entityId)) return
+  if (preferredOutlet !== undefined && !nextOutlets.some(outlet => outlet.id === preferredOutlet)) return
   const nextSuppliers = nextOutlets.length
     ? await request<Supplier[]>(`/entities/${entityId}/suppliers`)
     : []
@@ -383,7 +411,7 @@ async function loadContext(sessionToken = sessionGeneration, resetBusy = true) {
     ocrDisclosureAcceptedVersion.value = null
   }
   ocrConfig.value = nextOcrConfig
-  selectedOutletId.value = outlets.value[0]?.id ?? null
+  selectedOutletId.value = preferredOutlet ?? outlets.value[0]?.id ?? null
   documentForm.supplier_id = suppliers.value[0]?.id ?? 0
   documentForm.issuer_cuit = suppliers.value[0]?.cuit ?? ''
   await loadDocuments(sessionToken, contextToken)
@@ -539,6 +567,7 @@ async function loadDocuments(sessionToken = sessionGeneration, contextToken = co
 }
 
 async function changeEntity() {
+  clearHandoffLocation()
   const sessionToken = sessionGeneration
   try {
     await loadContext(sessionToken)
@@ -562,6 +591,7 @@ async function changeOutlet() {
 }
 
 async function openDocument(id: number) {
+  clearHandoffLocation()
   if (!selectedEntityId.value) return
   const sessionToken = sessionGeneration
   const contextToken = contextGeneration
@@ -577,6 +607,87 @@ async function openDocument(id: number) {
     }
   } catch (value) {
     if (contextIsCurrent(sessionToken, contextToken, entityId) && detailToken === detailGeneration) showError(value)
+  }
+}
+
+const unavailableHandoff = 'No se pudo abrir el borrador desde este enlace. Verificá el local y tus permisos.'
+const hasHandoffLocation = () => window.location.pathname === '/' && window.location.hash.startsWith(draftHandoffPrefix)
+function closeShownHandoff() {
+  if (!shownHandoff.value) return
+  shownHandoff.value = null
+  selectedDocument.value = null
+  uploadFile.value = null
+  mobileDetail.value = false
+  detailGeneration += 1
+}
+
+function clearHandoffLocation() {
+  handoffGeneration += 1
+  closeShownHandoff()
+  if (hasHandoffLocation()) window.history.replaceState(window.history.state, '', window.location.pathname + window.location.search)
+}
+
+async function readAttachmentHandoff(target: DraftAttachmentHandoff) {
+  const detail = await request<Document>(`/entities/${target.entity}/outlets/${target.outlet}/documents/${target.document}/attachment-handoff`, {
+    cache: 'no-store', referrerPolicy: 'no-referrer',
+  })
+  if (detail.id !== target.document || detail.outlet?.id !== target.outlet ||
+      detail.entity_id !== target.entity || detail.estado !== 'draft' || detail.payable_id) throw new Error(unavailableHandoff)
+  return detail
+}
+
+async function syncAttachmentHandoff() {
+  const run = ++handoffGeneration
+  if (!authenticated.value || window.location.pathname !== '/') return
+  closeShownHandoff()
+  if (!hasHandoffLocation()) return
+  const hash = window.location.hash
+  const target = window.location.search === '' ? parseDraftAttachmentHandoff(hash) : null
+  if (!target) {
+    error.value = 'El enlace al borrador no es válido.'
+    return
+  }
+  const session = sessionGeneration
+  let context = contextGeneration
+  const current = () => handoffGeneration === run && sessionIsCurrent(session) &&
+    context === contextGeneration && window.location.hash === hash
+  error.value = ''
+  try {
+    let detail = await readAttachmentHandoff(target)
+    if (!current()) return
+    if (selectedEntityId.value !== target.entity || selectedOutletId.value !== target.outlet) {
+      // Only change the selector after the server verified the requested scope.
+      selectedEntityId.value = target.entity
+      const loadingContext = loadContext(session, true, target.outlet)
+      context = contextGeneration
+      await loadingContext
+      if (!current()) return
+      if (selectedOutletId.value !== target.outlet) throw new Error(unavailableHandoff)
+      detail = await readAttachmentHandoff(target)
+      if (!current()) return
+    }
+    selectStaffView('documents', true)
+    detailGeneration += 1
+    uploadFile.value = null
+    selectedDocument.value = detail
+    shownHandoff.value = target
+    showMobileDocument()
+    void nextTick(() => { if (current()) attachmentHeading.value?.focus() })
+  } catch {
+    if (current()) error.value = unavailableHandoff
+  }
+}
+
+async function checkShownHandoff(target: DraftAttachmentHandoff) {
+  try {
+    await readAttachmentHandoff(target)
+    return shownHandoff.value === target
+  } catch {
+    if (shownHandoff.value === target) {
+      closeShownHandoff()
+      error.value = unavailableHandoff
+    }
+    return false
   }
 }
 
@@ -798,9 +909,12 @@ async function uploadAttachment() {
   const contextToken = contextGeneration
   const entityId = selectedEntityId.value
   const documentId = selectedDocument.value.id
+  const target = shownHandoff.value
   const busyToken = startBusy()
   error.value = ''
   try {
+    if (target && !(await checkShownHandoff(target))) return
+    if (!contextIsCurrent(sessionToken, contextToken, entityId) || selectedDocument.value?.id !== documentId || !uploadFile.value) return
     const data = new FormData()
     data.append('archivo', uploadFile.value)
     await request(`/entities/${entityId}/documents/${documentId}/attachments`, {
@@ -808,7 +922,8 @@ async function uploadAttachment() {
     })
     if (!contextIsCurrent(sessionToken, contextToken, entityId) || selectedDocument.value?.id !== documentId) return
     uploadFile.value = null
-    await openDocument(documentId)
+    if (target) await syncAttachmentHandoff()
+    else await openDocument(documentId)
   } catch (value) {
     if (contextIsCurrent(sessionToken, contextToken, entityId)) showError(value)
   } finally {
@@ -869,6 +984,8 @@ async function downloadAttachment(id: number, name: string) {
   const documentId = selectedDocument.value.id
   const isCurrent = () => contextIsCurrent(sessionToken, contextToken, entityId) && selectedDocument.value?.id === documentId
   try {
+    const target = shownHandoff.value
+    if (target && !(await checkShownHandoff(target))) return
     await download(`/entities/${entityId}/documents/${documentId}/attachments/${id}`, name, isCurrent)
   } catch (value) {
     if (isCurrent()) showError(value)
@@ -1073,7 +1190,12 @@ async function downloadPaymentReceipt(payment: Payment) {
   }
 }
 
-onMounted(() => { if (!publicVenue) return initialize() })
+onMounted(() => {
+  if (publicVenue) return
+  window.addEventListener('hashchange', syncAttachmentHandoff)
+  return initialize()
+})
+onBeforeUnmount(() => window.removeEventListener('hashchange', syncAttachmentHandoff))
 </script>
 
 <template>
@@ -1441,7 +1563,11 @@ onMounted(() => { if (!publicVenue) return initialize() })
               </dl>
               <p v-if="selectedDocument.descripcion" class="description">{{ selectedDocument.descripcion }}</p>
 
-              <div class="subsection"><h3>Adjuntos privados</h3>
+              <div class="subsection">
+                <h3 ref="attachmentHeading" tabindex="-1">Adjuntos privados</h3>
+                <p v-if="attachmentHandoffHref && !shownHandoff">
+                  <a :href="attachmentHandoffHref">Enlace interno a los adjuntos del borrador</a>
+                </p>
                 <ul v-if="selectedDocument.adjuntos?.length" class="attachment-list">
                   <li v-for="attachment in selectedDocument.adjuntos" :key="attachment.id">
                     <span>{{ attachment.nombre }}<small>{{ Math.ceil(attachment.tamano / 1024) }} KB</small></span>
