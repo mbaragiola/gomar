@@ -12,6 +12,11 @@ func TestPayablePreflightSanitizesFixedResponse(t *testing.T) {
 	for _, tc := range []struct {
 		input, want string
 	}{
+		{`{"eligible":true,"handoff_url":"/#alta-cuenta=1:2:3","printed_reference":"sentinel"}`, `{"eligible":true,"handoff_url":"/#alta-cuenta=1:2:3"}`},
+		{`{"eligible":true,"handoff_url":"/#alta-cuenta=1:9:3"}`, ""},
+		{`{"eligible":true,"handoff_url":"/#alta-cuenta=1:2:3&reference=sentinel"}`, ""},
+		{`{"eligible":true,"handoff_url":"https://example.com/#alta-cuenta=1:2:3"}`, ""},
+		{`{"eligible":false,"blocker":"not_reviewed","handoff_url":"/#alta-cuenta=1:2:3"}`, ""},
 		{`{"eligible":true,"supplier":"private"}`, `{"eligible":true}`},
 		{`{"eligible":false,"blocker":"supplier_mismatch","tax_id":"private","total":5}`, `{"eligible":false,"blocker":"supplier_mismatch"}`},
 		{`{"eligible":false,"blocker":"private"}`, ""},

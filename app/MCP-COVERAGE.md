@@ -161,6 +161,15 @@ receipt data. The read is not a lock, reservation, approval, posting, or
 payment. The native request still needs a reason and fresh checks before
 any account payable can be created.
 
+An eligible invoice with a valid printed reference may include a relative
+`handoff_url` for a single pinned branch. Only a currently authorized
+finance operator signed in to Gomar can open it. The page rechecks the same
+branch and eligibility and shows only the document ID and printed reference,
+so the operator can find it through **Comprobantes → Buscar por referencia
+impresa**. It never opens the document or Treasury automatically. Changes
+in scope or eligibility make the handoff unavailable; sign in normally and
+reopen if needed. The link is not approval, posting, or a payment.
+
 ### Reconciliation close eligibility
 
 `gomar_check_reconciliation_close_eligibility` checks one `run_id` at the
