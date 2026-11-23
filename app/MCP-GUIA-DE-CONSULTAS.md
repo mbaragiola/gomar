@@ -28,7 +28,7 @@ del momento, no una reserva ni una garantía.
 
 **Stock**
 
-> En [sucursal], ¿qué saldo y mínimo tiene [producto]? Mostrame los movimientos registrados entre el [fecha de inicio] y el [fecha de fin], con el tipo y el cambio de unidades.
+> En [sucursal], ¿qué saldo y mínimo tiene [producto]? Resumime cuántos movimientos hubo y cuántas unidades netas cambiaron por tipo entre el [fecha de inicio] y el [fecha de fin].
 
 Usá hasta 31 días en Buenos Aires. La sucursal debe tener stock habilitado
 y tu rol debe permitir consultarlo. Gomar muestra el saldo estimado que tiene
