@@ -129,7 +129,7 @@ onUnmounted(() => {
       <strong>Total de la cuenta: {{ formatMoney(loaded.total_centavos) }}</strong>
       <p>No es una factura ni acredita un pago.</p>
       <ManualTender
-        v-if="allowTender && loaded.estado !== 'retirada'" 
+        v-if="allowTender && loaded.estado !== 'retirada'"
         :key="loaded.id_cuenta" :scope="scope" :table="loaded.mesa" :check="loaded.id_cuenta"
         :total="loaded.total_centavos" :allowed="allowed" :format-money="formatMoney"
         @has-history="loaded.estado = 'con_registros'"

@@ -73,7 +73,7 @@ func addBookingReadTools(server *mcp.Server, client *mcpclient.Client) {
 	readTool(server, "gomar_read_pos_product", "Consultá un producto por su ID exacto en el catálogo de caja de esta sucursal. Devuelve nombre, precio en centavos de ARS, revisión, código asignado y estado, incluso si está inactivo. No busca productos ni devuelve stock, costos o ventas.", func(ctx context.Context, in posCatalogProductArgs) (mcpclient.POSProductDetails, error) {
 		return client.ReadPOSCatalogProduct(ctx, in.EntityID, in.OutletID, in.ProductID)
 	})
-	readTool(server, "gomar_read_pos_table_check", "Consultá el total en centavos y el estado de una cuenta de mesa guardada en Caja. Requiere una conexión fijada a ese local y permiso de caja. Devuelve un enlace para abrir la cuenta en Gomar, sin productos ni datos de pago. No crea, cobra ni factura.", func(ctx context.Context, in posTableCheckArgs) (mcpclient.POSTableCheck, error) {
+	readTool(server, "gomar_read_pos_table_check", "Consultá el total en centavos y el estado de una cuenta de mesa guardada en Caja. Requiere una conexión fijada a ese local y permiso de caja. Devuelve un enlace para abrir la cuenta en Gomar, sin productos ni datos de pago. Si hay anotaciones manuales, no prueban que haya un pago. No crea, cobra ni factura.", func(ctx context.Context, in posTableCheckArgs) (mcpclient.POSTableCheck, error) {
 		return client.ReadPOSTableCheck(ctx, in.EntityID, in.OutletID, in.TableNumber)
 	})
 	readTool(server, "gomar_stock_movements", "Resumí los movimientos registrados de un producto de stock por tipo y variación neta de unidades, para hasta 31 días de Buenos Aires. No devuelve actores ni referencias a ventas.", func(ctx context.Context, in movementArgs) (mcpclient.StockMovements, error) {

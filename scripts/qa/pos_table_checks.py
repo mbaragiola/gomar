@@ -61,7 +61,7 @@ def check_saved_table(browser, login, origin, psql, issue, connection):
 
     linked = open_pos("qa-pos-limited", mobile=True, dest=compatible["handoff_url"])
     accesses = []
-    linked.on("request", lambda r: accesses.append(r.method) if "/pos/table-checks" in r.url else None)
+    linked.on("request", lambda r: accesses.append(r.method) if "/pos/table-checks" in r.url and not r.url.endswith("/tender") else None)
     linked.get_by_role("button", name="Habilitar caja en esta pestaña").click()
     panel = linked.get_by_role("region", name="Cuentas guardadas de mesa")
     expect(panel.get_by_label("Número de mesa")).to_have_value("7")

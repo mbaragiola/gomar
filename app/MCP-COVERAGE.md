@@ -321,3 +321,23 @@ business-wide keys, proposal keys, other operators, or bearer material.
 Each **Revocar acceso** button uses the existing owner-only browser action;
 opening the panel does not revoke anything. MCP can use an authorized read
 key but cannot list, recover, or revoke credentials.
+
+### Manual recorder for payments handled elsewhere
+
+When the default-off POS manual tender preview is enabled, an authorized
+clerk can open a saved active table in **Caja** and use **Registro de medios
+de pago** to note an amount already handled outside Gomar or correct an
+earlier note. A correction leaves the original in the history. Neither
+action charges, refunds, posts a sale, releases the table, adjusts stock,
+or issues a fiscal document. A check with any notes cannot be retired,
+even if all notes were corrected or the preview flag is turned off.
+
+`gomar_read_pos_table_check` reports `manual_records` when a saved check
+has tender history. This is not evidence of a paid balance. It gives the
+same branch-pinned native link as an untendered check; open it, sign in,
+enable that branch's register, and consult the table. If the preview is
+disabled, status still warns about the existing history. Only the scoped
+native register can accept a clerk's manual note or correction and show
+amounts, reasons, or individual entries. MCP cannot enter funds-handling
+instructions or inspect the journal; the link carries no credentials or
+tender identifiers. Role and branch restrictions apply on both sides.
