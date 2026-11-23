@@ -25,10 +25,31 @@ The build generates the embedded web assets. To regenerate only those assets,
 run `bash scripts/stage-web.sh` before running Go tests in `app/`.
 The top-level Go module is a separate synthetic chat preview.
 
-PostgreSQL integration tests require a fresh disposable database per test
-scenario. Set `GOMAR_LOCAL_POSTGRES_TEST_DSN` to a local PostgreSQL Unix socket
-and an empty database named with the `gomar_qa_` prefix. The tests skip when
-this variable is unset. Do not use a database that contains real records.
+Run the PostgreSQL gate from the repository root:
+
+```sh
+bash scripts/qa-postgres.sh
+```
+
+This needs Linux, Bubblewrap, Python 3.11+, PostgreSQL tools, and the usual
+Go and pinned frontend dependencies. Set `QA_PG_BIN` or `QA_PYTHON` only
+if those tools are not on their usual paths. Run it in a clean worktree
+that is not being edited or built by another process. It builds a fresh
+copy of that commit and uses the installed frontend dependencies.
+
+The gate discovers database scenarios from the Go test binary, then runs
+each in its own fresh database in one private, Unix-socket-only cluster.
+The final JSON records individual passes, timing, the clean commit and
+tree, and the digest of the freshly built test binary, which includes
+generated web assets. A skipped or failed case, or a source change
+observed between start and finish, prevents a pass manifest. The runner
+checks that the private database has stopped before printing it.
+This is the PostgreSQL gate only, not the frontend, browser, installed
+client, or independent review gate.
+
+For an individual integration test, set `GOMAR_LOCAL_POSTGRES_TEST_DSN`
+to a private local PostgreSQL Unix socket and an empty `gomar_qa_`
+database. Never use a database that contains real records.
 
 ## Local startup
 
