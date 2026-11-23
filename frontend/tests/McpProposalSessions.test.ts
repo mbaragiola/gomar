@@ -1096,3 +1096,116 @@ describe('Razón social de proveedores', () => {
     }
   })
 })
+
+describe('Seguimiento de stock', () => {
+  const path = base + '/stock-tracking-proposals'
+  const disable = { product_id: 4, expected_revision: 5, name: 'Producto local', current_tracking_enabled: true, tracking_enabled: false, minimum: 0 }
+  const enable = { ...disable, current_tracking_enabled: false, tracking_enabled: true }
+  function fakeFetch(reply: Response, change: unknown = disable) {
+    return vi.fn((url: string) => {
+      if (url.endsWith('/proposal-sessions')) return Promise.resolve(result({ sessions: [] }))
+      if (url === path) return Promise.resolve(result({ proposals: [pending()] }))
+      if (url === path + '/8') return Promise.resolve(result({ ...pending(), digest, tracking_change: change }))
+      if (url === path + '/8/decision') return Promise.resolve(reply)
+      throw Error('unexpected test request')
+    })
+  }
+  async function show(fetch: unknown, canChangeStockTracking = true) {
+    vi.stubGlobal('fetch', fetch)
+    const panel = mount(McpProposalSessions, {
+      props: { entity: 2, outlet: 7, outletName: 'Centro de prueba', canRename: false, canChangeStockTracking },
+    })
+    await button(panel, 'Sesiones de propuestas').trigger('click')
+    await flushPromises()
+    return panel
+  }
+  async function read(panel: ReturnType<typeof mount>) {
+    await button(panel, 'Ver propuesta 8 de seguimiento de stock').trigger('click')
+    await flushPromises()
+  }
+  it('requires explicit scoped selection, exact preview and an unchecked no-backfill acknowledgment before disabling', async () => {
+    const fetch = fakeFetch(result({ ...pending(), status: 'approved', product_id: 4, tracking_enabled: false }))
+    const panel = await show(fetch)
+    const choice = panel.get('input[type=checkbox]')
+    expect((choice.element as HTMLInputElement).checked).toBe(false)
+    expect(button(panel, 'Crear sesión de propuestas').attributes()).toHaveProperty('disabled')
+    await choice.setValue(true)
+    expect(panel.text()).toContain('--proposal-session-action=stock_tracking_change')
+    await read(panel)
+    for (const text of ['Centro de prueba', 'Producto local', 'Versión 5', 'Activado → Desactivado', '0 unidades',
+      'sincronicen después de vender sin conexión', 'no descuentan stock', 'no se recuperan']) {
+      expect(panel.text()).toContain(text)
+    }
+    await button(panel, 'Continuar con el seguimiento de stock').trigger('click')
+    const acknowledgment = panel.get('[aria-label="Confirmar decisión"] input[type=checkbox]')
+    expect((acknowledgment.element as HTMLInputElement).checked).toBe(false)
+    expect(button(panel, 'Confirmar seguimiento de stock').attributes()).toHaveProperty('disabled')
+    expect(fetch.mock.calls.some(([url]) => url.endsWith('/decision'))).toBe(false)
+    await acknowledgment.setValue(true)
+    await button(panel, 'Confirmar seguimiento de stock').trigger('click')
+    await flushPromises()
+    expect(fetch).toHaveBeenLastCalledWith(path + '/8/decision', expect.objectContaining({
+      method: 'POST', body: JSON.stringify({ decision: 'approve', digest, confirm: true, acknowledge_no_backfill: true }),
+    }))
+    expect(panel.text()).toContain('Seguimiento de stock actualizado.')
+    panel.unmount()
+  })
+  it('explains resuming the previous balance and allows separate approval to turn back on', async () => {
+    const fetch = fakeFetch(result({ ...pending(), status: 'approved', product_id: 4, tracking_enabled: true }), enable)
+    const panel = await show(fetch)
+    await read(panel)
+    expect(panel.text()).toContain('Desactivado → Activado')
+    expect(panel.text()).toContain('desde el saldo estimado anterior')
+    expect(panel.text()).toContain('no deshace la pausa')
+    await button(panel, 'Continuar con el seguimiento de stock').trigger('click')
+    expect(panel.find('[aria-label="Confirmar decisión"] input').exists()).toBe(false)
+    await button(panel, 'Confirmar seguimiento de stock').trigger('click')
+    await flushPromises()
+    expect(fetch).toHaveBeenLastCalledWith(path + '/8/decision', expect.objectContaining({
+      method: 'POST', body: JSON.stringify({ decision: 'approve', digest, confirm: true }),
+    }))
+    panel.unmount()
+  })
+  it('rejects without acknowledgement or a tracking receipt', async () => {
+    const fetch = fakeFetch(result({ ...pending(), status: 'rejected' }))
+    const panel = await show(fetch)
+    await read(panel)
+    await button(panel, 'Rechazar propuesta').trigger('click')
+    await button(panel, 'Sí, rechazar').trigger('click')
+    await flushPromises()
+    expect(fetch).toHaveBeenLastCalledWith(path + '/8/decision', expect.objectContaining({
+      method: 'POST', body: JSON.stringify({ decision: 'reject', digest, confirm: true }),
+    }))
+    expect(panel.text()).toContain('No cambió el seguimiento.')
+    panel.unmount()
+  })
+  it.each([409, 200])('never retries stale or inexact decision receipt %s', async code => {
+    const fetch = fakeFetch(result({ ...pending(), status: 'approved', product_id: 4, tracking_enabled: true }, code))
+    const panel = await show(fetch)
+    await read(panel)
+    await button(panel, 'Continuar con el seguimiento de stock').trigger('click')
+    await panel.get('[aria-label="Confirmar decisión"] input').setValue(true)
+    await button(panel, 'Confirmar seguimiento de stock').trigger('click')
+    await flushPromises()
+    expect(panel.get('[role=alert]').text()).toMatch(/No se cambió|No pude verificar/)
+    await read(panel)
+    expect(button(panel, 'Continuar con el seguimiento de stock').attributes()).toHaveProperty('disabled')
+    expect(fetch.mock.calls.filter(([url]) => url.endsWith('/decision'))).toHaveLength(1)
+    panel.unmount()
+  })
+  it.each([undefined, null, 0, true])('does not treat malformed or unchanged tracking %s as a proposal', async tracking_enabled => {
+    const fetch = fakeFetch(result({}), { ...disable, tracking_enabled })
+    const panel = await show(fetch)
+    await read(panel)
+    expect(panel.get('[role=alert]').text()).toContain('No pude abrir la propuesta.')
+    expect(button(panel, 'Continuar con el seguimiento de stock')).toBeUndefined()
+    panel.unmount()
+  })
+  it('hides the action without the exact capability', async () => {
+    const fetch = fakeFetch(result({}))
+    const panel = await show(fetch, false)
+    expect(fetch.mock.calls.some(([url]) => url === path)).toBe(false)
+    expect(panel.text()).not.toContain('Cambiar el seguimiento de stock')
+    panel.unmount()
+  })
+})

@@ -214,6 +214,10 @@ func (a *app) entities(w http.ResponseWriter, r *http.Request, u user) error {
 			entry.Capabilities = append(slices.Clone(entry.Capabilities), "mcp_reservation_cancel_proposals")
 			slices.Sort(entry.Capabilities)
 		}
+		if a.stockTrackingProposalsEnabled() && entry.Role == "administration" && slices.Contains(entry.Capabilities, "manage_entity_access") {
+			entry.Capabilities = append(slices.Clone(entry.Capabilities), "mcp_stock_tracking_proposals")
+			slices.Sort(entry.Capabilities)
+		}
 		if a.stockMinimumProposalsEnabled() && entry.Role == "administration" && slices.Contains(entry.Capabilities, "manage_entity_access") {
 			entry.Capabilities = append(slices.Clone(entry.Capabilities), "mcp_stock_minimum_proposals")
 			slices.Sort(entry.Capabilities)
