@@ -4,8 +4,9 @@ set -euo pipefail
 umask 077
 with_local_checks=false
 with_codex=false
+with_purchases=false
 usage() {
-  printf 'Usage: %s [--with-local-checks] [--with-installed-codex]\n' "$0" >&2
+  printf 'Usage: %s [--with-local-checks] [--with-installed-codex] [--with-purchases]\n' "$0" >&2
   exit 2
 }
 while (( $# )); do
@@ -16,6 +17,9 @@ while (( $# )); do
     --with-installed-codex)
       "$with_codex" && usage
       with_codex=true ;;
+    --with-purchases)
+      "$with_purchases" && usage
+      with_purchases=true ;;
     *) usage ;;
   esac
   shift
@@ -27,13 +31,13 @@ chrome="${QA_CHROME:-$(command -v google-chrome || command -v chromium)}"
 command -v bwrap >/dev/null
 "$python" -c 'import playwright.sync_api'
 [[ -x "$postgres_bin/initdb" && -x "$chrome" && "$(id -u)" != 0 ]]
-codex=()
+codex=""
 if "$with_codex"; then
   if ! codex_path="$(command -v "${QA_CODEX:-codex}")" || [[ ! -x "$codex_path" ]]; then
     printf 'Installed Codex requested but not found. Set QA_CODEX to its executable.\n' >&2
     exit 1
   fi
-  codex=("$(realpath "$codex_path")")
+  codex="$(realpath "$codex_path")"
 fi
 export GOPROXY=off
 bash "$repo/scripts/stage-web.sh"
@@ -57,13 +61,25 @@ if "$with_local_checks"; then
 fi
 tmp="$(mktemp -d /tmp/gomar-stock-qa.XXXXXXXX)"
 cleanup() {
-  "$postgres_bin/pg_ctl" -D "$tmp/db" -m fast -w stop >/dev/null 2>&1 || true
+  if [[ -s "$tmp/db/postmaster.pid" ]]; then
+    if ! "$postgres_bin/pg_ctl" -D "$tmp/db" -m fast -w stop >/dev/null 2>&1 ||
+      [[ -e "$tmp/db/postmaster.pid" ]]; then
+      printf 'Synthetic PostgreSQL shutdown failed; no QA pass report.\n' >&2
+      return 1
+    fi
+  fi
   rm -rf -- "$tmp"
 }
 trap cleanup EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
 go -C "$repo/app" build -buildvcs=false -o "$tmp/gomar" .
 go -C "$repo/app" build -buildvcs=false -o "$tmp/gomar-mcp" ./cmd/gomar-mcp
 # initdb, Chrome, the app, and MCP run with no external network. PostgreSQL
 # listens only on a private Unix socket, so cleanup can stop it outside bwrap.
 timeout 150s "${isolated[@]}" \
-  "$python" -B "$repo/scripts/qa/mcp_stock_journey.py" "$tmp" "$postgres_bin" "$chrome" "${codex[@]}"
+  "$python" -B "$repo/scripts/qa/mcp_stock_journey.py" "$tmp" "$postgres_bin" "$chrome" "$codex" "$with_purchases" >"$tmp/report.log"
+report="$(cat "$tmp/report.log")"
+cleanup
+trap - EXIT
+printf '%s\n' "$report"

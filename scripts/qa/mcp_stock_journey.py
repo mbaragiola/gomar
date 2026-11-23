@@ -13,12 +13,14 @@ import urllib.request
 from playwright.sync_api import expect, sync_playwright
 
 from codex_stock_transport import codex_tools
+from mcp_purchase_checks import purchase_checks, purchase_seed, purchase_snapshot, purchase_tools
 
 if not __debug__:
     raise RuntimeError("Run this check without Python optimization so assertions stay enabled")
 
 root, pg, chrome = map(Path, sys.argv[1:4])
-codex = Path(sys.argv[4]) if len(sys.argv) == 5 else None
+codex = Path(sys.argv[4]) if sys.argv[4] else None
+with_purchases = sys.argv[5] == "true"
 scope = {"entity_id": 1, "outlet_id": 1}
 base = "/api/v1/entities/1/outlets/1"
 rename_tool = "gomar_propose_pos_rename"
@@ -76,6 +78,8 @@ INSERT INTO stock_outlets VALUES(1,true),(2,true);
 INSERT INTO stock_products VALUES(1,1,true,0),(1,2,true,1),(2,3,true,2);
 COMMIT;
 """)
+    if with_purchases:
+        purchase_seed(psql)
 
 
 def login(browser, username, mobile=False):
@@ -121,7 +125,7 @@ def tool_caller(tools, invoke, proposal_lanes):
         assert result.get("isError", False) == denied, f"wrong permission result for {name}"
         if denied:
             assert "structuredContent" not in result
-            assert "QA otro local" not in json.dumps(result)
+            assert all(sentinel not in json.dumps(result) for sentinel in ("QA otro local", "qa-private"))
             return None
         return result["structuredContent"]
 
@@ -238,6 +242,7 @@ def journey(chromium):
     min_input = {"product_id": 2, "expected_revision": 1, "minimum": 5}
     original = "3|1|1|1|0|1|2|0|0"
     assert snapshot() == original
+    original_purchases = purchase_snapshot(psql) if with_purchases else None
     with connection(read, rename, minimum) as call:
         readback(call, old_name, 1, 1)
         rename_id = pending(call, rename_tool, "rename", rename_input, 1)
@@ -247,6 +252,8 @@ def journey(chromium):
         call("gomar_read_stock_product", {**scope, "outlet_id": 2, "product_id": 3}, denied=True)
         with connection(restricted) as readonly:
             readonly("gomar_read_stock_product", {**scope, "product_id": 2}, denied=True)
+            if with_purchases:
+                purchase_tools(readonly, scope, may_handoff=False)
         readback(call, old_name, 1, 1)
         assert snapshot() == original
 
@@ -307,6 +314,10 @@ SELECT
  (SELECT count(*) FROM gomar.mcp_stock_minimum_proposals WHERE status='approved'),
  (SELECT count(*) FROM gomar.mcp_proposal_sessions WHERE revoked_at IS NOT NULL);
 """) == "1|2|1|1|1|1"
+        if with_purchases:
+            purchase_checks(call, owner, reader, origin, scope)
+            assert purchase_snapshot(psql) == original_purchases
+
 
 
 def main():
@@ -346,6 +357,9 @@ def main():
             server.wait(timeout=8)
     transport = "one installed Codex dual-lane session" if codex else "one packaged MCP session"
     print(f"PASS: {transport}, Chrome review, denials, revocation, and exact stock readback")
+    if with_purchases:
+        print("PASS: same staff session, scoped purchases and native handoff; no changes to documents or payments")
+
 
 
 if __name__ == "__main__":
