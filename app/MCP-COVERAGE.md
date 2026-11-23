@@ -23,8 +23,10 @@ The packaged live server registers 36 baseline read tools. Discovery does not
 guarantee access: app flags and current permissions determine which queries
 can run. There are also 25 distinct opt-in proposal actions, not 25
 simultaneous writes. Of those, 21 are named actions and four use distinct older
-credential options. The stdio process accepts at most one selected named
-action. All proposals require approval in Gomar before changing business data.
+credential options. The standard connection selects at most one named action. As a separate
+opt-in, [two local lanes](MCP-LOCAL-PROPOSAL-LANES.md) allow POS rename and
+stock minimum proposals together for one pinned outlet. Each keeps its own
+credential and browser approval. Other action combinations are not supported.
 
 A separate draft number proposal changes only the printed number and records
 one native draft revision and audit entry. It leaves the branch, point of sale,

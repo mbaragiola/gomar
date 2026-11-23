@@ -76,8 +76,10 @@ app and your role allow a specific action, obtain a separate proposal
 credential in Gomar. For a named session, specify its private file with
 `--proposal-session-token-file` and select the exact action with
 `--proposal-session-action`. Each named session and stdio process select only
-one named action. Older proposal flows use their own distinct credential
-options. A proposal call creates a pending item; it does not apply the change.
+one named action in this standard setup. An optional [two-lane local
+connection](MCP-LOCAL-PROPOSAL-LANES.md) supports POS rename and stock minimum
+for the same selected outlet, with independent credentials. Older proposal
+flows use their own distinct credential options. A proposal call creates a pending item; it does not apply the change.
 The issuing browser login reviews the scoped named proposal and confirms or
 rejects it in Gomar. A chat response is not approval. Never put credentials in
 chat, a command-line argument, or a shared config.

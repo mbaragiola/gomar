@@ -18,7 +18,10 @@ import (
 var proposalRequestID = regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$`)
 
 // ProposalClient can queue a single kind of proposal. It cannot approve one.
-type ProposalClient struct{ transport *Client }
+type ProposalClient struct {
+	transport      *Client
+	entity, outlet int64
+}
 
 func NewProposalClient(origin, token string) (*ProposalClient, error) {
 	transport, err := New(origin, token)
@@ -26,6 +29,20 @@ func NewProposalClient(origin, token string) (*ProposalClient, error) {
 		return nil, err
 	}
 	return &ProposalClient{transport: transport}, nil
+}
+
+// NewScopedProposalClient pins a local gate in addition to the backend's
+// independent grant and action checks. A local key cannot attest an actor.
+func NewScopedProposalClient(origin, token string, entity, outlet int64) (*ProposalClient, error) {
+	if entity <= 0 || outlet <= 0 {
+		return nil, errors.New("indicá una empresa y un local")
+	}
+	client, err := NewProposalClient(origin, token)
+	if err != nil {
+		return nil, err
+	}
+	client.entity, client.outlet = entity, outlet
+	return client, nil
 }
 
 type ProposalReceipt struct {
@@ -63,7 +80,17 @@ func validWikiProposalText(title, body string) bool {
 }
 
 // path is a compile-time suffix from a typed proposal method, never tool input.
-func (c *ProposalClient) postProposal(ctx context.Context, entity, outlet int64, path string, payload []byte) (ProposalReceipt, error) {
+func (c *ProposalClient) postProposal(ctx context.Context, entity, outlet int64, path string, payload []byte) (reply ProposalReceipt, failure error) {
+	if c.entity > 0 {
+		if entity != c.entity || outlet != c.outlet {
+			return ProposalReceipt{}, errors.New("la propuesta no está disponible para esta empresa y local")
+		}
+		defer func() {
+			if failure != nil {
+				failure = errors.New("esta acción no pudo preparar una propuesta con su propia clave")
+			}
+		}()
+	}
 	var out ProposalReceipt
 	u := c.transport.origin
 	u.Path = entityPath(entity) + "/outlets/" + strconv.FormatInt(outlet, 10) + path

@@ -74,26 +74,33 @@ func validToken(token string) bool {
 // ReadToken accepts a private regular file, not a symlink. Neither the file
 // contents nor its location are returned to the MCP host.
 func ReadToken(path string) (string, error) {
+	token, _, err := ReadTokenIdentity(path)
+	return token, err
+}
+
+// ReadTokenIdentity also returns the identity from the opened descriptor for
+// callers that need to match a previously observed file or reject aliases.
+func ReadTokenIdentity(path string) (string, os.FileInfo, error) {
 	bad := errors.New("usá un archivo de credencial privado, sin permisos para otras cuentas")
 	prior, err := os.Lstat(path)
 	if err != nil || !prior.Mode().IsRegular() || prior.Mode().Perm()&0o077 != 0 {
-		return "", bad
+		return "", nil, bad
 	}
 	f, err := os.Open(path)
 	if err != nil {
-		return "", bad
+		return "", nil, bad
 	}
 	defer f.Close()
 	actual, err := f.Stat()
 	if err != nil || !os.SameFile(prior, actual) || actual.Mode().Perm()&0o077 != 0 {
-		return "", bad
+		return "", nil, bad
 	}
 	raw, err := io.ReadAll(io.LimitReader(f, 46))
 	value := strings.TrimSuffix(strings.TrimSuffix(string(raw), "\n"), "\r")
 	if err != nil || !validToken(value) {
-		return "", errors.New("la credencial de Gomar no tiene el formato esperado")
+		return "", nil, errors.New("la credencial de Gomar no tiene el formato esperado")
 	}
-	return value, nil
+	return value, actual, nil
 }
 
 func New(origin, token string) (*Client, error) {
