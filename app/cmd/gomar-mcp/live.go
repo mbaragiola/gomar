@@ -121,6 +121,11 @@ func runLive(ctx context.Context, args []string, in io.Reader, out io.Writer) er
 			return errors.New(liveUsage)
 		}
 		addSessionTool = addPOSAvailabilityProposalTool
+	case "reservation_table_add":
+		if *proposalSessionFile == "" {
+			return errors.New(liveUsage)
+		}
+		addSessionTool = addReservationTableAddProposalTool
 	case "reservation_confirm":
 		if *proposalSessionFile == "" {
 			return errors.New(liveUsage)

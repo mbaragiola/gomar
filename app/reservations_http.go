@@ -249,8 +249,12 @@ func reservationTableCreate(r *http.Request, tx *sql.Tx, outlet int64, body []by
 		return 0, nil, badInput
 	}
 	input.Label = label
-	_, err := tx.ExecContext(r.Context(), `INSERT INTO reservation_tables(outlet_id,label,capacity) VALUES($1,$2,$3)`, outlet, label, input.Capacity)
-	return 201, input, reservationWriteError(err)
+	return 201, input, insertReservationTable(r.Context(), tx, outlet, input)
+}
+
+func insertReservationTable(ctx context.Context, tx *sql.Tx, outlet int64, table reservationTable) error {
+	_, err := tx.ExecContext(ctx, `INSERT INTO reservation_tables(outlet_id,label,capacity) VALUES($1,$2,$3)`, outlet, table.Label, table.Capacity)
+	return reservationWriteError(err)
 }
 func reservationSlotCreate(r *http.Request, tx *sql.Tx, outlet int64, body []byte) (int, any, error) {
 	var input reservationSlot
