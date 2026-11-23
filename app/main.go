@@ -36,6 +36,7 @@ func main() {
 	providerOnly := flag.Bool("provider-only-sign-in", false, "allow only configured providers for normal application sign-in")
 	enableStock := flag.Bool("enable-stock", false, "enable optional finished-item stock for the prototype POS")
 	enableSupplierNameProposals := flag.Bool("enable-mcp-supplier-legal-name-proposals", false, "allow proposing a business-wide supplier legal name for browser approval")
+	enableStockProductSetupProposals := flag.Bool("enable-mcp-stock-product-setup-proposals", false, "allow proposing first-time disabled stock setup for browser approval")
 	enableStockTrackingProposals := flag.Bool("enable-mcp-stock-tracking-proposals", false, "allow proposing a stock tracking change for browser approval")
 	enableStockMinimumProposals := flag.Bool("enable-mcp-stock-minimum-proposals", false, "allow proposing a stock minimum for browser approval")
 	enablePOSCreateProposals := flag.Bool("enable-mcp-pos-create-proposals", false, "allow proposing creation of one POS catalog item for browser approval")
@@ -51,6 +52,9 @@ func main() {
 	flag.Parse()
 	if *reservationContacts && !*publicReservations {
 		log.Fatal("-enable-reservation-contacts requires -public-reservations")
+	}
+	if *enableStockProductSetupProposals && (!*enablePOS || !*enableStock) {
+		log.Fatal("-enable-mcp-stock-product-setup-proposals requires -enable-pos and -enable-stock")
 	}
 	if *enableStockTrackingProposals && (!*enablePOS || !*enableStock) {
 		log.Fatal("-enable-mcp-stock-tracking-proposals requires -enable-pos and -enable-stock")
@@ -90,7 +94,7 @@ func main() {
 			modes++
 		}
 	}
-	if *state == "" || flag.NArg() != 0 || modes > 1 || modes != 0 && (explicitTCP || unixMode || *publicReservations || *reservationContacts || *enableReservationConfirmProposals || *enableReservationCancelProposals || *enablePOSCreateProposals || *enableStockMinimumProposals || *enableStockTrackingProposals || *enableSupplierNameProposals || *enablePOS || *enableDelivery || *enableMCP || *enableWikiProposals || *enableDocumentProposals || *enableWikiEditProposals || *enableStockReceiptProposals || *enableProposalSessions || *enableDocumentReviewProposals || *enableDocumentEditProposals || *enableStockAdjustmentProposals || *enablePOSCatalogProposals || *enableReconciliationDraftProposals || *enableProviderAuth || *enableAdminRecovery || *providerOnly) {
+	if *state == "" || flag.NArg() != 0 || modes > 1 || modes != 0 && (explicitTCP || unixMode || *publicReservations || *reservationContacts || *enableReservationConfirmProposals || *enableReservationCancelProposals || *enablePOSCreateProposals || *enableStockMinimumProposals || *enableStockTrackingProposals || *enableStockProductSetupProposals || *enableSupplierNameProposals || *enablePOS || *enableDelivery || *enableMCP || *enableWikiProposals || *enableDocumentProposals || *enableWikiEditProposals || *enableStockReceiptProposals || *enableProposalSessions || *enableDocumentReviewProposals || *enableDocumentEditProposals || *enableStockAdjustmentProposals || *enablePOSCatalogProposals || *enableReconciliationDraftProposals || *enableProviderAuth || *enableAdminRecovery || *providerOnly) {
 		log.Fatal("provide -state; choose at most one of -init, -check and -create-admin without server flags")
 	}
 	var addr netip.AddrPort
@@ -184,7 +188,7 @@ func main() {
 		WriteTimeout:      20 * time.Second,
 		IdleTimeout:       60 * time.Second,
 	}
-	application := &app{db: db, reservationContacts: *reservationContacts, providerAuth: providerAuth, adminRecovery: *enableAdminRecovery, providerOnly: *providerOnly, privateRoot: privateRoot, publicReservations: *publicReservations, enableMCPReservationConfirmProposals: *enableReservationConfirmProposals, enableMCPReservationCancelProposals: *enableReservationCancelProposals, enableMCPPOSCreateProposals: *enablePOSCreateProposals, enableMCPStockMinimumProposals: *enableStockMinimumProposals, enableMCPStockTrackingProposals: *enableStockTrackingProposals, enableMCPSupplierNameProposals: *enableSupplierNameProposals, enablePOS: *enablePOS,
+	application := &app{db: db, reservationContacts: *reservationContacts, providerAuth: providerAuth, adminRecovery: *enableAdminRecovery, providerOnly: *providerOnly, privateRoot: privateRoot, publicReservations: *publicReservations, enableMCPReservationConfirmProposals: *enableReservationConfirmProposals, enableMCPReservationCancelProposals: *enableReservationCancelProposals, enableMCPPOSCreateProposals: *enablePOSCreateProposals, enableMCPStockMinimumProposals: *enableStockMinimumProposals, enableMCPStockTrackingProposals: *enableStockTrackingProposals, enableMCPStockProductSetupProposals: *enableStockProductSetupProposals, enableMCPSupplierNameProposals: *enableSupplierNameProposals, enablePOS: *enablePOS,
 		enableDelivery: *enableDelivery, enableStock: *enableStock, enableMCP: *enableMCP, enableMCPWikiProposals: *enableWikiProposals, enableMCPDocumentProposals: *enableDocumentProposals, enableMCPWikiEditProposals: *enableWikiEditProposals, enableMCPStockReceiptProposals: *enableStockReceiptProposals, enableMCPProposalSessions: *enableProposalSessions, enableMCPDocumentReviewProposals: *enableDocumentReviewProposals, enableMCPDocumentEditProposals: *enableDocumentEditProposals, enableMCPPOSCatalogProposals: *enablePOSCatalogProposals, enableMCPStockAdjustmentProposals: *enableStockAdjustmentProposals, enableMCPReconciliationDraftProposals: *enableReconciliationDraftProposals}
 	if ingress != nil {
 		listener = ingress.listener

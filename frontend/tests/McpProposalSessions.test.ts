@@ -1209,3 +1209,91 @@ describe('Seguimiento de stock', () => {
     panel.unmount()
   })
 })
+
+describe('Configuración inicial de stock', () => {
+  const path = base + '/stock-product-setup-proposals'
+  const setup = { product_id: 4, expected_revision: 5, name: 'Producto local', minimum: 0, tracking_enabled: false }
+  function fakeFetch(reply: Response, preview: unknown = setup) {
+    return vi.fn((url: string) => {
+      if (url.endsWith('/proposal-sessions')) return Promise.resolve(result({ sessions: [] }))
+      if (url === path) return Promise.resolve(result({ proposals: [pending()] }))
+      if (url === path + '/8') return Promise.resolve(result({ ...pending(), digest, stock_setup: preview }))
+      if (url === path + '/8/decision') return Promise.resolve(reply)
+      throw Error('unexpected test request')
+    })
+  }
+  async function show(fetch: unknown, canSetupStockProduct = true) {
+    vi.stubGlobal('fetch', fetch)
+    const panel = mount(McpProposalSessions, {
+      props: { entity: 2, outlet: 7, outletName: 'Centro de prueba', canRename: false, canSetupStockProduct },
+    })
+    await button(panel, 'Sesiones de propuestas').trigger('click')
+    await flushPromises()
+    return panel
+  }
+  async function read(panel: ReturnType<typeof mount>) {
+    await button(panel, 'Ver propuesta 8 de configuración inicial de stock').trigger('click')
+    await flushPromises()
+  }
+  it('separately reviews and creates a disabled configuration with explicit zero', async () => {
+    const fetch = fakeFetch(result({ ...pending(), status: 'approved', product_id: 4, minimum: 0, tracking_enabled: false }))
+    const panel = await show(fetch)
+    const choice = panel.get('input[type=checkbox]')
+    expect((choice.element as HTMLInputElement).checked).toBe(false)
+    expect(button(panel, 'Crear sesión de propuestas').attributes()).toHaveProperty('disabled')
+    await choice.setValue(true)
+    expect(panel.text()).toContain('--proposal-session-action=stock_product_setup')
+    await read(panel)
+    for (const text of ['Centro de prueba', 'Producto local', 'Versión 5', '0 unidades', 'seguimiento queda desactivado',
+      'avisos todavía no funcionan', 'Activar el seguimiento requiere otra aprobación']) {
+      expect(panel.text()).toContain(text)
+    }
+    await button(panel, 'Continuar con la configuración inicial').trigger('click')
+    expect(fetch.mock.calls.some(([url]) => url.endsWith('/decision'))).toBe(false)
+    await button(panel, 'Crear configuración sin seguimiento').trigger('click')
+    await flushPromises()
+    expect(fetch).toHaveBeenLastCalledWith(path + '/8/decision', expect.objectContaining({
+      method: 'POST', body: JSON.stringify({ decision: 'approve', digest, confirm: true }),
+    }))
+    expect(panel.text()).toContain('Configuración creada. El seguimiento sigue desactivado.')
+    panel.unmount()
+  })
+  it.each([undefined, null, 0, true])('fails closed if disabled state is not explicit: %s', async tracking_enabled => {
+    const fetch = fakeFetch(result({}), { ...setup, tracking_enabled })
+    const panel = await show(fetch)
+    await read(panel)
+    expect(panel.get('[role=alert]').text()).toContain('No pude abrir la propuesta.')
+    expect(button(panel, 'Continuar con la configuración inicial')).toBeUndefined()
+    panel.unmount()
+  })
+  it.each([409, 200])('blocks retry after a stale or inconsistent receipt: %s', async code => {
+    const fetch = fakeFetch(result({ ...pending(), status: 'approved', product_id: 4, minimum: 0, tracking_enabled: true }, code))
+    const panel = await show(fetch)
+    await read(panel)
+    await button(panel, 'Continuar con la configuración inicial').trigger('click')
+    await button(panel, 'Crear configuración sin seguimiento').trigger('click')
+    await flushPromises()
+    expect(panel.get('[role=alert]').text()).toMatch(/No se creó|No pude verificar/)
+    await read(panel)
+    expect(button(panel, 'Continuar con la configuración inicial').attributes()).toHaveProperty('disabled')
+    expect(fetch.mock.calls.filter(([url]) => url.endsWith('/decision'))).toHaveLength(1)
+    panel.unmount()
+  })
+  it('rejects a proposal without creating tracking data', async () => {
+    const fetch = fakeFetch(result({ ...pending(), status: 'rejected' }))
+    const panel = await show(fetch)
+    await read(panel)
+    await button(panel, 'Rechazar propuesta').trigger('click')
+    await button(panel, 'Sí, rechazar').trigger('click')
+    await flushPromises()
+    expect(panel.text()).toContain('No se creó la configuración.')
+    panel.unmount()
+  })
+  it('does not query the named action when the current role lacks the capability', async () => {
+    const fetch = fakeFetch(result({}))
+    const panel = await show(fetch, false)
+    expect(fetch.mock.calls.some(([url]) => url === path)).toBe(false)
+    expect(panel.text()).not.toContain('Configurar un producto para stock')
+    panel.unmount()
+  })
+})

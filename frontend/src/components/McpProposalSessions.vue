@@ -4,10 +4,11 @@ import { ApiError, request } from '../api'
 
 type Status = 'pending' | 'approved' | 'rejected' | 'expired' | 'revoked'
 type ProductCreate = { name: string; price_minor: number; active: boolean; currency: string; catalog_count: number; catalog_limit: number }
+type StockProductSetup = { product_id: number; expected_revision: number; name: string; minimum: number; tracking_enabled: false }
 type StockTracking = { product_id: number; expected_revision: number; name: string; current_tracking_enabled: boolean; tracking_enabled: boolean; minimum: number }
 type StockMinimum = { product_id: number; expected_revision: number; name: string; current_minimum: number; minimum: number }
 type SupplierName = { supplier_id: number; expected_revision: number; name: string; current_name: string; business_wide: true }
-type Proposal = { id: number; status: Status; expires_at: string; product_id?: number; product_revision?: number; rename?: Rename; document_id?: number; document_revision?: number; review?: Review; run_id?: number; draft?: Draft; edit?: DocumentEdit; movement_id?: number; minimum?: number; minimum_change?: StockMinimum; tracking_change?: StockTracking; tracking_enabled?: boolean; adjustment?: StockAdjustment; change?: CatalogChange; product?: ProductCreate; supplier_id?: number; supplier_revision?: number; supplier?: SupplierName; reservation_reference?: string; confirmation?: ReservationConfirmation; cancellation?: ReservationCancellation; digest?: string }
+type Proposal = { id: number; status: Status; expires_at: string; product_id?: number; product_revision?: number; rename?: Rename; document_id?: number; document_revision?: number; review?: Review; run_id?: number; draft?: Draft; edit?: DocumentEdit; movement_id?: number; minimum?: number; minimum_change?: StockMinimum; tracking_change?: StockTracking; stock_setup?: StockProductSetup; tracking_enabled?: boolean; adjustment?: StockAdjustment; change?: CatalogChange; product?: ProductCreate; supplier_id?: number; supplier_revision?: number; supplier?: SupplierName; reservation_reference?: string; confirmation?: ReservationConfirmation; cancellation?: ReservationCancellation; digest?: string }
 type Rename = {
   product_id: number; expected_revision: number; name: string; current_name: string
   unchanged_price_minor: number; unchanged_active: boolean
@@ -36,7 +37,7 @@ type ReservationCancellation = {
   reservation_reference: string; start_utc: string; start_local: string; timezone: string
   party_size: number; status: 'pending' | 'confirmed'; table_label?: string
 }
-type Action = 'pos_product_rename' | 'document_draft_review' | 'reconciliation_draft_create' | 'document_draft_edit' | 'stock_waste_record' | 'stock_physical_count' | 'pos_product_price_change' | 'pos_product_availability_change' | 'reservation_confirm' | 'reservation_cancel' | 'pos_product_create' | 'stock_minimum_change' | 'stock_tracking_change' | 'supplier_legal_name_change'
+type Action = 'pos_product_rename' | 'document_draft_review' | 'reconciliation_draft_create' | 'document_draft_edit' | 'stock_waste_record' | 'stock_physical_count' | 'pos_product_price_change' | 'pos_product_availability_change' | 'reservation_confirm' | 'reservation_cancel' | 'pos_product_create' | 'stock_minimum_change' | 'stock_tracking_change' | 'stock_product_setup' | 'supplier_legal_name_change'
 type ScopedProposal = Proposal & { kind: Action }
 type Session = { id: number; expires_at: string; actions: string[] }
 const actionName = 'pos_product_rename'
@@ -52,9 +53,10 @@ const cancelAction = 'reservation_cancel'
 const createAction = 'pos_product_create'
 const minimumAction = 'stock_minimum_change'
 const trackingAction = 'stock_tracking_change'
+const stockSetupAction = 'stock_product_setup'
 const supplierAction = 'supplier_legal_name_change'
 const isReservation = (action: Action) => action === reservationAction || action === cancelAction
-const guardDecisionRetry = (action: Action) => isReservation(action) || action === minimumAction || action === trackingAction || action === supplierAction
+const guardDecisionRetry = (action: Action) => isReservation(action) || action === minimumAction || action === trackingAction || action === stockSetupAction || action === supplierAction
 const isCatalog = (action: Action) => action === priceAction || action === availabilityAction
 const isStock = (action: Action) => action === wasteAction || action === countAction
 const actionLabels: Record<Action, string> = {
@@ -63,6 +65,7 @@ const actionLabels: Record<Action, string> = {
   supplier_legal_name_change: 'Cambiar la razón social de un proveedor',
   stock_minimum_change: 'Cambiar el mínimo de stock',
   stock_tracking_change: 'Cambiar el seguimiento de stock',
+  stock_product_setup: 'Configurar un producto para stock',
   pos_product_create: 'Crear un producto de caja',
   pos_product_rename: 'Cambiar el nombre de un producto de caja',
   document_draft_review: 'Marcar un comprobante como revisado',
@@ -97,6 +100,13 @@ const actionUI: Record<Action, {
     rejectConfirm: '¿Querés rechazar la propuesta sin cambiar el proveedor?',
     stale: 'No se cambió la razón social. El proveedor o la propuesta cambiaron. Prepará otra propuesta.',
     approved: 'Razón social del proveedor actualizada para toda la empresa.', rejected: 'Propuesta rechazada. No se cambió el proveedor.',
+  },
+  stock_product_setup: {
+    path: '/stock-product-setup-proposals', previewSuffix: ' de configuración inicial de stock', proceed: 'Continuar con la configuración inicial',
+    approve: 'Crear configuración sin seguimiento', confirm: '¿Querés guardar este mínimo inicial sin activar el seguimiento?',
+    rejectConfirm: '¿Querés rechazar sin crear una configuración?',
+    stale: 'No se creó la configuración. El producto o la configuración de stock cambiaron. Prepará otra propuesta.',
+    approved: 'Configuración creada. El seguimiento sigue desactivado.', rejected: 'Propuesta rechazada. No se creó la configuración.',
   },
   stock_tracking_change: {
     path: '/stock-tracking-proposals', previewSuffix: ' de seguimiento de stock', proceed: 'Continuar con el seguimiento de stock',
@@ -243,6 +253,10 @@ function validStockMinimum(x: StockMinimum | undefined): x is StockMinimum {
     typeof x.name === 'string' && !!x.name.trim() && validMinimum(x.current_minimum) &&
     validMinimum(x.minimum) && x.current_minimum !== x.minimum
 }
+function validStockProductSetup(x: StockProductSetup | undefined): x is StockProductSetup {
+  return !!x && positive(x.product_id) && positive(x.expected_revision) &&
+    typeof x.name === 'string' && !!x.name.trim() && validMinimum(x.minimum) && x.tracking_enabled === false
+}
 function validStockTracking(x: StockTracking | undefined): x is StockTracking {
   return !!x && positive(x.product_id) && positive(x.expected_revision) &&
     typeof x.name === 'string' && !!x.name.trim() && validMinimum(x.minimum) &&
@@ -277,10 +291,11 @@ const stateLabel = (active: boolean) => active ? 'Activo' : 'Inactivo'
 const prices = new Intl.NumberFormat('es-AR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
 const amount = (value: number | null) => value === null ? 'No informado' : prices.format(value / 100)
 type Decision = 'approve' | 'reject'
-const props = defineProps<{ entity: number; outlet: number; outletName: string; businessName?: string; canRename: boolean; canReviewDocuments?: boolean; canCreateReconciliationDraft?: boolean; canEditDocuments?: boolean; canAdjustStock?: boolean; canChangeCatalog?: boolean; canConfirmReservations?: boolean; canCancelReservations?: boolean; canCreateProducts?: boolean; canSetStockMinimum?: boolean; canChangeStockTracking?: boolean; canChangeSupplierName?: boolean }>()
+const props = defineProps<{ entity: number; outlet: number; outletName: string; businessName?: string; canRename: boolean; canReviewDocuments?: boolean; canCreateReconciliationDraft?: boolean; canEditDocuments?: boolean; canAdjustStock?: boolean; canChangeCatalog?: boolean; canConfirmReservations?: boolean; canCancelReservations?: boolean; canCreateProducts?: boolean; canSetStockMinimum?: boolean; canChangeStockTracking?: boolean; canSetupStockProduct?: boolean; canChangeSupplierName?: boolean }>()
 const scopePath = `/entities/${props.entity}/outlets/${props.outlet}`
 const base = (kind: Action) => scopePath + actionUI[kind].path
 const allowed = (kind: Action) => kind === supplierAction ? !!props.canChangeSupplierName && !!props.businessName?.trim() && !!props.outletName.trim()
+  : kind === stockSetupAction ? !!props.canSetupStockProduct && !!props.outletName.trim()
   : kind === trackingAction ? !!props.canChangeStockTracking && !!props.outletName.trim()
   : kind === minimumAction ? !!props.canSetStockMinimum
   : kind === cancelAction ? !!props.canCancelReservations
@@ -291,13 +306,14 @@ const allowed = (kind: Action) => kind === supplierAction ? !!props.canChangeSup
   : kind === editAction ? !!props.canEditDocuments
   : kind === draftAction ? !!props.canCreateReconciliationDraft
   : kind === reviewAction ? !!props.canReviewDocuments : props.canRename
-const actionChoices = computed(() => ([actionName, reviewAction, draftAction, editAction, wasteAction, countAction, priceAction, availabilityAction, reservationAction, cancelAction, createAction, minimumAction, trackingAction, supplierAction] as const).filter(allowed))
+const actionChoices = computed(() => ([actionName, reviewAction, draftAction, editAction, wasteAction, countAction, priceAction, availabilityAction, reservationAction, cancelAction, createAction, minimumAction, trackingAction, stockSetupAction, supplierAction] as const).filter(allowed))
 const setSelected = (kind: Action, event: Event) => {
   if (event.target instanceof HTMLInputElement) selected.value = event.target.checked ? kind : null
 }
 const actionText = (action: string) => Object.hasOwn(actionLabels, action)
   ? actionLabels[action as Action] : 'Acción no reconocida'
 const validPreview = (kind: Action, proposal: Proposal) => kind === supplierAction ? validSupplierName(proposal.supplier)
+  : kind === stockSetupAction ? validStockProductSetup(proposal.stock_setup)
   : kind === trackingAction ? validStockTracking(proposal.tracking_change)
   : kind === minimumAction ? validStockMinimum(proposal.minimum_change)
   : kind === cancelAction ? validReservationCancellation(proposal.cancellation)
@@ -428,7 +444,7 @@ async function perform(message: string, action: (run: number) => Promise<void>, 
       error.value = cause.status === 410 ? 'La propuesta venció o se revocó su clave.' : actionUI[kind].stale
       try { await list(run) } catch { /* Keep the decision error. */ }
     } else {
-      if ((kind === cancelAction || kind === minimumAction || kind === trackingAction || kind === supplierAction) && deciding.value) clearPreview()
+      if ((kind === cancelAction || kind === minimumAction || kind === trackingAction || kind === stockSetupAction || kind === supplierAction) && deciding.value) clearPreview()
       error.value = message
     }
   } finally {
@@ -463,13 +479,15 @@ async function decide() {
     target.digest !== proposed.digest || target.kind !== proposed.kind ||
     (target.kind === cancelAction && target.action === 'approve' && !cancelAcknowledged.value) ||
     (needsTrackingAcknowledgement.value && !trackingAcknowledged.value)) return
-  if (target.kind === cancelAction || target.kind === minimumAction || target.kind === trackingAction || target.kind === supplierAction) closedScopedDecisions.add(decisionKey(target.kind, target.id))
+  if (target.kind === cancelAction || target.kind === minimumAction || target.kind === trackingAction || target.kind === stockSetupAction || target.kind === supplierAction) closedScopedDecisions.add(decisionKey(target.kind, target.id))
   await perform(target.kind === cancelAction
     ? 'No pude verificar el resultado. Revisá el estado en Reservas antes de hacer otro cambio.'
     : target.kind === minimumAction
       ? 'No pude verificar el resultado. Revisá el mínimo de stock antes de preparar otra propuesta.'
-      : target.kind === trackingAction
-        ? 'No pude verificar el resultado. Revisá el seguimiento de stock antes de preparar otra propuesta.'
+      : target.kind === stockSetupAction
+        ? 'No pude verificar el resultado. Revisá la configuración de stock antes de preparar otra propuesta.'
+        : target.kind === trackingAction
+          ? 'No pude verificar el resultado. Revisá el seguimiento de stock antes de preparar otra propuesta.'
         : target.kind === supplierAction
           ? 'No pude verificar el resultado. Revisá la razón social en Proveedores antes de preparar otra propuesta.'
         : 'No pude resolver la propuesta.', async run => {
@@ -482,7 +500,11 @@ async function decide() {
     const validApproval = target.kind === supplierAction
       ? result.supplier_id === proposed.supplier?.supplier_id &&
         result.supplier_revision === (proposed.supplier?.expected_revision ?? -1) + 1 && result.supplier === undefined
-       : target.kind === trackingAction
+       : target.kind === stockSetupAction
+      ? result.product_id === proposed.stock_setup?.product_id && validMinimum(result.minimum) &&
+        result.minimum === proposed.stock_setup?.minimum && result.tracking_enabled === false &&
+        result.product_revision === undefined && result.stock_setup === undefined
+      : target.kind === trackingAction
       ? result.product_id === proposed.tracking_change?.product_id && typeof result.tracking_enabled === 'boolean' &&
         result.tracking_enabled === proposed.tracking_change?.tracking_enabled && result.product_revision === undefined &&
         result.tracking_change === undefined && result.minimum === undefined
@@ -505,6 +527,9 @@ async function decide() {
     if (result.id !== target.id || result.status !== (target.action === 'approve' ? 'approved' : 'rejected') ||
       (target.action === 'approve' && !validApproval) ||
       (isReservation(target.kind) && target.action === 'reject' && result.reservation_reference !== undefined) ||
+      (target.kind === stockSetupAction && target.action === 'reject' &&
+        (result.product_id !== undefined || result.product_revision !== undefined || result.tracking_enabled !== undefined ||
+         result.stock_setup !== undefined || result.minimum !== undefined)) ||
       (target.kind === trackingAction && target.action === 'reject' &&
         (result.product_id !== undefined || result.product_revision !== undefined || result.tracking_enabled !== undefined ||
          result.tracking_change !== undefined || result.minimum !== undefined)) ||
@@ -708,6 +733,13 @@ onBeforeUnmount(() => {
           <pre class="gomar-feature-text proposal-body" aria-label="Razón social propuesta">{{ viewed.supplier.name }}</pre>
           <p>Solo cambia la razón social. No se modifican datos fiscales, contactos, documentos ni pagos.</p>
         </div>
+        <div v-else-if="viewed.kind === stockSetupAction && viewed.stock_setup">
+          <p>Local: <strong>{{ outletName }}</strong></p>
+          <p class="gomar-feature-text">Producto: <strong>{{ viewed.stock_setup.name }}</strong> ({{ viewed.stock_setup.product_id }}) · Versión {{ viewed.stock_setup.expected_revision }}</p>
+          <p>Mínimo inicial para avisos: <strong>{{ stockUnits.format(viewed.stock_setup.minimum) }} unidades</strong>.</p>
+          <p>Se guarda la configuración. El seguimiento queda <strong>desactivado</strong> y los avisos todavía no funcionan.</p>
+          <p>No se cargan existencias, movimientos ni ventas. Activar el seguimiento requiere otra aprobación.</p>
+        </div>
         <div v-else-if="viewed.kind === trackingAction && viewed.tracking_change">
           <p>Local: <strong>{{ outletName }}</strong></p>
           <p class="gomar-feature-text">Producto: <strong>{{ viewed.tracking_change.name }}</strong> ({{ viewed.tracking_change.product_id }}) · Versión {{ viewed.tracking_change.expected_revision }}</p>
@@ -804,7 +836,8 @@ onBeforeUnmount(() => {
         <p v-if="viewed.kind === supplierAction && viewed.status === 'approved' && viewed.supplier_id && viewed.supplier_revision">Proveedor {{ viewed.supplier_id }} · Versión {{ viewed.supplier_revision }}</p>
         <p v-if="viewed.kind === minimumAction && viewed.status === 'approved' && viewed.product_id && validMinimum(viewed.minimum)">Producto {{ viewed.product_id }} · Mínimo: {{ stockUnits.format(viewed.minimum) }} unidades</p>
         <p v-if="viewed.kind === trackingAction && viewed.status === 'approved' && viewed.product_id && typeof viewed.tracking_enabled === 'boolean'">Producto {{ viewed.product_id }} · Seguimiento: {{ trackingLabel(viewed.tracking_enabled) }}</p>
-        <p v-if="viewed.kind !== trackingAction && viewed.kind !== minimumAction && viewed.status === 'approved' && viewed.product_id">Producto {{ viewed.product_id }} · Versión {{ viewed.product_revision }}</p>
+        <p v-if="viewed.kind === stockSetupAction && viewed.status === 'approved' && viewed.product_id && validMinimum(viewed.minimum) && viewed.tracking_enabled === false">Producto {{ viewed.product_id }} · Mínimo: {{ stockUnits.format(viewed.minimum) }} unidades · Seguimiento desactivado al crear.</p>
+        <p v-if="viewed.kind !== stockSetupAction && viewed.kind !== trackingAction && viewed.kind !== minimumAction && viewed.status === 'approved' && viewed.product_id">Producto {{ viewed.product_id }} · Versión {{ viewed.product_revision }}</p>
         <p v-if="viewed.status === 'approved' && viewed.document_id">Comprobante {{ viewed.document_id }} · Versión {{ viewed.document_revision }}</p>
         <p v-if="viewed.status === 'approved' && viewed.run_id">Conciliación {{ viewed.run_id }}</p>
         <p v-if="viewed.status === 'approved' && viewed.movement_id">Movimiento {{ viewed.movement_id }}</p>
