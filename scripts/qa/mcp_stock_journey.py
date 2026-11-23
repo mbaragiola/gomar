@@ -14,6 +14,7 @@ from playwright.sync_api import expect, sync_playwright
 
 from codex_stock_transport import codex_tools
 from mcp_purchase_checks import purchase_checks, purchase_seed, purchase_snapshot, purchase_tools
+from pos_prebill_checks import sale_count
 
 if not __debug__:
     raise RuntimeError("Run this check without Python optimization so assertions stay enabled")
@@ -22,7 +23,7 @@ root, pg, chrome = map(Path, sys.argv[1:4])
 codex = Path(sys.argv[4]) if sys.argv[4] else None
 with_purchases = sys.argv[5] == "true"
 with_bookings_wiki = sys.argv[6] == "true"
-with_barcode = sys.argv[8] == "true"
+with_barcode = len(sys.argv) > 8 and sys.argv[8] == "true"
 if with_bookings_wiki:
     from mcp_bookings_wiki_checks import booking_checks, booking_seed, booking_tools, confirmation_tool
 with_pos_prebill = len(sys.argv) > 7 and sys.argv[7] == "true"
@@ -369,7 +370,11 @@ SELECT
 
 
 def barcode_journey(browser):
+    # The fixture has only loopback. Drive the browser's connectivity hint
+    # independently while Playwright also removes actual network access.
+    online_hint = "Object.defineProperty(Navigator.prototype, 'onLine', {get: () => !window.qaOffline})"
     owner = login(browser, "qa-admin", allow_pos_worker=True)
+    owner.add_init_script(online_hint)
     owner.goto(origin + "/pos")
     owner.get_by_label("Entidad", exact=True).select_option("1")
     owner.get_by_label("Local", exact=True).select_option("1")
@@ -408,6 +413,7 @@ def barcode_journey(browser):
 
     for mobile in (False, True):
         register = login(browser, "qa-admin", mobile=mobile, allow_pos_worker=True)
+        register.add_init_script(online_hint)
         register.goto(origin + "/pos")
         register.get_by_label("Entidad", exact=True).select_option("1")
         register.get_by_label("Local", exact=True).select_option("1")
@@ -427,11 +433,13 @@ def barcode_journey(browser):
         expect(register.get_by_role("alert")).to_contain_text("código")
         expect(register.get_by_text(f"{name} × 2", exact=True)).to_be_visible()
         register.context.set_offline(True)
+        register.evaluate("window.qaOffline = true; window.dispatchEvent(new Event('offline'))")
         expect(register.get_by_text("Sin conexión", exact=True)).to_be_visible()
         scan_code(new)
         expect(register.get_by_text(f"{name} × 3", exact=True)).to_be_visible()
         register.get_by_role("button", name="Bloquear caja").click()
         expect(scan).to_have_count(0)
+        assert sale_count(register) == 0
         register.context.close()
     assert psql("SELECT count(*) FROM gomar.pos_sales") == "0"
     owner.context.close()
