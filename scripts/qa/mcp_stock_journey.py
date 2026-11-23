@@ -21,6 +21,10 @@ if not __debug__:
 root, pg, chrome = map(Path, sys.argv[1:4])
 codex = Path(sys.argv[4]) if sys.argv[4] else None
 with_purchases = sys.argv[5] == "true"
+with_bookings_wiki = sys.argv[6] == "true"
+if with_bookings_wiki:
+    from mcp_bookings_wiki_checks import booking_checks, booking_seed, booking_tools, confirmation_tool
+
 scope = {"entity_id": 1, "outlet_id": 1}
 base = "/api/v1/entities/1/outlets/1"
 rename_tool = "gomar_propose_pos_rename"
@@ -80,6 +84,8 @@ COMMIT;
 """)
     if with_purchases:
         purchase_seed(psql)
+    if with_bookings_wiki:
+        booking_seed(psql)
 
 
 def login(browser, username, mobile=False):
@@ -96,15 +102,19 @@ def login(browser, username, mobile=False):
     return page
 
 
-def issue(page, alias, action=None):
+def request_credential(page, action=None):
     endpoint = "mcp-proposal-sessions" if action else "mcp-token"
     body = {**scope, **({"actions": [action]} if action else {})}
-    status, credential = page.evaluate("""async ([endpoint, body]) => {
+    return page.evaluate("""async ([endpoint, body]) => {
       const csrf = document.cookie.match(/(?:^|; )csrftoken=([^;]+)/)?.[1];
       const reply = await fetch('/api/v1/auth/' + endpoint, {method:'POST',
         headers:{'Content-Type':'application/json','X-CSRFToken':csrf}, body:JSON.stringify(body)});
       return [reply.status, await reply.json()];
     }""", [endpoint, body])
+
+
+def issue(page, alias, action=None):
+    status, credential = request_credential(page, action)
     if status != 201:
         raise AssertionError(f"QA credential issuance failed: HTTP {status}")
     path = root / alias
@@ -114,9 +124,9 @@ def issue(page, alias, action=None):
     return path, credential.get("id")
 
 
-def tool_caller(tools, invoke, proposal_lanes):
+def tool_caller(tools, invoke, expected_writes):
     writes = {tool["name"] for tool in tools if not tool["annotations"].get("readOnlyHint")}
-    assert writes == ({rename_tool, minimum_tool} if proposal_lanes else set())
+    assert writes == expected_writes
     reads = {"gomar_read_pos_product", "gomar_read_stock_product", "gomar_list_stock"}
     assert reads.issubset({tool["name"] for tool in tools})
 
@@ -125,7 +135,7 @@ def tool_caller(tools, invoke, proposal_lanes):
         assert result.get("isError", False) == denied, f"wrong permission result for {name}"
         if denied:
             assert "structuredContent" not in result
-            assert all(sentinel not in json.dumps(result) for sentinel in ("QA otro local", "qa-private"))
+            assert all(sentinel not in json.dumps(result) for sentinel in ("QA otro local", "qa-private", "qa-booking-hidden"))
             return None
         return result["structuredContent"]
 
@@ -133,15 +143,21 @@ def tool_caller(tools, invoke, proposal_lanes):
 
 
 @contextlib.contextmanager
-def connection(read, rename=None, minimum=None):
+def connection(read, rename=None, minimum=None, booking=None):
     args = [root / "gomar-mcp", "--origin", origin, "--token-file", read]
+    writes = set()
     if rename:
+        writes = {rename_tool, minimum_tool}
         args.extend(["--proposal-entity", "1", "--proposal-outlet", "1",
                      f"--proposal-lane=pos_product_rename={rename}",
                      f"--proposal-lane=stock_minimum_change={minimum}"])
+    if booking:
+        assert not rename and not minimum
+        writes = {confirmation_tool}
+        args.extend(["--proposal-session-token-file", booking, "--proposal-session-action", "reservation_confirm"])
     if codex:
         with codex_tools(codex, args, root) as (tools, invoke):
-            yield tool_caller(tools, invoke, rename is not None)
+            yield tool_caller(tools, invoke, writes)
         return
     with subprocess.Popen(args, env=env, text=True, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                           stderr=subprocess.DEVNULL) as mcp:
@@ -169,7 +185,7 @@ def connection(read, rename=None, minimum=None):
             rpc("notifications/initialized", notify=True)
             tools = rpc("tools/list")["tools"]
             yield tool_caller(tools, lambda name, arguments: rpc(
-                "tools/call", {"name": name, "arguments": arguments}), rename is not None)
+                "tools/call", {"name": name, "arguments": arguments}), writes)
         finally:
             mcp.stdin.close()
             try:
@@ -254,6 +270,8 @@ def journey(chromium):
             readonly("gomar_read_stock_product", {**scope, "product_id": 2}, denied=True)
             if with_purchases:
                 purchase_tools(readonly, scope, may_handoff=False)
+            if with_bookings_wiki:
+                booking_tools(readonly, scope, allowed=False)
         readback(call, old_name, 1, 1)
         assert snapshot() == original
 
@@ -318,6 +336,17 @@ SELECT
             purchase_checks(call, owner, reader, origin, scope)
             assert purchase_snapshot(psql) == original_purchases
 
+    if with_bookings_wiki:
+        disabled, denied = request_credential(owner, "reservation_cancel"), request_credential(reader, "reservation_confirm")
+        assert disabled[0] == 422 and "token" not in disabled[1]
+        assert denied[0] == 403 and "token" not in denied[1]
+        booking, _ = issue(owner, "booking", "reservation_confirm")
+        with connection(read, booking=booking) as scoped_booking:
+            booking_checks(scoped_booking, owner, peer, origin, scope, psql, review_panel, show)
+    else:
+        status, denied = request_credential(owner, "reservation_confirm")
+        assert status == 422 and "token" not in denied
+
 
 
 def main():
@@ -327,10 +356,12 @@ def main():
         listener.bind(("127.0.0.1", 0))
         address = f"127.0.0.1:{listener.getsockname()[1]}"
     origin = "http://" + address
+    app_flags = ["-enable-mcp", "-enable-pos", "-enable-stock", "-enable-mcp-proposal-sessions",
+                 "-enable-mcp-stock-minimum-proposals"]
+    if with_bookings_wiki:
+        app_flags.extend(["-public-reservations", "-enable-mcp-reservation-confirm-proposals"])
     with (root / "native.log").open("w") as log:
-        server = subprocess.Popen([root / "gomar", "-state", root / "state", "-listen", address,
-                                   "-enable-mcp", "-enable-pos", "-enable-stock",
-                                   "-enable-mcp-proposal-sessions", "-enable-mcp-stock-minimum-proposals"],
+        server = subprocess.Popen([root / "gomar", "-state", root / "state", "-listen", address, *app_flags],
                                   env=env, stdout=log, stderr=subprocess.STDOUT)
         try:
             for _ in range(100):
@@ -359,6 +390,9 @@ def main():
     print(f"PASS: {transport}, Chrome review, denials, revocation, and exact stock readback")
     if with_purchases:
         print("PASS: same staff session, scoped purchases and native handoff; no changes to documents or payments")
+
+    if with_bookings_wiki:
+        print("PASS: scoped reservation proposal, native approval, wiki reads, and role/branch/action denials")
 
 
 

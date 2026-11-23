@@ -121,4 +121,5 @@ def purchase_checks(call, page, reader, origin, scope):
         expect(page.get_by_role("button", name=f"Comprobante {row}", exact=False)).to_be_visible()
     for row in (11, 12, 13):
         expect(page.get_by_role("button", name=f"Comprobante {row}", exact=False)).to_have_count(0)
+    page.unroute("**/*", protect)
     assert not forbidden, "purchase journey attempted a file or payment request"
