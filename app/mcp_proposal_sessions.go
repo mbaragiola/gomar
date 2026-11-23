@@ -63,7 +63,7 @@ func proposalLoginHash(r *http.Request) ([32]byte, error) {
 }
 
 func (a *app) registerNamedProposalSessions(add func(string, string, http.HandlerFunc)) {
-	if !a.posRenameProposalsEnabled() && !a.documentReviewProposalsEnabled() && !a.reconciliationDraftProposalsEnabled() && !a.documentEditProposalsEnabled() && !a.stockAdjustmentProposalsEnabled() && !a.posCatalogProposalsEnabled() && !a.reservationConfirmProposalsEnabled() && !a.reservationTableAddProposalsEnabled() && !a.reservationSlotAddProposalsEnabled() && !a.outletDisplayLabelProposalsEnabled() && !a.reservationCancelProposalsEnabled() && !a.posCreateProposalsEnabled() && !a.stockMinimumProposalsEnabled() && !a.stockTrackingProposalsEnabled() && !a.stockProductSetupProposalsEnabled() && !a.supplierNameProposalsEnabled() {
+	if !a.posRenameProposalsEnabled() && !a.documentReviewProposalsEnabled() && !a.reconciliationDraftProposalsEnabled() && !a.documentEditProposalsEnabled() && !a.documentNumberProposalsEnabled() && !a.stockAdjustmentProposalsEnabled() && !a.posCatalogProposalsEnabled() && !a.reservationConfirmProposalsEnabled() && !a.reservationTableAddProposalsEnabled() && !a.reservationSlotAddProposalsEnabled() && !a.outletDisplayLabelProposalsEnabled() && !a.reservationCancelProposalsEnabled() && !a.posCreateProposalsEnabled() && !a.stockMinimumProposalsEnabled() && !a.stockTrackingProposalsEnabled() && !a.stockProductSetupProposalsEnabled() && !a.supplierNameProposalsEnabled() {
 		return
 	}
 	add(proposalSessionsAuthPath, http.MethodPost, a.protectedWikiProposal(a.issueNamedProposalSession))
@@ -119,6 +119,11 @@ func (a *app) issueNamedProposalSession(w http.ResponseWriter, r *http.Request, 
 			return badInput
 		}
 		_, err = lockReconciliationDraftScope(ctx, tx, reconciliationDraftScope{u.id, input.Entity, input.Outlet})
+	case documentNumberSessionAction:
+		if !a.documentNumberProposalsEnabled() {
+			return badInput
+		}
+		err = lockScopedDocumentCapability(ctx, tx, documentReviewScope{u.id, input.Entity, input.Outlet}, draftCapability)
 	case documentEditSessionAction:
 		if !a.documentEditProposalsEnabled() {
 			return badInput
@@ -296,6 +301,10 @@ func (a *app) revokeNamedProposalSession(w http.ResponseWriter, r *http.Request,
 		return err
 	}
 	if _, err = tx.ExecContext(ctx, `UPDATE mcp_stock_adjustment_proposals SET status='revoked',adjustment_preview=NULL,decided_at=$1
+ WHERE session_id=$2 AND actor_id=$3 AND status='pending'`, now, id, u.id); err != nil {
+		return err
+	}
+	if _, err = tx.ExecContext(ctx, `UPDATE mcp_document_number_proposals SET status='revoked',number_preview=NULL,decided_at=$1
  WHERE session_id=$2 AND actor_id=$3 AND status='pending'`, now, id, u.id); err != nil {
 		return err
 	}

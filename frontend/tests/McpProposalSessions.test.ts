@@ -1585,3 +1585,91 @@ describe('Nombre para mostrar de un local', () => {
     panel.unmount()
   })
 })
+
+describe('Número impreso de un comprobante', () => {
+  const path = base + '/document-number-proposals'
+  const preview = { document_id: 4, expected_revision: 2, current_reference: 'Factura A 00001-00000008', reference: 'Factura A 00001-00000017' }
+  function fakeFetch(reply: Response, change: unknown = preview) {
+    return vi.fn((url: string) => {
+      if (url.endsWith('/proposal-sessions')) return Promise.resolve(result({ sessions: [] }))
+      if (url === path) return Promise.resolve(result({ proposals: [pending()] }))
+      if (url === path + '/8') return Promise.resolve(result({ ...pending(), digest, number_change: change }))
+      if (url === path + '/8/decision') return Promise.resolve(reply)
+      throw Error('unexpected test request')
+    })
+  }
+  async function show(fetch: unknown, canCorrectDocumentNumber = true) {
+    vi.stubGlobal('fetch', fetch)
+    const panel = mount(McpProposalSessions, {
+      props: { entity: 2, outlet: 7, outletName: 'Centro de prueba', canRename: false, canCorrectDocumentNumber },
+    })
+    await button(panel, 'Sesiones de propuestas').trigger('click')
+    await flushPromises()
+    return panel
+  }
+  async function read(panel: ReturnType<typeof mount>) {
+    await button(panel, 'Ver propuesta 8 de corrección del número').trigger('click')
+    await flushPromises()
+  }
+  it('requires separate scoped confirmation and accepts only the exact document revision', async () => {
+    const fetch = fakeFetch(result({ ...pending(), status: 'approved', document_id: 4, document_revision: 3 }))
+    const panel = await show(fetch)
+    const choice = panel.get('input[type=checkbox]')
+    expect((choice.element as HTMLInputElement).checked).toBe(false)
+    expect(button(panel, 'Crear sesión de propuestas').attributes()).toHaveProperty('disabled')
+    await choice.setValue(true)
+    expect(panel.text()).toContain('--proposal-session-action=document_draft_number_change')
+    await read(panel)
+    for (const phrase of ['Centro de prueba', 'Comprobante 4 · Versión 2', preview.current_reference,
+      preview.reference, 'no se registra una deuda ni un pago', 'Motivo de auditoría']) expect(panel.text()).toContain(phrase)
+    await button(panel, 'Continuar con la corrección').trigger('click')
+    expect(fetch.mock.calls.some(([url]) => url.endsWith('/decision'))).toBe(false)
+    await button(panel, 'Guardar número corregido').trigger('click')
+    await flushPromises()
+    expect(fetch).toHaveBeenLastCalledWith(path + '/8/decision', expect.objectContaining({
+      method: 'POST', body: JSON.stringify({ decision: 'approve', digest, confirm: true }),
+    }))
+    expect(panel.text()).toContain('Número corregido. El comprobante sigue en borrador.')
+    panel.unmount()
+  })
+  it.each([{ reference: 'Factura A 00002-00000017' }, { reference: 'Factura A 00001-00000008' }, { expected_revision: 0 }])(
+    'refuses to show a mismatched or invalid change %s', async patch => {
+      const fetch = fakeFetch(result({}), { ...preview, ...patch })
+      const panel = await show(fetch)
+      await read(panel)
+      expect(panel.get('[role=alert]').text()).toContain('No pude abrir la propuesta.')
+      expect(button(panel, 'Continuar con la corrección')).toBeUndefined()
+      panel.unmount()
+    },
+  )
+  it.each([409, 200])('does not retry a conflict or an inexact approval receipt %s', async code => {
+    const fetch = fakeFetch(result({ ...pending(), status: 'approved', document_id: 4, document_revision: 4 }, code))
+    const panel = await show(fetch)
+    await read(panel)
+    await button(panel, 'Continuar con la corrección').trigger('click')
+    await button(panel, 'Guardar número corregido').trigger('click')
+    await flushPromises()
+    expect(panel.get('[role=alert]').text()).toMatch(/No se guardó|No pude verificar/)
+    await read(panel)
+    expect(button(panel, 'Continuar con la corrección').attributes()).toHaveProperty('disabled')
+    expect(fetch.mock.calls.filter(([url]) => url.endsWith('/decision'))).toHaveLength(1)
+    panel.unmount()
+  })
+  it('rejects without any document data in the receipt', async () => {
+    const fetch = fakeFetch(result({ ...pending(), status: 'rejected' }))
+    const panel = await show(fetch)
+    await read(panel)
+    await button(panel, 'Rechazar propuesta').trigger('click')
+    await button(panel, 'Sí, rechazar').trigger('click')
+    await flushPromises()
+    expect(panel.text()).toContain('El comprobante no cambió.')
+    panel.unmount()
+  })
+  it('does not query the named action without the current capability', async () => {
+    const fetch = fakeFetch(result({}))
+    const panel = await show(fetch, false)
+    expect(fetch.mock.calls.some(([url]) => url === path)).toBe(false)
+    expect(panel.text()).not.toContain('Corregir el número impreso de un comprobante')
+    panel.unmount()
+  })
+})
