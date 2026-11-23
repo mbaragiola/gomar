@@ -23,8 +23,9 @@ func mcpReadReconciliationCloseEligibility(r *http.Request, tx *sql.Tx, s mcpTok
 	// The MCP token may be narrower than the membership. Verify the requested
 	// outlet and every current participant before using the native run loader.
 	var scopedID int64
-	err = tx.QueryRowContext(r.Context(), `SELECT r.id`+mcpReconciliationRunScope+
-		` AND r.id=$5`, s.ID, outlet, s.id, s.outlet.Valid, id).Scan(&scopedID)
+	var singleOutlet bool
+	err = tx.QueryRowContext(r.Context(), `SELECT r.id,(SELECT COUNT(*) FROM reconciliation_read_outlets ro WHERE ro.run_id=r.id)=1`+mcpReconciliationRunScope+
+		` AND r.id=$5`, s.ID, outlet, s.id, s.outlet.Valid, id).Scan(&scopedID, &singleOutlet)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, mcpMissingReconciliation
 	}
@@ -38,7 +39,15 @@ func mcpReadReconciliationCloseEligibility(r *http.Request, tx *sql.Tx, s mcpTok
 	if len(runs) != 1 {
 		return nil, mcpMissingReconciliation
 	}
-	_, err = reconciliationClosureEligibility(tx, runs[0])
+	result, err := reconciliationEligibilityResult(tx, runs[0])
+	if err == nil && singleOutlet && runs[0].State == "review" {
+		result.HandoffURL = mcpclient.ReconciliationCloseHandoffURL(s.ID, outlet, scopedID)
+	}
+	return result, err
+}
+
+func reconciliationEligibilityResult(tx *sql.Tx, run reconciliationReadRun) (mcpclient.ReconciliationCloseEligibility, error) {
+	_, err := reconciliationClosureEligibility(tx, run)
 	switch {
 	case err == nil:
 		return mcpclient.ReconciliationCloseEligibility{Eligible: true}, nil
@@ -47,6 +56,6 @@ func mcpReadReconciliationCloseEligibility(r *http.Request, tx *sql.Tx, s mcpTok
 	case errors.Is(err, unsupportedReconciliationReviewData):
 		return mcpclient.ReconciliationCloseEligibility{Blocker: "unsupported_review_data"}, nil
 	default:
-		return nil, err
+		return mcpclient.ReconciliationCloseEligibility{}, err
 	}
 }

@@ -172,6 +172,16 @@ The read does not return counts, rows, balances, account data, or files.
 It does not close or reserve the run and does not check a future revision
 or operation key.
 
+A run in review with exactly one participating branch may return a relative
+`handoff_url`. Only the operator signed in to the same Gomar instance can
+open it. It checks current permissions and shows a minimal confirmation of
+the run and its current close eligibility, never reconciliation sources,
+bank rows, accounts, amounts, candidates, or review details. Multi-branch
+and non-review runs never send a link. A signed-out operator can sign in
+normally and reopen the link. The handoff does not open regular review
+or change data; the operator must navigate to Financial Reconciliation
+and use the existing native review and close workflow with fresh checks.
+
 ### Exact POS catalog product
 
 `gomar_read_pos_product` reads one known product ID in the selected

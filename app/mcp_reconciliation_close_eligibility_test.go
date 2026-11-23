@@ -103,6 +103,9 @@ func TestPostgresMCPReconciliationCloseEligibility(t *testing.T) {
 		if tc.blocker != "" {
 			want = fmt.Sprintf(`{"eligible":false,"blocker":%q}`, tc.blocker)
 		}
+		if tc.blocker != "not_in_review" {
+			want = strings.TrimSuffix(want, "}") + fmt.Sprintf(`,"handoff_url":"/#conciliacion=1:1:%d"}`, tc.run)
+		}
 		if got := ask(mux, "GET", path(1, 1, tc.run), "", key, 200); got != want {
 			t.Fatalf("run %d got %s want %s", tc.run, got, want)
 		}
@@ -134,6 +137,58 @@ func TestPostgresMCPReconciliationCloseEligibility(t *testing.T) {
 	ask(mux, "GET", path(1, 1, 1), "", key, 200)
 	exec("DELETE FROM outlet_grants WHERE membership_id=1 AND outlet_id=2")
 	ask(mux, "GET", path(1, 1, 5), "", broad, 404)
+	browser := func(h http.Handler, path, bearer string, signedIn bool, want int) string {
+		t.Helper()
+		req := httptest.NewRequest("GET", "http://example.com"+path, nil).WithContext(ctx)
+		if signedIn {
+			for _, cookie := range cookies {
+				req.AddCookie(cookie)
+			}
+		}
+		if bearer != "" {
+			req.Header.Set("Authorization", "Bearer "+bearer)
+		}
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		if rec.Code != want || rec.Header().Get("Cache-Control") != "private, no-store" {
+			t.Fatalf("unexpected native handoff status %d, want %d", rec.Code, want)
+		}
+		return strings.TrimSpace(rec.Body.String())
+	}
+	nativePath := func(entity, outlet, run string) string {
+		return "/api/v1/entities/" + entity + "/outlets/" + outlet + "/reconciliations/" + run + "/close-handoff"
+	}
+	native := nativePath("1", "1", "1")
+	browser(mux, native, key, false, 401)
+	browser(mux, native, "", false, 401)
+	if got := browser(mux, native, "", true, 200); got != `{"run_id":1,"state":"review","eligible":true}` {
+		t.Fatal("unexpected native projection", got)
+	}
+	if got := browser(mux, nativePath("1", "1", "3"), "", true, 200); got != `{"run_id":3,"state":"review","eligible":false,"blocker":"unsupported_review_data"}` {
+		t.Fatal("unexpected native blocker", got)
+	}
+	absent := browser(mux, nativePath("1", "1", "999"), "", true, 404)
+	for _, denied := range []string{
+		nativePath("1", "1", "2"), nativePath("1", "1", "5"), nativePath("1", "1", "6"),
+		nativePath("1", "1", "7"), nativePath("1", "1", "9"), nativePath("2", "3", "8"),
+		nativePath("1", "2", "1"), nativePath("1", "1", "01"), nativePath("1", "1", "%31"), native + "?query=1",
+	} {
+		if browser(mux, denied, "", true, 404) != absent {
+			t.Fatal("unexpected disclosure for", denied)
+		}
+	}
+	browser(mux, native, key, true, 404)
+	browser(off, native, "", true, 404)
+	exec("UPDATE memberships SET role='accounting' WHERE id=1")
+	if browser(mux, native, "", true, 404) != absent {
+		t.Fatal("role denial disclosed run")
+	}
+	exec("UPDATE memberships SET role='administration' WHERE id=1")
+	exec("DELETE FROM outlet_grants WHERE membership_id=1 AND outlet_id=1")
+	if browser(mux, native, "", true, 404) != absent {
+		t.Fatal("grant revocation disclosed run")
+	}
+	exec("INSERT INTO outlet_grants VALUES(1,1)")
 	var revisions, events, decisions, closed int
 	err := db.QueryRowContext(ctx, `SELECT (SELECT count(*) FROM reconciliation_read_runs WHERE revision<>3),
  (SELECT count(*) FROM reconciliation_detail_events),(SELECT count(*) FROM reconciliation_review_decisions),
