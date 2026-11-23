@@ -34,8 +34,8 @@ func TestDocumentNumberToolAdvertisesOnlyProposal(t *testing.T) {
 			body = tool
 		}
 	}
-	if len(list.Tools) != 35 || body == nil || !body.Annotations.IdempotentHint {
-		t.Fatal("expected 34 read tools and one named tool")
+	if len(list.Tools) != 36 || body == nil || !body.Annotations.IdempotentHint {
+		t.Fatal("expected 35 read tools and one named tool")
 	}
 	for _, update := range []map[string]any{
 		{"number": nil}, {"number": 0}, {"number": 100000000}, {"number": 1.5},

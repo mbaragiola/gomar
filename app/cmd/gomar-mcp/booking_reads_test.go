@@ -29,6 +29,17 @@ func TestBookingReadToolsSendOnlyFixedTypedRequests(t *testing.T) {
 				t.Error(r.URL.RawQuery)
 			}
 			_, _ = io.WriteString(w, `{"date":"2030-11-20","timezone":"America/Argentina/Buenos_Aires","counts":[{"status":"pending","request_count":1,"party_size_total":4},{"status":"confirmed","request_count":0,"party_size_total":0},{"status":"cancelled","request_count":0,"party_size_total":0}],"guest":"not-for-chat"}`)
+		case base + "/reservation-start-setup":
+			switch r.URL.Query().Get("start_at") {
+			case "2030-11-21T00:00:00Z":
+				_, _ = io.WriteString(w, `{"start_configured":false,"guest":"not-for-chat"}`)
+			case "2030-11-21T01:30:00Z":
+				_, _ = io.WriteString(w, `{"start_configured":true}`)
+			case "2030-11-21T03:00:00Z":
+				_, _ = io.WriteString(w, `{"start_configured":null}`)
+			default:
+				t.Error("unexpected start setup query")
+			}
 		case base + "/published-menu":
 			_, _ = io.WriteString(w, `{"published":true,"filename":"menu.pdf","size_bytes":100,"updated_at":"2030-11-20T12:00:00Z","url":"not-for-chat"}`)
 		case base + "/pos-catalog":
@@ -66,7 +77,7 @@ func TestBookingReadToolsSendOnlyFixedTypedRequests(t *testing.T) {
 	}
 	defer session.Close()
 	list, err := session.ListTools(t.Context(), &mcp.ListToolsParams{})
-	if err != nil || len(list.Tools) != 5 {
+	if err != nil || len(list.Tools) != 6 {
 		t.Fatal(list, err)
 	}
 	for _, tool := range list.Tools {
@@ -80,6 +91,11 @@ func TestBookingReadToolsSendOnlyFixedTypedRequests(t *testing.T) {
 		denied     bool
 	}{
 		{"gomar_reservation_status", `"party_size_total":4`, map[string]any{"date": "2030-11-20"}, false},
+		{"gomar_read_reservation_start_setup", `"start_configured":false`, map[string]any{"start_at": "2030-11-21T00:00:00Z"}, false},
+		{"gomar_read_reservation_start_setup", `"start_configured":true`, map[string]any{"start_at": "2030-11-21T01:30:00Z"}, false},
+		{"gomar_read_reservation_start_setup", "inválida", map[string]any{"start_at": "2030-11-21T03:00:00Z"}, true},
+		{"gomar_read_reservation_start_setup", "UTC", map[string]any{"start_at": "2030-11-20T21:00:00-03:00"}, true},
+		{"gomar_read_reservation_start_setup", "", nil, true},
 		{"gomar_published_menu", `"filename":"menu.pdf"`, nil, false},
 		{"gomar_pos_catalog", `"price_minor":350`, map[string]any{"after_product_id": 1}, false},
 		{"gomar_stock_movements", `"net_units":-1`, map[string]any{"product_id": 2, "start_date": "2030-11-20", "days": 2}, false},
@@ -104,7 +120,7 @@ func TestBookingReadToolsSendOnlyFixedTypedRequests(t *testing.T) {
 			t.Fatalf("%s: incorrect or excessive result: %s", tc.name, raw)
 		}
 	}
-	if requests.Load() != 5 {
-		t.Fatalf("want exactly five fixed HTTP requests; got %d", requests.Load())
+	if requests.Load() != 8 {
+		t.Fatalf("want exactly eight fixed HTTP requests; got %d", requests.Load())
 	}
 }
