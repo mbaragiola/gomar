@@ -1594,10 +1594,10 @@ onBeforeUnmount(() => window.removeEventListener('hashchange', syncAttachmentHan
                 <p v-else class="muted">Sin archivos adjuntos.</p>
                 <form v-if="canUploadVisibleAttachment" class="upload" @submit.prevent="uploadAttachment">
                   <label class="file-picker">{{ uploadFile?.name ?? 'Elegir archivo' }}
-                    <input aria-label="Archivo adjunto" type="file" accept=".pdf,.png,.jpg,.jpeg" required @change="uploadFile = ($event.target as HTMLInputElement).files?.[0] ?? null" />
+                    <input aria-label="Archivo adjunto" aria-describedby="attachment-format-help" type="file" accept=".png,.jpg,.jpeg,image/png,image/jpeg" required @change="uploadFile = ($event.target as HTMLInputElement).files?.[0] ?? null" />
                   </label>
                   <button class="secondary" :disabled="busy || !uploadFile">Subir archivo</button>
-                  <small>PDF, PNG o JPEG. Máximo 10 MB y 8 páginas.</small>
+                  <small id="attachment-format-help">Una imagen PNG o JPEG por carga. Máximo 10 MiB y 40 megapíxeles por imagen.</small>
                 </form>
               </div>
 
