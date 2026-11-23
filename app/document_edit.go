@@ -44,7 +44,7 @@ func (a *app) editDocument(w http.ResponseWriter, r *http.Request, u user) error
 		return problem{422, "El motivo de la modificación es obligatorio."}
 	}
 
-	tx, err := a.db.BeginTx(r.Context(), nil)
+	tx, err := a.beginEmployeeCheckedWrite(r, u)
 	if err != nil {
 		return err
 	}

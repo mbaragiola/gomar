@@ -154,7 +154,7 @@ func (a *app) createDraft(w http.ResponseWriter, r *http.Request, u user) error 
 	if err != nil {
 		return err
 	}
-	tx, err := a.db.BeginTx(r.Context(), nil)
+	tx, err := a.beginEmployeeCheckedWrite(r, u)
 	if err != nil {
 		return err
 	}

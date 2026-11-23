@@ -82,7 +82,7 @@ func (a *app) intakeScope(r *http.Request, u user, capability string) (*sql.Tx, 
 	if err != nil {
 		return nil, entityMembership{}, err
 	}
-	tx, err := a.db.BeginTx(r.Context(), nil)
+	tx, err := a.beginEmployeeCheckedWrite(r, u)
 	if err != nil {
 		return nil, entityMembership{}, err
 	}

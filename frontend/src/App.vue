@@ -16,6 +16,8 @@ import StockPanel from './components/StockPanel.vue'
 import DeliveryInbox from './components/DeliveryInbox.vue'
 import KnowledgePanel from './components/KnowledgePanel.vue'
 import ProviderSignIn from './components/ProviderSignIn.vue'
+import EmployeeSignIn from './components/EmployeeSignIn.vue'
+import ManageEmployees from './components/ManageEmployees.vue'
 import PublicReservations from './components/PublicReservations.vue'
 import StaffReservations from './components/StaffReservations.vue'
 import ReconciliationPanel from './components/ReconciliationPanel.vue'
@@ -29,8 +31,9 @@ import type { Document, Entity, EntityManagement, IntakeOperation, OcrConfig, Oc
 const publicVenue = /^\/reservas\/([a-z0-9][a-z0-9-]{0,63})\/?$/.exec(window.location.pathname)?.[1]
 const authenticated = ref(false)
 const providerSignInBusy = ref(false)
-const signInOptions = ref<{ passwordEnabled: boolean; recoveryEnabled: boolean } | null>(null)
-function receiveSignInOptions(options: { passwordEnabled: boolean; recoveryEnabled: boolean }) {
+const employeeSignIn = ref(false)
+const signInOptions = ref<{ passwordEnabled: boolean; recoveryEnabled: boolean; employeeEnabled: boolean } | null>(null)
+function receiveSignInOptions(options: { passwordEnabled: boolean; recoveryEnabled: boolean; employeeEnabled: boolean }) {
   signInOptions.value = options
   if (!options.passwordEnabled) Object.assign(loginForm, { usuario: '', clave: '' })
 }
@@ -406,6 +409,7 @@ async function signIn() {
 
 async function signOut() {
   clearHandoffLocation()
+  employeeSignIn.value = false
   signInOptions.value = null
   lockOfflinePOS()
   const sessionToken = resetUserState()
@@ -1421,8 +1425,10 @@ onBeforeUnmount(() => window.removeEventListener('hashchange', syncAttachmentHan
       <p class="eyebrow">GOMAR</p>
       <h1>Registro de compras</h1>
       <p class="muted">{{ signInOptions?.passwordEnabled === false ? 'Ingresá con una de las cuentas habilitadas.' : 'Ingresá con tu cuenta asignada. No hay registro público.' }}</p>
-      <ProviderSignIn :disabled="busy" @busy="providerSignInBusy = $event" @options="receiveSignInOptions" />
-      <form v-if="signInOptions?.passwordEnabled" class="stack" @submit.prevent="signIn">
+      <ProviderSignIn v-show="!employeeSignIn" :disabled="busy || employeeSignIn" @busy="providerSignInBusy = $event" @options="receiveSignInOptions" />
+      <EmployeeSignIn v-if="employeeSignIn && signInOptions?.employeeEnabled" @cancel="employeeSignIn = false" @authenticated="initialize" />
+      <button v-if="signInOptions?.employeeEnabled && !employeeSignIn" type="button" class="secondary" :disabled="providerSignInBusy || busy" @click="employeeSignIn = true">Ingresar como empleado</button>
+      <form v-if="signInOptions?.passwordEnabled && !employeeSignIn" class="stack" @submit.prevent="signIn">
         <label>Usuario<input v-model="loginForm.usuario" autocomplete="username" required /></label>
         <label>Contraseña<input v-model="loginForm.clave" type="password" autocomplete="current-password" required /></label>
         <button class="primary" :disabled="busy || providerSignInBusy">{{ busy ? 'Ingresando…' : 'Ingresar' }}</button>
@@ -1574,6 +1580,12 @@ onBeforeUnmount(() => window.removeEventListener('hashchange', syncAttachmentHan
           :can-edit="canManageAccess"
         />
         <section v-if="showManagement && management" class="card management-card">
+          <ManageEmployees
+            v-if="hasCapability('manage_organization_employees') && selectedEntityId"
+            :key="selectedEntityId"
+            :organization="selectedEntityId"
+            :outlets="management.locales.filter(item => item.autorizado && item.activa)"
+          />
           <div class="section-heading"><div><p class="eyebrow">ENTIDAD</p><h2>Accesos y locales</h2></div></div>
           <form class="management-row" @submit.prevent="saveEntity">
             <label>Razón social<input v-model="management.entidad.nombre" required /></label>
@@ -1596,7 +1608,7 @@ onBeforeUnmount(() => window.removeEventListener('hashchange', syncAttachmentHan
           </div>
           <div class="management-section">
             <h3>Membresías</h3>
-            <p class="muted">Ingresá el nombre de usuario exacto. Las cuentas se crean desde la administración de plataforma.</p>
+            <p class="muted">Ingresá el nombre de usuario exacto de una cuenta existente. Para crear una cuenta de empleado, usá la sección de empleados cuando esté habilitada.</p>
             <form class="membership-card" @submit.prevent="createMembership">
               <label>Usuario<input v-model="newMembershipForm.usuario" autocomplete="off" required /></label>
               <label>Rol<select v-model="newMembershipForm.rol"><option v-for="role in management.roles" :key="role.valor" :value="role.valor">{{ role.nombre }}</option></select></label>

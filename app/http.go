@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"errors"
@@ -22,6 +23,9 @@ type app struct {
 	providerAuth        *hostedProviderAuth
 	adminRecovery       bool
 	providerOnly        bool
+	providerEmployee    bool
+	employeeOnboarding  bool
+	employeePasswords   employeeAuthBudget
 	mcpClock            func() time.Time
 
 	host                                      string
@@ -141,6 +145,11 @@ func (a *app) protectedWithCache(next func(http.ResponseWriter, *http.Request, u
 		if err == nil {
 			if u.id == 0 {
 				err = unauthenticated
+			} else if u.employee {
+				err = employeeBrowserScope(r, u)
+				if err == nil {
+					err = next(w, r, u)
+				}
 			} else {
 				err = next(w, r, u)
 			}
@@ -153,8 +162,12 @@ func (a *app) protectedWithCache(next func(http.ResponseWriter, *http.Request, u
 
 func (a *app) apiLogin(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
-	if a.providerOnly {
-		failure(w, problem{403, "Ingresá con Google o Microsoft."})
+	if a.classicPasswordsDisabled() {
+		detail := "Ingresá con Google o Microsoft."
+		if a.managedEmployeesEnabled() {
+			detail = "Ingresá con Google, Microsoft o tu cuenta de empleado."
+		}
+		failure(w, problem{403, detail})
 		return
 	}
 	var input struct {
@@ -264,6 +277,7 @@ func (a *app) routes() http.Handler {
 		jsonResponse(w, 200, map[string]string{"detalle": "Cookie CSRF preparada."})
 	})
 	addAPI("/api/v1/auth/login", "POST", a.apiLogin)
+	registerEmployeeOnboarding(a, addAPI)
 	addAPI("/api/v1/auth/me", "GET", a.protected(func(w http.ResponseWriter, r *http.Request, u user) error {
 		jsonResponse(w, 200, map[string]string{"usuario": u.name})
 		return nil
@@ -345,8 +359,14 @@ func (a *app) routes() http.Handler {
 		http.Redirect(w, r, "/admin/", http.StatusMovedPermanently)
 	})
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if a.providerOnly {
+		if a.classicPasswordsDisabled() {
 			r = providerOnlyRequest(r)
+		}
+		if a.providerEmployee {
+			r = r.WithContext(context.WithValue(r.Context(), providerEmployeeContextKey{}, true))
+		}
+		if a.managedEmployeesEnabled() {
+			r = r.WithContext(context.WithValue(r.Context(), employeeLoginContextKey{}, true))
 		}
 		w.Header().Set("X-Gomar-Experimental", "foundation")
 		w.Header().Set("X-Content-Type-Options", "nosniff")

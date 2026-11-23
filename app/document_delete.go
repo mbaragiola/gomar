@@ -25,7 +25,7 @@ func (a *app) deleteDocument(w http.ResponseWriter, r *http.Request, u user) err
 	if reason == "" {
 		return problem{422, "El motivo de la baja es obligatorio."}
 	}
-	tx, err := a.db.BeginTx(r.Context(), nil)
+	tx, err := a.beginEmployeeCheckedWrite(r, u)
 	if err != nil {
 		return err
 	}
