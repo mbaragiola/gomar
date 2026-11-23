@@ -5,23 +5,25 @@ client, subject to the same permissions as the app. A list or summary is
 not full coverage of the underlying workflow. A proposed change is not an
 applied change. Features disabled in the app are not available via MCP.
 
-| Workflow | MCP coverage now | Work still needed |
+| Workflow | Shipped MCP reads and opt-in proposals | Intentionally stays in Gomar or is not built |
 | --- | --- | --- |
-| Identity and business scope | Current user, businesses, and outlets; propose a display-name change for one active outlet | Other management views; changes to access stay in Gomar |
-| POS | Recorded sales totals, product catalog, and separate create, name, price, and availability proposals for confirmation in Gomar | Register sales stay in the native POS; Gomar does not expose shift management |
-| Inventory | Tracked balances, thresholds, movements, and branch-wide stock alert counts; propose receipts, waste, physical counts, initial disabled product setup, and changes to an existing configuration’s minimum or tracking for confirmation in Gomar | Branch-wide settings stay in Gomar; bills of materials are not implemented |
-| Wiki | Search and read by ID; propose new pages and versioned edits for confirmation in Gomar | Gomar does not offer deletion |
-| Delivery | Recent order status with limited fields; aggregate status counts for the latest 100 inbox records | No native staff write workflow; provider calls and credentials stay outside the read interface |
-| Documents and intake | Outlet-scoped list, detail, and document totals by currency; propose draft creation, review, date and amount edits, or a printed number correction for confirmation in Gomar | Other draft changes and safe handoff for files; app OCR and intake confirmation parity |
-| Suppliers | Active supplier names and IDs in the business | Guarded create and edit |
-| Payables and payment records | Outstanding and overdue totals, counts by status, outlet-only payable and payment record details, and one payable’s ledger history | Guarded accounting entries and reviews, not movement of money |
-| Reconciliation | Scoped run counts by status, paged run list, metadata by ID, and proposal for an empty draft | Source handling, matches, decisions, and review stay in Gomar |
-| Reservations and menus | Daily reservation totals, staff setup state, scoped staff queue and detail, available public reservation times by day and party size, published menu metadata, separate confirmation and cancellation proposals, and preparing a numbered table or one future time while the venue is disabled | Booking, menu and venue settings stay in Gomar |
+| Identity and business scope | Current user, businesses, and outlets; propose a display-name change for one active outlet | Native only: business and outlet administration beyond that rename, membership and grant management, credentials and provider sign-in. |
+| POS | Recorded sales totals, product catalog; propose product creation and separate name, price or availability changes | Native only: register sales, checkout and offline sales sync. Not built: shift management. |
+| Inventory | Tracked balances, thresholds, movement history and stock alert counts; propose receipts, waste, physical counts, initial disabled product setup, and changes to a product’s minimum or tracking | Native only: branch-wide settings. Not built: bills of materials. |
+| Wiki | Search and read by ID; propose new pages and versioned edits | Not built: deletion. |
+| Delivery | Recent order status with limited fields; status counts for the latest 100 inbox records | No native staff write workflow. Provider calls and credentials are not part of MCP. |
+| Documents and intake | Scoped list, detail and totals by currency; propose draft creation, review, date and amount edits, or a printed-number correction | Native only: other document edits, deletion and private file handling. Provider OCR is disabled; staged OCR confirmation is not a shipped workflow. |
+| Suppliers | Active supplier names and IDs; propose a legal-name correction that applies across the business | Native only: supplier creation, tax identity and superuser catalog status changes. |
+| Payables and payment records | Outstanding and overdue totals, status counts, outlet-only payable and payment record details, and one payable’s ledger history | Native only: creating payables, recording and reversing internal payments, and receipt handling. MCP reads do not verify bank activity or move money. |
+| Reconciliation | Scoped counts, paged run list, metadata and setup by ID; propose one empty single-outlet draft | Native only: private files, source rows, preparing matches, decisions and closing review. Setup metadata does not prove readiness. |
+| Reservations and menus | Daily counts, setup flags, staff queue and detail, public candidate times, published menu metadata; propose confirmation or cancellation of an existing request and prepare a table or future slot for an existing disabled venue | Native only: public booking, guest and contact details, venue settings and enablement, actual menu files and publication. Table/slot preparation never enables or books anything. |
 
-The packaged live server registers 34 baseline read tools. Its vocabulary
-also includes 23 opt-in proposal actions across distinct credentials, not 23
-simultaneously enabled writes. A stdio process only accepts one selected
-named proposal action; feature flags and current roles can still deny a call.
+The packaged live server registers 34 baseline read tools. Discovery does not
+guarantee access: app flags and current permissions determine which queries
+can run. There are also 23 distinct opt-in proposal actions, not 23
+simultaneous writes. Of those, 19 are named actions and four use distinct older
+credential options. The stdio process accepts at most one selected named
+action. All proposals require approval in Gomar before changing business data.
 
 A separate draft number proposal changes only the printed number and records
 one native draft revision and audit entry. It leaves the branch, point of sale,
@@ -34,9 +36,13 @@ See [printed document number proposals](MCP-DOCUMENT-NUMBER-PROPOSALS.md).
    rules. Use a fresh local PostgreSQL database per test.
 2. Call each tool through the packaged MCP server. Include missing grants,
    a different entity and outlet, and a denied feature where applicable.
-3. Record real client outcomes separately. A connection or tool list is
-   discovery. A direct tool invocation and a natural-language model run are
-   different checks. Use synthetic data and avoid recording any credentials.
+3. Record the client verification level that actually ran. Connecting or
+   listing tools only proves discovery. A direct tool call through an installed
+   client verifies its MCP transport and tool result; it does not invoke a
+   model. A scripted or mock-model scenario can test tool selection and how the
+   client presents the result, but cannot establish live inference. A live
+   natural-language run with a real model is a separate check. Use synthetic
+   data and do not record credentials.
 
 Use an outlet-scoped key. A denied call is not an empty report. Keep
 files, customer contact details, secrets, and provider credentials out of
