@@ -6,8 +6,9 @@ with_local_checks=false
 with_codex=false
 with_purchases=false
 with_bookings_wiki=false
+with_pos_prebill=false
 usage() {
-  printf 'Usage: %s [--with-local-checks] [--with-installed-codex] [--with-purchases] [--with-bookings-wiki]\n' "$0" >&2
+  printf 'Usage: %s [--with-local-checks] [--with-installed-codex] [--with-purchases] [--with-bookings-wiki] [--with-pos-prebill]\n' "$0" >&2
   exit 2
 }
 while (( $# )); do
@@ -24,6 +25,9 @@ while (( $# )); do
     --with-bookings-wiki)
       "$with_bookings_wiki" && usage
       with_bookings_wiki=true ;;
+    --with-pos-prebill)
+      "$with_pos_prebill" && usage
+      with_pos_prebill=true ;;
     *) usage ;;
   esac
   shift
@@ -35,6 +39,7 @@ chrome="${QA_CHROME:-$(command -v google-chrome || command -v chromium)}"
 command -v bwrap >/dev/null
 "$python" -c 'import playwright.sync_api'
 [[ -x "$postgres_bin/initdb" && -x "$chrome" && "$(id -u)" != 0 ]]
+if "$with_pos_prebill"; then command -v pdftotext >/dev/null; fi
 codex=""
 if "$with_codex"; then
   if ! codex_path="$(command -v "${QA_CODEX:-codex}")" || [[ ! -x "$codex_path" ]]; then
@@ -82,7 +87,7 @@ go -C "$repo/app" build -buildvcs=false -o "$tmp/gomar-mcp" ./cmd/gomar-mcp
 # initdb, Chrome, the app, and MCP run with no external network. PostgreSQL
 # listens only on a private Unix socket, so cleanup can stop it outside bwrap.
 timeout 150s "${isolated[@]}" \
-  "$python" -B "$repo/scripts/qa/mcp_stock_journey.py" "$tmp" "$postgres_bin" "$chrome" "$codex" "$with_purchases" "$with_bookings_wiki" >"$tmp/report.log"
+  "$python" -B "$repo/scripts/qa/mcp_stock_journey.py" "$tmp" "$postgres_bin" "$chrome" "$codex" "$with_purchases" "$with_bookings_wiki" "$with_pos_prebill" >"$tmp/report.log"
 report="$(cat "$tmp/report.log")"
 cleanup
 trap - EXIT
