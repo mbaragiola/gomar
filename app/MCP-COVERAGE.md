@@ -9,7 +9,7 @@ applied change. Features disabled in the app are not available via MCP.
 | --- | --- | --- |
 | Identity and business scope | Current user, businesses, and outlets | Management views; changes to access stay in Gomar |
 | POS | Recorded sales totals, product catalog, and separate create, name, price, and availability proposals for confirmation in Gomar | Register sales stay in the native POS; Gomar does not expose shift management |
-| Inventory | Tracked balances, thresholds, movements, and branch-wide stock alert counts; propose receipts, waste, physical counts, and changes to an existing product’s minimum or tracking for confirmation in Gomar | New product tracking setup and branch-wide settings stay in Gomar; bills of materials are not implemented |
+| Inventory | Tracked balances, thresholds, movements, and branch-wide stock alert counts; propose receipts, waste, physical counts, initial disabled product setup, and changes to an existing configuration’s minimum or tracking for confirmation in Gomar | Branch-wide settings stay in Gomar; bills of materials are not implemented |
 | Wiki | Search and read by ID; propose new pages and versioned edits for confirmation in Gomar | Gomar does not offer deletion |
 | Delivery | Recent order status with limited fields; aggregate status counts for the latest 100 inbox records | No native staff write workflow; provider calls and credentials stay outside the read interface |
 | Documents and intake | Outlet-scoped list, detail, and document totals by currency; propose draft creation, review, or date and amount edits for confirmation in Gomar | Other draft changes and safe handoff for files; app OCR and intake confirmation parity |
@@ -98,3 +98,8 @@ Sales recorded while tracking is off, including offline sales synced during
 that time, do not deduct stock. Turning tracking back on continues from the
 previous estimate; it does not backfill missing deductions. See
 [stock tracking proposals](MCP-STOCK-TRACKING-PROPOSALS.md).
+
+First-time product stock setup is a separate opt-in proposal. Approval saves
+only an explicit minimum for warnings, with tracking disabled. Turning
+tracking on later requires the separate tracking action. See
+[product stock setup](MCP-STOCK-PRODUCT-SETUP-PROPOSALS.md).
