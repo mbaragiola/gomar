@@ -54,6 +54,7 @@ type entityMembership struct {
 	entity
 	id, userID int64
 	role       string
+	employee   bool // Current authenticated browser principal, not a role.
 }
 
 type scopedHandler func(*http.Request, *sql.Tx, entityMembership, []byte) (int, any, error)
@@ -120,6 +121,7 @@ func (a *app) scopedRequest(capability string, next scopedHandler, readBody bool
 		if bodyErr != nil {
 			return bodyErr
 		}
+		m.employee = u.employee
 		status, body, err := next(r, tx, m, requestBody)
 		if err != nil {
 			return err

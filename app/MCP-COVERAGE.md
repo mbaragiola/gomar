@@ -341,3 +341,5 @@ native register can accept a clerk's manual note or correction and show
 amounts, reasons, or individual entries. MCP cannot enter funds-handling
 instructions or inspect the journal; the link carries no credentials or
 tender identifiers. Role and branch restrictions apply on both sides.
+Managed employee sessions do not yet have the saved-table or tender write
+actions and do not see those controls.

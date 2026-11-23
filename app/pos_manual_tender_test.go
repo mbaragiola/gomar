@@ -42,10 +42,10 @@ INSERT INTO pos_table_check_slots(check_id,outlet_id,table_number) SELECT id,out
 	peer := entityMembership{entity: entity{ID: 85}, id: 86, userID: 86, role: "purchasing"}
 	reader := entityMembership{entity: entity{ID: 85}, id: 87, userID: 87, role: "read_only"}
 	a := app{db: db, enablePOS: true, enablePOSTableChecks: true, enablePOSManualTender: true}
-	off := app{db: db, enablePOS: true, enablePOSTableChecks: true}
+	off := app{db: db, host: "example.com", enablePOS: true, enablePOSTableChecks: true}
 	for _, method := range []string{"GET", "POST"} {
 		res := httptest.NewRecorder()
-		req := httptest.NewRequestWithContext(ctx, method, "/api/v1/entities/85/outlets/85/pos/table-checks/1/tender", nil)
+		req := httptest.NewRequestWithContext(ctx, method, "http://example.com/api/v1/entities/85/outlets/85/pos/table-checks/1/tender", nil)
 		off.routes().ServeHTTP(res, req)
 		if res.Code != 404 {
 			t.Fatalf("disabled tender route answered %d to %s", res.Code, method)
@@ -70,7 +70,7 @@ INSERT INTO pos_table_check_slots(check_id,outlet_id,table_number) SELECT id,out
 		case "read":
 			handler = a.readPOSTender
 		case "write":
-			handler = a.lockOutletForOperation(a.writePOSTender)
+			handler = a.lockPOSTenderForWrite(a.writePOSTender)
 		case "retire":
 			off := app{db: db, enablePOS: true, enablePOSTableChecks: true}
 			handler = off.lockOutletForOperation(off.retirePOSTableCheck)
@@ -168,7 +168,7 @@ INSERT INTO pos_table_check_slots(check_id,outlet_id,table_number) SELECT id,out
 		t.Fatal(err)
 	}
 	defer blocker.Rollback()
-	if err := lockPostgresOutlet(ctx, blocker, 85); err != nil {
+	if err := lockPostgresEntity(ctx, blocker, 85); err != nil {
 		t.Fatal(err)
 	}
 	go func() { concurrent <- call("write", peer, 85, 1, record(id1, 30, 100, "efectivo")) }()
@@ -177,7 +177,7 @@ INSERT INTO pos_table_check_slots(check_id,outlet_id,table_number) SELECT id,out
 		time.Sleep(5 * time.Millisecond)
 	}
 	if db.Stats().InUse < 2 {
-		t.Fatal("expected queued clerk behind outlet lock")
+		t.Fatal("expected queued clerk behind entity lock")
 	}
 	if _, err := blocker.ExecContext(ctx, "UPDATE memberships SET role='read_only' WHERE id=86"); err != nil {
 		t.Fatal(err)

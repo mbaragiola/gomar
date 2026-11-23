@@ -65,7 +65,7 @@ func posCanonicalID(raw string) int64 {
 // and retire checks. Take the exact active slot next, never a foreign row.
 func loadPOSTenderTarget(r *http.Request, tx *sql.Tx, m entityMembership, write bool) (posTenderTarget, error) {
 	var t posTenderTarget
-	if !posSellingRole(m.role) {
+	if m.employee || !posSellingRole(m.role) {
 		return t, forbiddenRole
 	}
 	outlet, err := posOutlet(r, tx, m)
@@ -148,12 +148,57 @@ func (a *app) readPOSTender(r *http.Request, tx *sql.Tx, m entityMembership, _ [
 	return http.StatusOK, posTenderView{strconv.FormatInt(t.scope.CheckID, 10), b.RecordedMinor, b.OutstandingMinor, history}, nil
 }
 
-func (a *app) writePOSTender(r *http.Request, tx *sql.Tx, m entityMembership, raw []byte) (int, any, error) {
-	// Reread a queued caller's membership and branch grant after the outlet lock.
-	m, err := scopedMembership(tx, m.userID, m.ID, "read_business_data")
-	if err != nil {
-		return 0, nil, err
+// Take the same entity lock used by membership and grant writers, then freeze
+// the actor's current membership and lock the outlet before the active slot.
+func (a *app) lockPOSTenderForWrite(next scopedHandler) scopedHandler {
+	return func(r *http.Request, tx *sql.Tx, m entityMembership, raw []byte) (int, any, error) {
+		if m.employee || !posSellingRole(m.role) {
+			return 0, nil, forbiddenRole
+		}
+		ctx := r.Context()
+		if err := lockPostgresEntity(ctx, tx, m.ID); errors.Is(err, sql.ErrNoRows) {
+			return 0, nil, missingEntity
+		} else if err != nil {
+			return 0, nil, err
+		}
+		var role string
+		err := tx.QueryRowContext(ctx, `SELECT m.role FROM memberships m JOIN entities e ON e.id=m.entity_id
+		WHERE m.id=$1 AND m.user_id=$2 AND m.entity_id=$3 AND m.active AND e.active FOR SHARE OF m`,
+			m.id, m.userID, m.ID).Scan(&role)
+		if errors.Is(err, sql.ErrNoRows) {
+			return 0, nil, missingEntity
+		}
+		if err != nil {
+			return 0, nil, err
+		}
+		if !posSellingRole(role) {
+			return 0, nil, forbiddenRole
+		}
+		m.role = role
+		outlet, err := posOutlet(r, tx, m)
+		if err != nil {
+			return 0, nil, err
+		}
+		if err := lockPostgresOutlet(ctx, tx, outlet); err != nil {
+			return 0, nil, err
+		}
+		// Freeze the exact grant after the outlet wait and check the outlet's
+		// current state again. Neither check depends on the lease in the UI.
+		var granted int64
+		err = tx.QueryRowContext(ctx, `SELECT g.outlet_id FROM outlet_grants g JOIN outlets o ON o.id=g.outlet_id
+		WHERE g.membership_id=$1 AND g.outlet_id=$2 AND o.entity_id=$3 AND o.active FOR SHARE OF g`,
+			m.id, outlet, m.ID).Scan(&granted)
+		if errors.Is(err, sql.ErrNoRows) {
+			return 0, nil, missingOutlet
+		}
+		if err != nil {
+			return 0, nil, err
+		}
+		return next(r, tx, m, raw)
 	}
+}
+
+func (a *app) writePOSTender(r *http.Request, tx *sql.Tx, m entityMembership, raw []byte) (int, any, error) {
 	t, err := loadPOSTenderTarget(r, tx, m, true)
 	if err != nil {
 		return 0, nil, err

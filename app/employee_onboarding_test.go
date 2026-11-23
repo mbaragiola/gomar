@@ -55,7 +55,7 @@ func TestPostgresEmployeeOnboarding(t *testing.T) {
   INSERT INTO outlet_grants VALUES(501,1),(501,4),(502,2),(503,1);`); err != nil {
 		t.Fatal(err)
 	}
-	enabled := (&app{db: db, host: "example.com", employeeOnboarding: true, enableMCP: true}).routes()
+	enabled := (&app{db: db, host: "example.com", employeeOnboarding: true, enableMCP: true, enablePOS: true, enablePOSTableChecks: true, enablePOSManualTender: true}).routes()
 	owner := postgresTestCookies(t, enabled, "fixture-manager", manager)
 	other := postgresTestCookies(t, enabled, "second-manager", manager)
 	reader := postgresTestCookies(t, enabled, "ordinary-reader", manager)
@@ -243,6 +243,19 @@ func TestPostgresEmployeeOnboarding(t *testing.T) {
 	call("GET", "/api/v1/auth/me", "", auth, 200)
 	call("GET", "/api/v1/entities/2/outlets", "", auth, 404)
 	call("GET", "/api/v1/entities/1/outlets", "", auth, 200)
+	posCatalog := "/api/v1/entities/1/outlets/1/pos/catalog"
+	flags := call("GET", posCatalog, "", auth, 200).Body.String()
+	if strings.Contains(flags, `"cuentas_mesa"`) || strings.Contains(flags, `"registro_medios_pago"`) {
+		t.Fatalf("managed employee received withheld table write flags: %s", flags)
+	}
+	flags = call("GET", posCatalog, "", owner, 200).Body.String()
+	if !strings.Contains(flags, `"cuentas_mesa":true`) || !strings.Contains(flags, `"registro_medios_pago":true`) {
+		t.Fatalf("authorized ordinary clerk lost POS actions: %s", flags)
+	}
+	tenderPath := "/api/v1/entities/1/outlets/1/pos/table-checks/1/tender"
+	call("GET", tenderPath, "", auth, 403)
+	call("POST", tenderPath, "{}", append(auth, cs...), 403)
+	call("POST", "/api/v1/entities/1/outlets/1/pos/table-checks", "{}", append(auth, cs...), 403)
 	call("GET", base, "", auth, 403)
 	check(serve(providerOnly, "GET", "/api/v1/auth/me", "", auth), 401)
 	hybridAuth := serve(hybrid, "POST", login, makeLogin(1, newPass), fresh())
