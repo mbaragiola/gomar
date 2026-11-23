@@ -19,6 +19,7 @@ type accountingPageArgs struct {
 
 type documentPageArgs struct {
 	accountingPageArgs
+	Status    string                 `json:"status,omitempty" jsonschema:"Opcional: draft, solo borradores. No se combina con printed_reference."`
 	Reference *documentref.Reference `json:"printed_reference,omitempty" jsonschema:"Opcional: referencia exacta completa. No adivines sus partes ni el local."`
 }
 
@@ -29,11 +30,17 @@ func (args *documentPageArgs) UnmarshalJSON(data []byte) error {
 	var input struct {
 		pageAliases
 		Reference json.RawMessage `json:"printed_reference"`
+		Status    json.RawMessage `json:"status"`
 	}
 	if err := json.Unmarshal(data, &input); err != nil {
 		return err
 	}
 	*args = documentPageArgs{accountingPageArgs: accountingPageArgs(input.pageAliases)}
+	if input.Status != nil {
+		if err := json.Unmarshal(input.Status, &args.Status); err != nil || args.Status != documentref.DraftStatus || input.Reference != nil {
+			return errors.New("elegí solo status=draft o una referencia impresa completa")
+		}
+	}
 	if input.Reference == nil {
 		return nil
 	}
@@ -55,8 +62,8 @@ func (args *documentPageArgs) UnmarshalJSON(data []byte) error {
 }
 
 func addAccountingReadTools(server *mcp.Server, client *mcpclient.Client) {
-	readTool(server, "gomar_list_documents", "Listá hasta 30 comprobantes de una sucursal autorizada, sin adjuntos ni CUIT. Los importes están en centavos; un crédito se distingue por el tipo de comprobante. Podés filtrar por referencia impresa exacta: tipo, letra (vacía si no tiene), punto de venta y número. Distintos emisores pueden compartirla: no elijas el primer resultado ni cambies de sucursal. Si hay next_id, repetí la misma referencia en la página siguiente.", func(ctx context.Context, in documentPageArgs) (mcpclient.DocumentList, error) {
-		return client.DocumentsByReference(ctx, in.EntityID, in.OutletID, in.AfterID, in.Reference)
+	readTool(server, "gomar_list_documents", "Listá hasta 30 comprobantes de una sucursal autorizada, sin adjuntos ni CUIT. Los importes están en centavos; un crédito se distingue por el tipo de comprobante. Podés filtrar por referencia impresa exacta: tipo, letra (vacía si no tiene), punto de venta y número. Distintos emisores pueden compartirla: no elijas el primer resultado ni cambies de sucursal. Como alternativa a la referencia, usá status=draft para listar solo borradores no eliminados; no lo combines con la referencia. No revisa los documentos. Si hay next_id, repetí el mismo filtro en la página siguiente.", func(ctx context.Context, in documentPageArgs) (mcpclient.DocumentList, error) {
+		return client.DocumentsFiltered(ctx, in.EntityID, in.OutletID, in.AfterID, in.Reference, in.Status)
 	})
 	readTool(server, "gomar_document_totals", "Sumá los comprobantes no eliminados de una sucursal, incluidos borradores y revisados, sin límite de fecha. Las notas de crédito restan. Cada moneda se informa por separado y el total es un texto con un entero exacto en centavos. No son ventas de caja ni pagos.", func(ctx context.Context, in outletArgs) (mcpclient.DocumentTotals, error) {
 		return client.DocumentTotals(ctx, in.EntityID, in.OutletID)

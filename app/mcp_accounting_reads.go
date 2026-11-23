@@ -56,8 +56,9 @@ func mcpAccountingDocuments(r *http.Request, tx *sql.Tx, s mcpTokenScope) (any, 
 	if err != nil {
 		return nil, badInput
 	}
-	reference, valid := documentref.TakeQuery(query)
-	if !valid {
+	reference, validReference := documentref.TakeQuery(query)
+	draftOnly, validStatus := documentref.TakeDraftStatus(query)
+	if !validReference || !validStatus || draftOnly && reference != nil {
 		return nil, badInput
 	}
 	cursor, err := mcpAccountingCursorValues(query)
@@ -73,14 +74,18 @@ func mcpAccountingDocuments(r *http.Request, tx *sql.Tx, s mcpTokenScope) (any, 
 		JOIN suppliers p ON p.id=d.supplier_id AND p.entity_id=d.entity_id
 		WHERE d.entity_id=$1 AND d.outlet_id=$2 AND d.id>$3 AND d.deleted_at IS NULL`
 	args := []any{s.ID, outlet, cursor, mcpPageSize + 1}
-	if reference != nil {
-		statement = `SELECT d.id,d.document_type,d.status,d.supplier_id,d.issue_date,d.due_date,d.currency,d.total_minor` +
-			documentScope + " AND d.id>$4 AND d.document_type=$6 AND d.letter=$7 AND d.point_of_sale=$8 AND d.number=$9"
-		args = []any{s.ID, s.id, outlet, cursor, mcpPageSize + 1, reference.DocumentType, reference.Letter, reference.PointOfSale, reference.Number}
-	}
 	limit := " ORDER BY d.id LIMIT $4"
-	if reference != nil {
+	if reference != nil || draftOnly {
+		statement = `SELECT d.id,d.document_type,d.status,d.supplier_id,d.issue_date,d.due_date,d.currency,d.total_minor` +
+			documentScope + " AND d.id>$4"
+		args = []any{s.ID, s.id, outlet, cursor, mcpPageSize + 1}
 		limit = " ORDER BY d.id LIMIT $5"
+		if draftOnly {
+			statement += " AND d.status='draft'"
+		} else {
+			statement += " AND d.document_type=$6 AND d.letter=$7 AND d.point_of_sale=$8 AND d.number=$9"
+			args = append(args, reference.DocumentType, reference.Letter, reference.PointOfSale, reference.Number)
+		}
 	}
 	rows, err := tx.QueryContext(r.Context(), statement+limit, args...)
 	if err != nil {
@@ -88,10 +93,14 @@ func mcpAccountingDocuments(r *http.Request, tx *sql.Tx, s mcpTokenScope) (any, 
 	}
 	defer rows.Close()
 	result := struct {
-		Documents []mcpDocumentMetadata  `json:"documents"`
-		NextID    int64                  `json:"next_id,omitempty"`
-		Reference *documentref.Reference `json:"printed_reference,omitempty"`
+		Documents    []mcpDocumentMetadata  `json:"documents"`
+		NextID       int64                  `json:"next_id,omitempty"`
+		Reference    *documentref.Reference `json:"printed_reference,omitempty"`
+		StatusFilter string                 `json:"status_filter,omitempty"`
 	}{Documents: []mcpDocumentMetadata{}, Reference: reference}
+	if draftOnly {
+		result.StatusFilter = documentref.DraftStatus
+	}
 	for rows.Next() {
 		var d mcpDocumentMetadata
 		if err := rows.Scan(&d.ID, &d.Type, &d.Status, &d.Supplier, &d.Issue, &d.Due, &d.Currency, &d.Total); err != nil {

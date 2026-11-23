@@ -24,9 +24,10 @@ type DocumentMetadata struct {
 }
 
 type DocumentList struct {
-	Documents []DocumentMetadata     `json:"documents"`
-	NextID    int64                  `json:"next_id,omitempty"`
-	Reference *documentref.Reference `json:"printed_reference,omitempty"`
+	Documents    []DocumentMetadata     `json:"documents"`
+	NextID       int64                  `json:"next_id,omitempty"`
+	Reference    *documentref.Reference `json:"printed_reference,omitempty"`
+	StatusFilter string                 `json:"status_filter,omitempty"`
 }
 
 type DocumentCurrencyTotal struct {
@@ -90,6 +91,10 @@ func (c *Client) Documents(ctx context.Context, entity, outlet int64, after *int
 // DocumentsByReference preserves the old list when the reference is omitted.
 // Filtered calls must not treat an unfiltered old-server response as a match.
 func (c *Client) DocumentsByReference(ctx context.Context, entity, outlet int64, after *int64, reference *documentref.Reference) (DocumentList, error) {
+	return c.DocumentsFiltered(ctx, entity, outlet, after, reference, "")
+}
+
+func (c *Client) DocumentsFiltered(ctx context.Context, entity, outlet int64, after *int64, reference *documentref.Reference, status string) (DocumentList, error) {
 	var wire struct {
 		DocumentList
 		Reference *struct {
@@ -112,10 +117,23 @@ func (c *Client) DocumentsByReference(ctx context.Context, entity, outlet int64,
 		}
 		reference.AddQuery(query)
 	}
+	draftOnly := status == documentref.DraftStatus
+	if status != "" {
+		if !draftOnly || reference != nil {
+			return DocumentList{}, errors.New("elegí solo el filtro de borradores o una referencia impresa")
+		}
+		if query == nil {
+			query = make(url.Values)
+		}
+		query.Set("status", status)
+	}
 	if err := c.getWorkspace(ctx, entity, outlet, "/documents", query, &wire); err != nil {
 		return DocumentList{}, err
 	}
 	result := wire.DocumentList
+	if draftOnly && result.StatusFilter != documentref.DraftStatus || !draftOnly && result.StatusFilter != "" {
+		return DocumentList{}, invalidResponse
+	}
 	if reference != nil {
 		actual := wire.Reference
 		if actual == nil || actual.Letter == nil || *actual.Letter != reference.Letter ||
@@ -125,7 +143,7 @@ func (c *Client) DocumentsByReference(ctx context.Context, entity, outlet int64,
 		result.Reference = reference
 	}
 	for _, d := range result.Documents {
-		if d.ID <= last || (reference != nil && d.Type != reference.DocumentType) || d.Supplier <= 0 || (d.Type != "invoice" && d.Type != "credit_note" && d.Type != "debit_note") ||
+		if d.ID <= last || draftOnly && d.Status != documentref.DraftStatus || (reference != nil && d.Type != reference.DocumentType) || d.Supplier <= 0 || (d.Type != "invoice" && d.Type != "credit_note" && d.Type != "debit_note") ||
 			(d.Status != "draft" && d.Status != "reviewed") || !accountingDate(d.Issue) || (d.Due != nil && !accountingDate(*d.Due)) ||
 			(d.Currency != "ARS" && d.Currency != "USD") || d.Total < 0 {
 			return DocumentList{}, invalidResponse
