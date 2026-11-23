@@ -60,3 +60,16 @@ being built by another process. The Go checks run without a PostgreSQL
 test DSN; run the separate PostgreSQL test suite, installed client checks,
 and independent review when the change calls for them. The browser
 journey itself still starts a fresh database.
+
+To run the same Chrome journey through an installed Codex CLI instead of
+the raw test client:
+
+```sh
+bash scripts/qa-mcp-stock-journey.sh --with-installed-codex
+```
+
+Set `QA_CODEX` if the executable is not on your path. You can combine the
+two flags. This uses direct tool calls with temporary client settings,
+without a real login, prompt, or model inference. It tests Codex transport
+and tool results, not Claude or how a model chooses tools. It fails rather
+than falling back if the installed client cannot run the check.
