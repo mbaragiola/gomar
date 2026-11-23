@@ -82,8 +82,9 @@ The issuing browser login reviews the scoped named proposal and confirms or
 rejects it in Gomar. A chat response is not approval. Never put credentials in
 chat, a command-line argument, or a shared config.
 
-See the [read tools](MCP-WORKSPACE.md) for what each query returns and the
-[coverage matrix](MCP-COVERAGE.md) for opt-in proposals, workflows that stay
+See the [Spanish guide to everyday prompts](MCP-GUIA-DE-CONSULTAS.md) for
+examples to adapt, the [read tools](MCP-WORKSPACE.md) for what each query
+returns, and the [coverage matrix](MCP-COVERAGE.md) for opt-in proposals, workflows that stay
 in the app, and verification levels.
 
 ### Open a draft's private attachments in Gomar
