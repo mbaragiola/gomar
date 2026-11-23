@@ -28,6 +28,11 @@ type payablePageArgs struct {
 	DueTo   payableDateArg `json:"due_to,omitempty" jsonschema:"Fecha local de vencimiento hasta (inclusive), YYYY-MM-DD; requiere due_from."`
 }
 
+type payablePreflightArgs struct {
+	outletArgs
+	DocumentID int64 `json:"document_id" jsonschema:"ID de un comprobante de esta sucursal."`
+}
+
 type payableDetailArgs struct {
 	outletArgs
 	PayableID int64 `json:"payable_id" jsonschema:"ID de gomar_list_payables."`
@@ -46,6 +51,9 @@ type stockMovementDetailArgs struct {
 }
 
 func addFinanceStockReadTools(server *mcp.Server, client *mcpclient.Client) {
+	readTool(server, "gomar_check_payable_eligibility", "Consultá si un comprobante de esta sucursal cumple hoy las condiciones para registrarlo en cuentas a pagar. Devuelve solo elegibilidad y el primer impedimento. No registra, reserva ni paga nada; no garantiza un alta posterior.", func(ctx context.Context, in payablePreflightArgs) (mcpclient.PayablePreflight, error) {
+		return client.PayablePreflight(ctx, in.EntityID, in.OutletID, in.DocumentID)
+	})
 	readTool(server, "gomar_list_payables", "Listá cuentas a pagar de una sucursal autorizada, con fechas y centavos por moneda. Omite cuentas con aplicaciones de otra sucursal. Hasta 30 en orden de ID. Podés filtrar por vencimiento con due_from y due_to (fechas locales inclusive; excluye cuentas sin vencimiento). Para seguir usá next_id y mantené las mismas fechas.", func(ctx context.Context, in payablePageArgs) (mcpclient.FinanceRecords[mcpclient.PayableRecord], error) {
 		if in.DueFrom == "" && in.DueTo == "" {
 			return client.ListPayables(ctx, in.EntityID, in.OutletID, in.AfterID)

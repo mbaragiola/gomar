@@ -15,11 +15,11 @@ For everyday examples, see the [Spanish prompt guide](MCP-GUIA-DE-CONSULTAS.md).
 | Delivery | Recent order status with limited fields; status counts for the latest 100 inbox records | No native staff write workflow. Provider calls and credentials are not part of MCP. |
 | Documents and intake | Scoped list, detail and totals by currency; propose draft creation, review, date and amount edits, or separate printed-number and printed point-of-sale corrections | Native only: other document edits, deletion and private file handling. Provider OCR is disabled; staged OCR confirmation is not a shipped workflow. |
 | Suppliers | Active supplier names and IDs; propose a legal-name correction that applies across the business | Native only: supplier creation, tax identity and superuser catalog status changes. |
-| Payables and payment records | Outstanding and overdue totals, status counts, outlet-only payable and payment record details, and one payable’s ledger history | Native only: creating payables, recording and reversing internal payments, and receipt handling. MCP reads do not verify bank activity or move money. |
+| Payables and payment records | Outstanding and overdue totals, status counts, outlet-only payable and payment record details, one payable’s ledger history, and one document’s eligibility for posting | Native only: creating payables, recording and reversing internal payments, and receipt handling. MCP reads do not verify bank activity or move money. |
 | Reconciliation | Scoped counts, paged run list, metadata and setup by ID; propose one empty single-outlet draft | Native only: private files, source rows, preparing matches, decisions and closing review. Setup metadata does not prove readiness. |
 | Reservations and menus | Daily counts, setup flags, one exact configured future start and one numbered table check, staff queue and detail, public candidate times, published menu metadata; propose confirmation or cancellation of an existing request and prepare a table, future slot, or fixed informational cancellation notice for an existing disabled venue | Native only: public booking, guest and contact details, custom venue settings and enablement, actual menu files and publication. Preparation never enables or books anything. |
 
-The packaged live server registers 36 baseline read tools. Discovery does not
+The packaged live server registers 37 baseline read tools. Discovery does not
 guarantee access: app flags and current permissions determine which queries
 can run. There are also 25 distinct opt-in proposal actions, not 25
 simultaneous writes. Of those, 21 are named actions and four use distinct older
@@ -147,3 +147,16 @@ The separate printed point-of-sale proposal changes only the numeric prefix
 of one current unposted draft, leaving the number, business, outlet and
 other data unchanged. It does not expand previously issued number-only
 keys. See [point-of-sale proposals](MCP-DOCUMENT-POINT-OF-SALE-PROPOSALS.md).
+
+### Payable eligibility
+
+`gomar_check_payable_eligibility` checks one `document_id` for the selected
+entity and branch. It uses the same document-state checks and order as
+native posting and requires the current supplier-payment permission. A
+successful check returns `eligible: true`. A blocked check returns
+`eligible: false` with one stable reason: `already_posted`, `not_reviewed`,
+`not_invoice`, `nonpositive_total`, `total_out_of_range`, or
+`supplier_mismatch`. It returns no supplier, tax identifier, amount, or
+receipt data. The read is not a lock, reservation, approval, posting, or
+payment. The native request still needs a reason and fresh checks before
+any account payable can be created.
