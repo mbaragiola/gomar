@@ -303,6 +303,7 @@ func (a *app) routes() http.Handler {
 	addAPI("/api/v1/entities/{entity}/documents/{document}/attachments/{attachment}", "GET", a.protected(a.downloadDocumentImage))
 	addAPI("/api/v1/entities/{entity}/documents", "POST", a.protected(a.createDraft))
 	addAPI("/api/v1/entities/{entity}/totals", "GET", a.scoped("read_business_data", documentTotals))
+	addAPI("/api/v1/entities/{entity}/outlets/{outlet}/documents/{document}/payable-eligibility-handoff", "GET", a.protectedWithCache(a.payableEligibilityHandoff, true))
 	addAPI("/api/v1/entities/{entity}/outlets/{outlet}/reconciliations/{run}/close-handoff", "GET", a.protectedWithCache(a.reconciliationCloseHandoff, true))
 	addAPI("/api/v1/entities/{entity}/reconciliations", "GET", a.protectedWithCache(a.readReconciliation, true))
 	addAPI("/api/v1/entities/{entity}/reconciliations", "POST", a.protected(a.createReconciliationDraft))

@@ -109,7 +109,7 @@ func TestPostgresMCPPayablePreflightUsesNativeGateWithoutWrites(t *testing.T) {
 		{1, ""}, {2, "not_reviewed"}, {3, "not_invoice"}, {4, "nonpositive_total"},
 		{5, "total_out_of_range"}, {6, "supplier_mismatch"}, {7, "already_posted"},
 	} {
-		want := `{"eligible":true}`
+		want := `{"eligible":true,"handoff_url":"/#alta-cuenta=1:1:1"}`
 		if tc.blocker != "" {
 			want = fmt.Sprintf(`{"eligible":false,"blocker":%q}`, tc.blocker)
 		}
@@ -135,10 +135,73 @@ func TestPostgresMCPPayablePreflightUsesNativeGateWithoutWrites(t *testing.T) {
 	ask(mux, "GET", url(2, 1, 1), "", credentials.Token, 404)
 	ask(mux, "GET", url(1, 1, 1)+"?extra=1", "", credentials.Token, 422)
 	ask(mux, "GET", url(1, 1, 1), "", "", 401)
+	var broad struct{ Token string }
+	wire = ask(mux, "POST", "/api/v1/auth/mcp-token", `{"entity_id":1}`, "", 201)
+	if err := json.Unmarshal([]byte(wire), &broad); err != nil || broad.Token == "" {
+		t.Fatal("synthetic broad token missing")
+	}
+	if got := ask(mux, "GET", url(1, 1, 1), "", broad.Token, 200); got != `{"eligible":true}` {
+		t.Fatalf("wide key unexpectedly received a handoff: %s", got)
+	}
+
+	landingURL := func(entity, outlet, id int) string {
+		return fmt.Sprintf("/api/v1/entities/%d/outlets/%d/documents/%d/payable-eligibility-handoff", entity, outlet, id)
+	}
+	landing := func(handler http.Handler, url, bearer string, signedIn bool, want int) string {
+		t.Helper()
+		r := httptest.NewRequest("GET", "http://example.com"+url, nil).WithContext(ctx)
+		if signedIn {
+			for _, cookie := range cookies {
+				r.AddCookie(cookie)
+			}
+		}
+		if bearer != "" {
+			r.Header.Set("Authorization", "Bearer "+bearer)
+		}
+		w := httptest.NewRecorder()
+		handler.ServeHTTP(w, r)
+		if w.Code != want || w.Header().Get("Cache-Control") != "private, no-store" {
+			t.Fatalf("%s = %d %s (wanted %d private no-store)", url, w.Code, w.Body.String(), want)
+		}
+		if signedIn && w.Header().Get("Referrer-Policy") != "no-referrer" {
+			t.Fatal("expected no-referrer")
+		}
+		return strings.TrimSpace(w.Body.String())
+	}
+	nativeURL := landingURL(1, 1, 1)
+	if got := landing(mux, nativeURL, "", true, 200); got != `{"document_id":1,"printed_reference":{"document_type":"invoice","letter":"A","point_of_sale":1,"number":1}}` {
+		t.Fatalf("unexpected native handoff projection: %s", got)
+	}
+	unavailable := landing(mux, landingURL(1, 1, 999), "", true, 404)
+	for _, q := range []string{nativeURL + "?", nativeURL + "?extra=1", landingURL(1, 2, 1), landingURL(2, 1, 1),
+		landingURL(1, 4, 9), strings.Replace(nativeURL, "/documents/1/", "/documents/01/", 1),
+		landingURL(1, 1, 2), landingURL(1, 1, 3), landingURL(1, 1, 4), landingURL(1, 1, 5), landingURL(1, 1, 6), landingURL(1, 1, 7)} {
+		if got := landing(mux, q, "", true, 404); got != unavailable {
+			t.Fatalf("ineligible/stale target disclosed a distinction: %s", got)
+		}
+	}
+	landing(mux, nativeURL, "", false, 401)
+	landing(mux, nativeURL, credentials.Token, false, 401)
+	landing(mux, nativeURL, credentials.Token, true, 404)
+	exec("UPDATE documents SET outlet_id=2 WHERE id=1")
+	if got := landing(mux, nativeURL, "", true, 404); got != unavailable {
+		t.Fatalf("stale moved target response: %s", got)
+	}
+	exec("UPDATE documents SET outlet_id=1,point_of_sale=0 WHERE id=1")
+	if got := ask(mux, "GET", url(1, 1, 1), "", credentials.Token, 200); got != `{"eligible":true}` {
+		t.Fatalf("unsupported reference produced a handoff or changed old eligibility: %s", got)
+	}
+	landing(mux, nativeURL, "", true, 404)
+	exec("UPDATE documents SET point_of_sale=1 WHERE id=1")
+	exec("DELETE FROM outlet_grants WHERE membership_id=1 AND outlet_id=1")
+	landing(mux, nativeURL, "", true, 404)
+	exec("INSERT INTO outlet_grants VALUES (1,1)")
 	disabled := (&app{db: db, host: "example.com"}).routes()
 	ask(disabled, "GET", url(1, 1, 1), "", credentials.Token, 404)
+	landing(disabled, nativeURL, "", true, 404)
 	for _, role := range []string{"read_only", "purchasing"} {
 		exec("UPDATE memberships SET role=$1 WHERE id=1", role)
+		landing(mux, nativeURL, "", true, 404)
 		if got := ask(mux, "GET", url(1, 1, 1), "", credentials.Token, 403); got != ask(mux, "GET", url(1, 1, 999), "", credentials.Token, 403) {
 			t.Fatal("role denied after lookup")
 		}
