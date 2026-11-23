@@ -65,6 +65,9 @@ func (a *app) registerMCP(add func(string, string, http.HandlerFunc)) {
 	add("/api/v1/mcp/entities/{entity}/outlets", http.MethodGet, a.mcpRead(mcpOutlets))
 	if a.enablePOS {
 		add("/api/v1/mcp/entities/{entity}/sales-summary", http.MethodGet, a.mcpRead(a.mcpSalesSummary))
+		if a.enablePOSTableChecks {
+			add(mcpWorkspaceBase+"/pos-table-checks/{table}", http.MethodGet, a.mcpRead(mcpPOSTableCheck))
+		}
 	}
 	a.registerMCPWorkspace(add)
 	a.registerMCPAccountingReads(add)

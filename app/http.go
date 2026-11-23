@@ -45,6 +45,7 @@ type app struct {
 	enableMCPOutletDisplayLabelProposals      bool
 	publicReservations                        bool
 	enablePOS                                 bool
+	enablePOSTableChecks                      bool
 	enableMCP                                 bool
 	enableMCPWikiProposals                    bool
 	enableMCPDocumentProposals                bool

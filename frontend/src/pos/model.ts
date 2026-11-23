@@ -16,6 +16,7 @@ export interface Grant extends Context {
   expires: number
   label: string
   catalog: Product[]
+  tableChecks?: boolean
 }
 export interface Line {
   producto_id: number

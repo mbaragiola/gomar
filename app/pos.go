@@ -59,7 +59,11 @@ func (a *app) registerPOS(add func(string, string, http.HandlerFunc)) {
 	if !a.enablePOS {
 		return
 	}
-	add(posPath+"/catalog", "GET", a.scoped("read_business_data", listPOSCatalog))
+	add(posPath+"/catalog", "GET", a.scoped("read_business_data", a.listPOSCatalog))
+	if a.enablePOSTableChecks {
+		add(posPath+"/table-checks", http.MethodPost, a.scopedRequest("read_business_data", a.lockOutletForOperation(a.savePOSTableCheck), true))
+		add(posPath+"/table-checks/{table}", http.MethodGet, a.scoped("read_business_data", a.readPOSTableCheck))
+	}
 	add(posPath+"/catalog", "POST", a.scopedRequest("manage_entity_access", a.lockOutletForOperation(savePOSProduct), true))
 	add(posPath+"/catalog/{product}", "PUT", a.scopedRequest("manage_entity_access", a.lockOutletForOperation(savePOSProduct), true))
 	add(posPath+"/catalog/{product}/barcode", "PUT", a.scopedRequest("manage_entity_access", a.lockOutletForOperation(savePOSBarcode), true))
@@ -101,7 +105,7 @@ const currentOutletPOSProducts = `SELECT p.id,v.name,v.price_minor,v.revision,v.
  FROM pos_products p JOIN pos_product_versions v ON v.product_id=p.id AND v.outlet_id=p.outlet_id
  AND v.revision=p.current_revision WHERE p.outlet_id=$1`
 
-func listPOSCatalog(r *http.Request, tx *sql.Tx, m entityMembership, _ []byte) (int, any, error) {
+func (a *app) listPOSCatalog(r *http.Request, tx *sql.Tx, m entityMembership, _ []byte) (int, any, error) {
 	outlet, err := posOutlet(r, tx, m)
 	if err != nil {
 		return 0, nil, err
@@ -120,9 +124,10 @@ func listPOSCatalog(r *http.Request, tx *sql.Tx, m entityMembership, _ []byte) (
 		products = append(products, p)
 	}
 	return 200, struct {
-		Actor    int64        `json:"actor_id"`
-		Products []posProduct `json:"productos"`
-	}{m.userID, products}, rows.Err()
+		Actor       int64        `json:"actor_id"`
+		Products    []posProduct `json:"productos"`
+		TableChecks bool         `json:"cuentas_mesa,omitempty"`
+	}{m.userID, products, a.enablePOSTableChecks && posSellingRole(m.role)}, rows.Err()
 }
 
 func savePOSProduct(r *http.Request, tx *sql.Tx, m entityMembership, raw []byte) (int, any, error) {

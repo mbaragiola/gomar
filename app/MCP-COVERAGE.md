@@ -9,7 +9,7 @@ For everyday examples, see the [Spanish prompt guide](MCP-GUIA-DE-CONSULTAS.md).
 | Workflow | Shipped MCP reads and opt-in proposals | Intentionally stays in Gomar or is not built |
 | --- | --- | --- |
 | Identity and business scope | Current user, businesses, and outlets; propose a display-name change for one active outlet | Native only: business and outlet administration beyond that rename, membership and grant management, credentials and provider sign-in. |
-| POS | Recorded sales totals, product catalog with exact barcode lookup; propose product creation and separate name, price, availability or barcode changes | Native only: scan into the local cart, preview/print a table check, register sales, checkout and offline sales sync. Not built: shared table tabs and shift management. |
+| POS | Recorded sales totals, product catalog with exact barcode lookup, one exact saved table check and native handoff; propose product creation and separate name, price, availability or barcode changes | Native only: scan into the local cart, save a tab-local untendered cart, preview/print an unsaved table check, register sales, checkout and offline sales sync. Not built: editing or settling a saved table check, and shift management. |
 | Inventory | Tracked balances and thresholds, including an exact configured item by ID, movement history, filtered alert pages and stock alert counts; propose receipts, waste, physical counts, initial disabled product setup, and changes to a product’s minimum or tracking | Native only: branch-wide settings. Not built: bills of materials. |
 | Wiki | Search and read by ID; propose new pages and versioned edits | Not built: deletion. |
 | Delivery | Recent order status with limited fields; status counts for the latest 100 inbox records | No native staff write workflow. Provider calls and credentials are not part of MCP. |
@@ -19,7 +19,7 @@ For everyday examples, see the [Spanish prompt guide](MCP-GUIA-DE-CONSULTAS.md).
 | Reconciliation | Scoped counts, paged run list, metadata and setup by ID and a read-only close eligibility check; propose one empty single-outlet draft | Native only: private files, source rows, preparing matches, decisions and closing review. Setup metadata does not prove readiness. |
 | Reservations and menus | Daily counts, setup flags, one exact configured future start and one numbered table check, staff queue and detail, public candidate times, published menu metadata; propose confirmation or cancellation of an existing request and prepare a table, future slot, or fixed informational cancellation notice for an existing disabled venue | Native only: public booking, guest and contact details, custom venue settings and enablement, actual menu files and publication. Preparation never enables or books anything. |
 
-The packaged live server registers 40 baseline read tools. Discovery does not
+The packaged live server registers 41 baseline read tools. Discovery does not
 guarantee access: app flags and current permissions determine which queries
 can run. There are also 26 distinct opt-in proposal actions, not 26
 simultaneous writes. Of those, 22 are named actions and four use distinct older
@@ -252,6 +252,27 @@ To check the allowed and denied handoff paths and Chrome's printed layout,
 run `bash scripts/qa-mcp-stock-journey.sh --with-pos-prebill` with
 `pdftotext` installed. The test saves no sales and never talks to a
 physical printer.
+
+### Save and reopen an untendered table check
+
+With both POS and its opt-in `-enable-pos-table-checks` flag enabled,
+Caja can save its current browser cart for one exact numbered table at the
+authorized branch while online. Saving requires a deliberate native click:
+no MCP caller has the unrecorded tab-local cart or may create one from
+guessed items. Saved rows use the exact current catalog revisions and can be
+consulted by authorized staff in the same branch. They do not register a
+sale, payment, stock change, reservation, or fiscal document. This first
+increment doesn't edit, retire, or settle an existing saved check.
+
+`gomar_read_pos_table_check` returns the saved table number, total in ARS
+cents, fixed untendered status, and a same-origin **Caja** handoff. It uses
+a key pinned to the exact branch and the same POS roles as the native view.
+It never returns item details, payment data or a write credential.
+The link only prefills the table when a current authorized register matches
+the exact business and branch. The operator then chooses **Consultar mesa**;
+the browser API rechecks current scope before showing the saved items.
+Opening the link never requests or saves a cart, and changing the link does
+not change the authorized branch.
 
 ### Find a document by its printed reference
 

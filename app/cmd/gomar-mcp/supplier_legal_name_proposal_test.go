@@ -71,7 +71,7 @@ func TestSupplierLegalNameStdioWire(t *testing.T) {
 	}
 	defer session.Close()
 	listed, err := session.ListTools(t.Context(), nil)
-	if err != nil || len(listed.Tools) != 41 {
+	if err != nil || len(listed.Tools) != 42 {
 		t.Fatal(listed, err)
 	}
 	var hasSupplierProposal, hasReconciliationSetup bool

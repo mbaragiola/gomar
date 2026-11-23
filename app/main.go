@@ -25,6 +25,7 @@ func main() {
 	admin := flag.String("create-admin", "", "create a local platform administrator (password on stdin)")
 	enableDelivery := flag.Bool("enable-delivery", false, "enable the prototype delivery inbox for permitted staff")
 	enablePOS := flag.Bool("enable-pos", false, "enable the prototype POS for permitted staff")
+	enablePOSTableChecks := flag.Bool("enable-pos-table-checks", false, "enable online untendered table checks for authorized POS staff")
 	enableMCP := flag.Bool("enable-mcp", false, "allow scoped staff read-only MCP access")
 	enableWikiProposals := flag.Bool("enable-mcp-wiki-proposals", false, "allow administrators to propose new wiki articles for browser approval")
 	enableDocumentProposals := flag.Bool("enable-mcp-document-proposals", false, "allow staff to propose document drafts for browser approval")
@@ -87,6 +88,9 @@ func main() {
 	}
 	if *enableStockReceiptProposals && (!*enablePOS || !*enableStock) {
 		log.Fatal("-enable-mcp-stock-receipt-proposals requires -enable-pos and -enable-stock")
+	}
+	if *enablePOSTableChecks && !*enablePOS {
+		log.Fatal("table checks require POS")
 	}
 	if *enableStock && !*enablePOS {
 		log.Fatal("-enable-stock requires -enable-pos")
@@ -196,7 +200,7 @@ func main() {
 		WriteTimeout:      20 * time.Second,
 		IdleTimeout:       60 * time.Second,
 	}
-	application := &app{db: db, reservationContacts: *reservationContacts, employeeOnboarding: *employeeOnboarding, providerEmployee: *providerEmployee, providerAuth: providerAuth, adminRecovery: *enableAdminRecovery, providerOnly: *providerOnly, privateRoot: privateRoot, publicReservations: *publicReservations, enableMCPReservationConfirmProposals: *enableReservationConfirmProposals, enableMCPReservationTableAddProposals: *enableReservationTableAddProposals, enableMCPReservationSlotAddProposals: *enableReservationSlotAddProposals, enableMCPReservationPolicyNoticeProposals: *enableReservationPolicyNoticeProposals, enableMCPOutletDisplayLabelProposals: *enableOutletDisplayLabelProposals, enableMCPReservationCancelProposals: *enableReservationCancelProposals, enableMCPPOSCreateProposals: *enablePOSCreateProposals, enableMCPStockMinimumProposals: *enableStockMinimumProposals, enableMCPStockTrackingProposals: *enableStockTrackingProposals, enableMCPStockProductSetupProposals: *enableStockProductSetupProposals, enableMCPSupplierNameProposals: *enableSupplierNameProposals, enablePOS: *enablePOS,
+	application := &app{db: db, reservationContacts: *reservationContacts, employeeOnboarding: *employeeOnboarding, providerEmployee: *providerEmployee, providerAuth: providerAuth, adminRecovery: *enableAdminRecovery, providerOnly: *providerOnly, privateRoot: privateRoot, publicReservations: *publicReservations, enableMCPReservationConfirmProposals: *enableReservationConfirmProposals, enableMCPReservationTableAddProposals: *enableReservationTableAddProposals, enableMCPReservationSlotAddProposals: *enableReservationSlotAddProposals, enableMCPReservationPolicyNoticeProposals: *enableReservationPolicyNoticeProposals, enableMCPOutletDisplayLabelProposals: *enableOutletDisplayLabelProposals, enableMCPReservationCancelProposals: *enableReservationCancelProposals, enableMCPPOSCreateProposals: *enablePOSCreateProposals, enableMCPStockMinimumProposals: *enableStockMinimumProposals, enableMCPStockTrackingProposals: *enableStockTrackingProposals, enableMCPStockProductSetupProposals: *enableStockProductSetupProposals, enableMCPSupplierNameProposals: *enableSupplierNameProposals, enablePOS: *enablePOS, enablePOSTableChecks: *enablePOSTableChecks,
 		enableDelivery: *enableDelivery, enableStock: *enableStock, enableMCP: *enableMCP, enableMCPWikiProposals: *enableWikiProposals, enableMCPDocumentProposals: *enableDocumentProposals, enableMCPWikiEditProposals: *enableWikiEditProposals, enableMCPStockReceiptProposals: *enableStockReceiptProposals, enableMCPProposalSessions: *enableProposalSessions, enableMCPDocumentReviewProposals: *enableDocumentReviewProposals, enableMCPDocumentEditProposals: *enableDocumentEditProposals, enableMCPDocumentNumberProposals: *enableDocumentNumberProposals, enableMCPDocumentPointOfSaleProposals: *enableDocumentPointOfSaleProposals, enableMCPPOSCatalogProposals: *enablePOSCatalogProposals, enableMCPStockAdjustmentProposals: *enableStockAdjustmentProposals, enableMCPReconciliationDraftProposals: *enableReconciliationDraftProposals}
 	if ingress != nil {
 		listener = ingress.listener

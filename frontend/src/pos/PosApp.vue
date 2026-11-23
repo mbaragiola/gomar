@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import SavedTableCheck from './SavedTableCheck.vue'
 import ThemeSelect from '../components/ThemeSelect.vue'
 import ManageBarcodes from './ManageBarcodes.vue'
 import { computed, nextTick, onMounted, onUnmounted, ref } from 'vue'
@@ -11,7 +12,7 @@ import { arm, broadcastPOSLock, disarm, enqueue, forgetLease, localLease, lockOf
 
 interface Entity { id: number; nombre: string; rol: string; capacidades: string[] }
 interface Outlet { id: number; nombre: string }
-interface Catalog { actor_id: number; productos: Product[] }
+interface Catalog { actor_id: number; productos: Product[]; cuentas_mesa?: boolean }
 interface Acknowledgment { id: number; id_solicitud: string; total_centavos: number; metodo_pago?: PaymentMethod }
 const statusLabel = { pending: 'Pendiente de sincronizar', synced: 'Sincronizada', attention: 'Necesita revisión' }
 const sellingRoles = new Set(['administration', 'purchasing', 'accounting'])
@@ -175,7 +176,7 @@ async function refresh() {
       }
       const sales = await salesFor(current)
       if (token !== epoch || localLease() !== current.lease) return
-      grant.value = current
+      grant.value = { ...current, tableChecks: catalog.cuentas_mesa === true }
       recorded.value = sales
     } else {
       entity.value = authorized.find((row) => sellingRoles.has(row.rol))?.id ?? authorized[0]?.id ?? 0
@@ -212,7 +213,7 @@ async function enable() {
     const catalog = await scopedCatalog(selection)
     if (token !== epoch || !navigator.onLine) return
     const next: Grant = { ...selection, actor: catalog.actor_id, label, lease: crypto.randomUUID(),
-      catalog: normalizedProducts(catalog.productos), expires: Date.now() + grantLifetime }
+      catalog: normalizedProducts(catalog.productos), tableChecks: catalog.cuentas_mesa === true, expires: Date.now() + grantLifetime }
     await arm(next)
     if (token !== epoch) {
       await disarm(next.lease)
@@ -240,6 +241,12 @@ function quantity(id: number, step: number) {
   prebillOpen.value = false
   if (next <= 0) basket.value.delete(id)
   else basket.value.set(id, next)
+}
+
+function currentRegisterOnline() {
+  const current = grant.value
+  return !!(current?.tableChecks && online.value && navigator.onLine && !verifying.value && !saving.value && !needsConfirm.value
+    && localLease() === current.lease && Date.now() < current.expires)
 }
 
 function canPrintPrebill() {
@@ -518,6 +525,10 @@ onUnmounted(() => {
           <button type="button" @click="togglePrebill">Volver a la venta</button>
         </div>
       </section>
+      <SavedTableCheck
+        v-if="grant.tableChecks && !needsConfirm && !saving" :key="grant.lease" :scope="grant" :cart="prebill?.lines ?? []"
+        :online="online" :allowed="currentRegisterOnline" :format-money="fmt"
+      />
       <section class="card gomar-feature">
         <div class="section-heading"><h2>Ventas de esta caja</h2>
           <button type="button" :disabled="!online || syncing || verifying || !pending" @click="sync">Sincronizar pendientes</button>
