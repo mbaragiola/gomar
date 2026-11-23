@@ -17,6 +17,7 @@ func (a *app) registerMCPWorkspace(add func(string, string, http.HandlerFunc)) {
 	add(mcpWorkspaceBase+"/knowledge", http.MethodGet, a.mcpRead(mcpKnowledgeList))
 	add(mcpWorkspaceBase+"/knowledge/{article}", http.MethodGet, a.mcpRead(mcpKnowledgeDetail))
 	if a.enablePOS && a.enableStock {
+		add(mcpWorkspaceBase+"/stock/{product}", http.MethodGet, a.mcpRead(mcpStockProduct))
 		add(mcpWorkspaceBase+"/stock", http.MethodGet, a.mcpRead(mcpStock))
 		add(mcpWorkspaceBase+"/stock-alert-summary", http.MethodGet, a.mcpRead(mcpStockAlertSummary))
 	}
@@ -126,7 +127,7 @@ type mcpStockItem struct {
 }
 
 func mcpStockAlertSummary(r *http.Request, tx *sql.Tx, s mcpTokenScope) (any, error) {
-	if !slices.Contains([]string{"administration", "purchasing", "accounting"}, s.role) {
+	if !stockReadRole(s.role) {
 		return nil, forbiddenRole
 	}
 	if r.URL.RawQuery != "" || r.URL.ForceQuery {
@@ -165,7 +166,7 @@ func mcpStockAlertSummary(r *http.Request, tx *sql.Tx, s mcpTokenScope) (any, er
 }
 
 func mcpStock(r *http.Request, tx *sql.Tx, s mcpTokenScope) (any, error) {
-	if !slices.Contains([]string{"administration", "purchasing", "accounting"}, s.role) {
+	if !stockReadRole(s.role) {
 		return nil, forbiddenRole
 	}
 	outlet, err := mcpWorkspaceOutlet(r, tx, s)
@@ -187,11 +188,7 @@ func mcpStock(r *http.Request, tx *sql.Tx, s mcpTokenScope) (any, error) {
 	if err != nil {
 		return nil, err
 	}
-	rows, err := tx.QueryContext(r.Context(), `SELECT t.product_id,v.name,t.enabled,t.minimum,
-  COALESCE((SELECT CAST(SUM(delta) AS BIGINT) FROM stock_movements x WHERE x.outlet_id=t.outlet_id AND x.product_id=t.product_id),0)
-  FROM stock_products t JOIN pos_products p ON p.id=t.product_id AND p.outlet_id=t.outlet_id
-  JOIN pos_product_versions v ON v.product_id=p.id AND v.outlet_id=p.outlet_id AND v.revision=p.current_revision
-  WHERE t.outlet_id=$1 AND t.product_id>$2 ORDER BY t.product_id LIMIT $3`, outlet, after, mcpPageSize+1)
+	rows, err := tx.QueryContext(r.Context(), currentOutletStock+` AND t.product_id>$2 ORDER BY t.product_id LIMIT $3`, outlet, after, mcpPageSize+1)
 	if err != nil {
 		return nil, err
 	}
@@ -206,14 +203,7 @@ func mcpStock(r *http.Request, tx *sql.Tx, s mcpTokenScope) (any, error) {
 		if err := rows.Scan(&item.ID, &item.Name, &item.Enabled, &item.Minimum, &item.Balance); err != nil {
 			return nil, err
 		}
-		if enabled && item.Enabled {
-			switch {
-			case item.Balance < 0:
-				item.Alert = "negative"
-			case item.Balance <= item.Minimum:
-				item.Alert = "low"
-			}
-		}
+		item.Alert = stockAlert(enabled, item.Enabled, item.Balance, item.Minimum)
 		result.Products = append(result.Products, item)
 	}
 	if len(result.Products) > mcpPageSize {

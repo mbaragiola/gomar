@@ -53,6 +53,11 @@ func TestLiveStdioScopedTools(t *testing.T) {
 				t.Error("unexpected stock alert summary filter")
 			}
 			_, _ = io.WriteString(w, `{"enabled":true,"tracked":36,"negative":1,"at_or_below_minimum":2,"healthy":33,"name":"`+secret+`"}`)
+		case "/api/v1/mcp/entities/20/outlets/10/stock/2":
+			_, _ = io.WriteString(w, `{"id":2,"outlet_enabled":true,"product_enabled":true,"minimum":8,"balance":7,"alert":"low","name":"`+secret+`"}`)
+		case "/api/v1/mcp/entities/20/outlets/11/stock/2", "/api/v1/mcp/entities/21/outlets/10/stock/2":
+			w.WriteHeader(http.StatusNotFound)
+			_, _ = io.WriteString(w, secret)
 		case "/api/v1/mcp/entities/20/outlets/10/stock":
 			if r.URL.RawQuery != "after_product_id=1" {
 				t.Errorf("incorrect stock query: %s", r.URL.RawQuery)
@@ -168,7 +173,7 @@ func TestLiveStdioScopedTools(t *testing.T) {
 	}
 	defer session.Close()
 	metadata, err := session.ListTools(ctx, &mcp.ListToolsParams{})
-	if err != nil || len(metadata.Tools) != 39 {
+	if err != nil || len(metadata.Tools) != 40 {
 		t.Fatal(metadata, err)
 	}
 	for _, tool := range metadata.Tools {
@@ -191,6 +196,9 @@ func TestLiveStdioScopedTools(t *testing.T) {
 		{"gomar_read_knowledge_article", map[string]any{"entity_id": 20, "outlet_id": 10, "article_id": 5}, `"body":"Texto de prueba"`, false},
 		{"gomar_stock_alert_summary", map[string]any{"entity_id": 20, "outlet_id": 10}, `"tracked":36`, false},
 		{"gomar_list_stock", map[string]any{"entity_id": 20, "outlet_id": 10, "after_product_id": 1}, `"balance":7`, false},
+		{"gomar_read_stock_product", map[string]any{"entity_id": 20, "outlet_id": 10, "product_id": 2}, `"alert":"low"`, false},
+		{"gomar_read_stock_product", map[string]any{"entity_id": 20, "outlet_id": 11, "product_id": 2}, "permisos", true},
+		{"gomar_read_stock_product", map[string]any{"entity_id": 21, "outlet_id": 10, "product_id": 2}, "permisos", true},
 		{"gomar_delivery_status_summary", map[string]any{"entity_id": 20, "outlet_id": 10}, `"accepted":3`, false},
 		{"gomar_list_recent_delivery", map[string]any{"entity_id": 20, "outlet_id": 10}, `"status":"received"`, false},
 		{"gomar_payables_summary", map[string]any{"entity_id": 20, "outlet_id": 10}, `"outstanding_minor":55`, false},
@@ -245,7 +253,7 @@ func TestLiveStdioScopedTools(t *testing.T) {
 			t.Fatalf("unexpected result for %s: %s", test.name, wire)
 		}
 	}
-	if requests.Load() != 37 {
+	if requests.Load() != 40 {
 		t.Fatalf("wrong number of requests: %d", requests.Load())
 	}
 	if err := session.Close(); err != nil {

@@ -51,9 +51,7 @@ func (a *app) registerStock(add func(string, string, http.HandlerFunc), enabled 
 			next = a.lockOutletForOperation(next)
 		}
 		handler := a.scopedRequest(capability, func(r *http.Request, tx *sql.Tx, m entityMembership, raw []byte) (int, any, error) {
-			switch m.role {
-			case "administration", "purchasing", "accounting":
-			default:
+			if !stockReadRole(m.role) {
 				return 0, nil, forbiddenRole
 			}
 			return next(r, tx, m, raw)
@@ -79,6 +77,35 @@ func stockOutletActive(ctx context.Context, tx *sql.Tx, outlet int64) (bool, err
 	return enabled, err
 }
 
+// Include disabled rows, but never imply configuration for catalog-only products.
+const outletStockStateColumns = `t.enabled,t.minimum,
+        COALESCE((SELECT CAST(SUM(delta) AS BIGINT) FROM stock_movements x
+          WHERE x.outlet_id=t.outlet_id AND x.product_id=t.product_id),0)`
+const outletStockRows = ` FROM stock_products t JOIN pos_products p ON p.id=t.product_id AND p.outlet_id=t.outlet_id
+        JOIN pos_product_versions v ON v.product_id=p.id AND v.outlet_id=p.outlet_id AND v.revision=p.current_revision
+        WHERE t.outlet_id=$1`
+const currentOutletStock = `SELECT t.product_id,v.name,` + outletStockStateColumns + outletStockRows
+
+func stockAlert(outletEnabled, productEnabled bool, balance, minimum int64) string {
+	if outletEnabled && productEnabled {
+		if balance < 0 {
+			return "negative"
+		}
+		if balance <= minimum {
+			return "low"
+		}
+	}
+	return ""
+}
+
+func stockReadRole(role string) bool {
+	switch role {
+	case "administration", "purchasing", "accounting":
+		return true
+	}
+	return false
+}
+
 func listStock(r *http.Request, tx *sql.Tx, m entityMembership, _ []byte) (int, any, error) {
 	ctx := r.Context()
 	outlet, err := posOutlet(r, tx, m)
@@ -89,11 +116,7 @@ func listStock(r *http.Request, tx *sql.Tx, m entityMembership, _ []byte) (int, 
 	if err != nil {
 		return 0, nil, err
 	}
-	rows, err := tx.QueryContext(ctx, `SELECT t.product_id,v.name,t.enabled,t.minimum,
-        coalesce((SELECT CAST(sum(delta) AS BIGINT) FROM stock_movements x WHERE x.outlet_id=t.outlet_id AND x.product_id=t.product_id),0)
-        FROM stock_products t JOIN pos_products p ON p.id=t.product_id AND p.outlet_id=t.outlet_id
-        JOIN pos_product_versions v ON v.product_id=p.id AND v.outlet_id=p.outlet_id AND v.revision=p.current_revision
-        WHERE t.outlet_id=$1 ORDER BY t.product_id LIMIT $2`, outlet, posCatalogMax)
+	rows, err := tx.QueryContext(ctx, currentOutletStock+` ORDER BY t.product_id LIMIT $2`, outlet, posCatalogMax)
 	if err != nil {
 		return 0, nil, err
 	}
@@ -104,12 +127,11 @@ func listStock(r *http.Request, tx *sql.Tx, m entityMembership, _ []byte) (int, 
 		if err := rows.Scan(&p.ID, &p.Name, &p.Enabled, &p.Minimum, &p.Balance); err != nil {
 			return 0, nil, err
 		}
-		if active && p.Enabled {
-			if p.Balance < 0 {
-				p.Warning = "negativo"
-			} else if p.Balance <= p.Minimum {
-				p.Warning = "bajo"
-			}
+		switch stockAlert(active, p.Enabled, p.Balance, p.Minimum) {
+		case "negative":
+			p.Warning = "negativo"
+		case "low":
+			p.Warning = "bajo"
 		}
 		products = append(products, p)
 	}

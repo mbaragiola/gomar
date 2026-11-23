@@ -26,6 +26,11 @@ type stockArgs struct {
 	AfterProductID *int64 `json:"after_product_id,omitempty" jsonschema:"Cursor next_product_id de la página anterior; omitir al empezar"`
 }
 
+type stockProductArgs struct {
+	outletArgs
+	ProductID int64 `json:"product_id" jsonschema:"ID exacto de gomar_list_stock o gomar_pos_catalog de esta sucursal"`
+}
+
 func addWorkspaceTools(server *mcp.Server, client *mcpclient.Client) {
 	readTool(server, "gomar_search_knowledge", "Buscá artículos de la base de conocimiento en una sucursal autorizada. Devuelve títulos, no el contenido. Si hay más de 30 resultados, afiná la búsqueda.", func(ctx context.Context, in knowledgeArgs) (mcpclient.KnowledgeList, error) {
 		return client.Knowledge(ctx, in.EntityID, in.OutletID, in.Search)
@@ -35,6 +40,9 @@ func addWorkspaceTools(server *mcp.Server, client *mcpclient.Client) {
 	})
 	readTool(server, "gomar_list_stock", "Consultá el saldo y mínimo de productos de la sucursal autorizada. Devuelve hasta 30 productos; usá next_product_id para pedir la página siguiente. No cambia el stock.", func(ctx context.Context, in stockArgs) (mcpclient.Stock, error) {
 		return client.Stock(ctx, in.EntityID, in.OutletID, in.AfterProductID)
+	})
+	readTool(server, "gomar_read_stock_product", "Consultá el saldo y mínimo de un producto con stock configurado, por ID exacto de esta sucursal. Indica si el control del local y del producto están activos y si el saldo es negativo o bajo. No cambia el stock.", func(ctx context.Context, in stockProductArgs) (mcpclient.StockProductDetails, error) {
+		return client.ReadStockProduct(ctx, in.EntityID, in.OutletID, in.ProductID)
 	})
 	readTool(server, "gomar_stock_alert_summary", "Contá los productos con control de stock activo en una sucursal autorizada: saldo negativo, saldo no negativo en o debajo del mínimo, y saldo por encima del mínimo. Incluye todo el stock de esa sucursal, no solo la primera página. Si el control del local está desactivado no hay estados que contar. No devuelve productos ni saldos individuales.", func(ctx context.Context, in outletArgs) (mcpclient.StockAlertSummary, error) {
 		return client.StockAlerts(ctx, in.EntityID, in.OutletID)

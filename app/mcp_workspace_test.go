@@ -163,6 +163,50 @@ func TestPostgresMCPWorkspaceReadsKeepOutletAndRoleScope(t *testing.T) {
 		Products []stockProduct `json:"productos"`
 	}
 	decode(invoke(mux, "GET", "/api/v1/entities/1/outlets/1/pos/stock", "", "", true, 200).Body.String(), &nativeStock)
+	for _, id := range []int64{1, 2, 4, 33} {
+		var item mcpclient.StockProductDetails
+		raw := read(fmt.Sprintf("/stock/%d", id), 200)
+		decode(raw, &item)
+		p := nativeStock.Products[id-1]
+		warning := map[string]string{"negativo": "negative", "bajo": "low"}[p.Warning]
+		if item != (mcpclient.StockProductDetails{ID: p.ID, OutletEnabled: nativeStock.Enabled,
+			ProductEnabled: p.Enabled, Minimum: p.Minimum, Balance: p.Balance, Alert: warning}) ||
+			strings.Contains(raw, "name") || strings.Contains(raw, "sentinel") {
+			t.Fatal("exact read disagrees with native stock or exposes non-stock fields", raw)
+		}
+	}
+	if _, err := db.ExecContext(ctx, `
+ INSERT INTO pos_products(id,outlet_id,current_revision) VALUES(100,1,1),(101,2,1);
+ INSERT INTO pos_product_versions(product_id,outlet_id,revision,name,price_minor,active)
+ VALUES(100,1,1,'private unconfigured',100,true),(101,2,1,'private other branch',100,true);
+ INSERT INTO stock_outlets(outlet_id,enabled) VALUES(2,FALSE);
+ INSERT INTO stock_products(outlet_id,product_id,enabled,minimum) VALUES(2,101,true,12);`); err != nil {
+		t.Fatal(err)
+	}
+	if missing := read("/stock/999", 404); missing != read("/stock/100", 404) || missing != read("/stock/101", 404) || missing != read("/stock/0", 404) {
+		t.Fatal("a foreign or unconfigured product is distinguishable from a missing one")
+	}
+	read("/stock/1?extra=1", 422)
+	read("/stock/1?", 422)
+	var outside mcpclient.StockProductDetails
+	decode(invoke(mux, "GET", "/api/v1/mcp/entities/1/outlets/2/stock/101", "", broader, false, 200).Body.String(), &outside)
+	if outside != (mcpclient.StockProductDetails{ID: 101, OutletEnabled: false, ProductEnabled: true, Minimum: 12}) {
+		t.Fatal("disabled outlet must suppress alert but preserve product state", outside)
+	}
+	for _, role := range []string{"purchasing", "accounting", "read_only"} {
+		if _, err := db.ExecContext(ctx, `UPDATE memberships SET role=$1 WHERE id=1`, role); err != nil {
+			t.Fatal(err)
+		}
+		status := 200
+		if role == "read_only" {
+			status = 403
+		}
+		read("/stock/1", status)
+		invoke(mux, "GET", "/api/v1/entities/1/outlets/1/pos/stock", "", "", true, status)
+	}
+	if _, err := db.ExecContext(ctx, `UPDATE memberships SET role='administration' WHERE id=1`); err != nil {
+		t.Fatal(err)
+	}
 	compare := mcpclient.StockAlertSummary{Enabled: nativeStock.Enabled}
 	for _, product := range nativeStock.Products {
 		if !product.Enabled {
@@ -233,13 +277,19 @@ func TestPostgresMCPWorkspaceReadsKeepOutletAndRoleScope(t *testing.T) {
 		ap.Totals[0].OverdueMinor != 10250 || ap.Totals[1].OutstandingMinor != 275 || ap.Totals[1].OverdueMinor != 0 || strings.Contains(report, "supplier") {
 		t.Fatal("unexpected scoped payables")
 	}
-	for _, suffix := range []string{"/knowledge", "/knowledge/1", "/stock", "/stock-alert-summary", "/delivery-orders", "/delivery-status-summary", "/payables-summary"} {
+	for _, suffix := range []string{"/knowledge", "/knowledge/1", "/stock", "/stock/1", "/stock-alert-summary", "/delivery-orders", "/delivery-status-summary", "/payables-summary"} {
 		invoke(mux, "GET", "/api/v1/mcp/entities/1/outlets/2"+suffix, "", token, false, 404)
 		invoke(mux, "GET", "/api/v1/mcp/entities/1/outlets/3"+suffix, "", broader, false, 404)
 		invoke(mux, "GET", "/api/v1/mcp/entities/2/outlets/4"+suffix, "", token, false, 404)
 	}
 	noFeature := (&app{db: db, host: "example.com", enableMCP: true, mcpClock: a.mcpClock}).routes()
 	invoke(noFeature, "GET", base+"/stock", "", token, false, 404)
+	invoke(noFeature, "GET", base+"/stock/1", "", token, false, 404)
+	for _, enabled := range []struct{ pos, stock bool }{{true, false}, {false, true}} {
+		app := (&app{db: db, host: "example.com", enableMCP: true, enablePOS: enabled.pos, enableStock: enabled.stock, mcpClock: a.mcpClock}).routes()
+		invoke(app, "GET", base+"/stock/1", "", token, false, 404)
+	}
+	invoke(mux, "GET", base+"/stock/1", "", "", false, 401)
 	invoke(noFeature, "GET", base+"/stock-alert-summary", "", token, false, 404)
 	invoke(noFeature, "GET", base+"/delivery-orders", "", token, false, 404)
 	invoke(noFeature, "GET", base+"/delivery-status-summary", "", token, false, 404)
