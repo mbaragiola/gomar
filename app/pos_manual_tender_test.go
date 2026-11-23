@@ -1,8 +1,10 @@
 package main
 
 import (
+	"database/sql"
 	"encoding/json"
 	"fmt"
+	"net/http"
 	"net/http/httptest"
 	"reflect"
 	"testing"
@@ -22,12 +24,19 @@ INSERT INTO outlets(id,entity_id,name,active) VALUES (85,85,'QA one',TRUE),(86,8
 INSERT INTO memberships(id,user_id,entity_id,role,active) VALUES
  (85,85,85,'administration',TRUE),(86,86,85,'purchasing',TRUE),(87,87,85,'read_only',TRUE);
 INSERT INTO outlet_grants VALUES (85,85),(86,85),(87,85);
+INSERT INTO pos_products(id,outlet_id,current_revision) VALUES (81,85,2);
+INSERT INTO pos_product_versions(product_id,outlet_id,revision,name,price_minor,active) VALUES
+ (81,85,1,'Original price',1250,TRUE),(81,85,2,'New price',1400,TRUE);
+INSERT INTO stock_outlets VALUES (85,TRUE);
+INSERT INTO stock_products(outlet_id,product_id,enabled,minimum) VALUES (85,81,TRUE,0);
 WITH checks AS (
  INSERT INTO pos_table_checks(outlet_id,table_number,actor_id,request_id,request_fingerprint,total_minor)
  SELECT x.outlet,x.table_no,85,'00112233-4455-4677-8899-aabbccdde00' || x.table_no::text,decode(repeat('00',32),'hex'),1250
- FROM (VALUES (85,1),(85,2),(85,3),(85,4),(86,1),(87,1)) x(outlet,table_no)
+ FROM (VALUES (85,1),(85,2),(85,3),(85,4),(85,5),(86,1),(87,1)) x(outlet,table_no)
  RETURNING id,outlet_id,table_number)
-INSERT INTO pos_table_check_slots(check_id,outlet_id,table_number) SELECT id,outlet_id,table_number FROM checks;`); err != nil {
+INSERT INTO pos_table_check_slots(check_id,outlet_id,table_number) SELECT id,outlet_id,table_number FROM checks;
+INSERT INTO pos_table_check_items(check_id,outlet_id,product_id,revision,quantity)
+ SELECT check_id,outlet_id,81,1,1 FROM pos_table_check_slots WHERE outlet_id=85 AND table_number=5;`); err != nil {
 		t.Fatal(err)
 	}
 	findCheck := func(table int) string {
@@ -41,7 +50,7 @@ INSERT INTO pos_table_check_slots(check_id,outlet_id,table_number) SELECT id,out
 	m := entityMembership{entity: entity{ID: 85}, id: 85, userID: 85, role: "administration"}
 	peer := entityMembership{entity: entity{ID: 85}, id: 86, userID: 86, role: "purchasing"}
 	reader := entityMembership{entity: entity{ID: 85}, id: 87, userID: 87, role: "read_only"}
-	a := app{db: db, enablePOS: true, enablePOSTableChecks: true, enablePOSManualTender: true}
+	a := app{db: db, enablePOS: true, enablePOSTableChecks: true, enablePOSManualTender: true, enablePOSTableFinalization: true, enableStock: true}
 	off := app{db: db, host: "example.com", enablePOS: true, enablePOSTableChecks: true}
 	for _, method := range []string{"GET", "POST"} {
 		res := httptest.NewRecorder()
@@ -71,6 +80,12 @@ INSERT INTO pos_table_check_slots(check_id,outlet_id,table_number) SELECT id,out
 			handler = a.readPOSTender
 		case "write":
 			handler = a.lockPOSTenderForWrite(a.writePOSTender)
+		case "finalize":
+			handler = a.lockPOSTenderForWrite(a.finalizePOSTable)
+		case "legacy":
+			handler = a.lockOutletForOperation(func(r *http.Request, tx *sql.Tx, m entityMembership, raw []byte) (int, any, error) {
+				return postPOSSale(r, tx, m, raw, false)
+			})
 		case "retire":
 			off := app{db: db, enablePOS: true, enablePOSTableChecks: true}
 			handler = off.lockOutletForOperation(off.retirePOSTableCheck)
@@ -198,4 +213,111 @@ INSERT INTO pos_table_check_slots(check_id,outlet_id,table_number) SELECT id,out
 	if err != nil || len(b) == 0 {
 		t.Fatalf("tender response JSON: %s %v", b, err)
 	}
+
+	reqID := func(suffix int) string { return fmt.Sprintf("00000000-0000-4000-8000-%012x", suffix) }
+	finalBody := func(check, rev string, suffix int) string {
+		return fmt.Sprintf(`{"id_cuenta":%q,"revision_pagos":%q,"id_solicitud":%q}`, check, rev, reqID(suffix))
+	}
+	legacy := func(suffix int, method string) string {
+		return fmt.Sprintf(`{"id_solicitud":%q,"actor_id":85,"items":[{"producto_id":81,"revision":1,"cantidad":1}]%s}`, reqID(suffix), method)
+	}
+	id5 := findCheck(5)
+	fail(call("finalize", m, 85, 5, finalBody(id5, "1", 40)), posTableNotCovered)
+	if got := call("write", m, 85, 5, record(id5, 41, 500, "efectivo")); got.err != nil {
+		t.Fatal(got.err)
+	}
+	if got := call("write", m, 85, 5, record(id5, 42, 750, "debito")); got.err != nil {
+		t.Fatal(got.err)
+	}
+	history := func() []posTenderEvent { return call("read", m, 85, 5, "").body.(posTenderView).Events }
+	h := history()
+	old := h[len(h)-1].ID
+	if got := call("write", m, 85, 5, void(id5, 43, h[0].ID, "medio_incorrecto")); got.err != nil {
+		t.Fatal(got.err)
+	}
+	if got := call("write", m, 85, 5, record(id5, 44, 500, "transferencia")); got.err != nil {
+		t.Fatal(got.err)
+	}
+	h = history()
+	rev := h[len(h)-1].ID
+	fail(call("finalize", m, 85, 5, finalBody(id5, old, 46)), posTableTenderConflict)
+	body := finalBody(id5, rev, 46)
+	fail(call("finalize", reader, 85, 5, body), forbiddenRole)
+	fail(call("finalize", m, 86, 5, body), missingOutlet)
+	fail(call("finalize", m, 87, 5, body), missingOutlet)
+	employee := m
+	employee.employee = true
+	fail(call("finalize", employee, 85, 5, body), forbiddenRole)
+	fail(call("finalize", m, 85, 5, finalBody(id5, rev, 44)), posTableTenderConflict)
+
+	// Fault after inserting the sale and finalization rows: no partial stock,
+	// finalized sale, or release may survive a rollback.
+	if _, err := db.ExecContext(ctx, `CREATE FUNCTION qa_reject_stock() RETURNS trigger LANGUAGE plpgsql AS $$BEGIN RAISE EXCEPTION 'fixture refuses stock'; END$$;
+ CREATE TRIGGER qa_reject_stock BEFORE INSERT ON stock_movements FOR EACH ROW EXECUTE FUNCTION qa_reject_stock();`); err != nil {
+		t.Fatal(err)
+	}
+	if failed := call("finalize", m, 85, 5, body); failed.err == nil {
+		t.Fatal("stock fixture did not interrupt finalization")
+	}
+	var counts string
+	count := func() {
+		t.Helper()
+		if err := db.QueryRowContext(ctx, `SELECT (SELECT count(*) FROM pos_sales)||'|'||
+ (SELECT count(*) FROM pos_table_finalizations)||'|'||(SELECT count(*) FROM stock_movements)||'|'||
+ (SELECT count(*) FROM pos_table_check_slots WHERE outlet_id=85 AND table_number=5)`).Scan(&counts); err != nil {
+			t.Fatal(err)
+		}
+	}
+	count()
+	if counts != "0|0|0|1" {
+		t.Fatalf("failed finalization mutated state: %s", counts)
+	}
+	if _, err := db.ExecContext(ctx, `DROP TRIGGER qa_reject_stock ON stock_movements; DROP FUNCTION qa_reject_stock();`); err != nil {
+		t.Fatal(err)
+	}
+	for range 2 {
+		go func() { concurrent <- call("finalize", m, 85, 5, body) }()
+	}
+	x, y := <-concurrent, <-concurrent
+	if y.status == 201 {
+		x, y = y, x
+	}
+	if x.status != 201 || y.status != 200 || x.err != nil || y.err != nil || !reflect.DeepEqual(x.body, y.body) {
+		t.Fatalf("two same-key confirms: %+v %+v", x, y)
+	}
+	count()
+	if counts != "1|1|1|0" {
+		t.Fatalf("duplicate finalization effects: %s", counts)
+	}
+	fail(call("finalize", m, 85, 5, finalBody(id5, rev, 47)), posTableCheckMissing)
+	fail(call("finalize", peer, 85, 5, body), forbiddenRole)
+	if _, err := db.ExecContext(ctx, "UPDATE memberships SET role='purchasing' WHERE id=86"); err != nil {
+		t.Fatal(err)
+	}
+	fail(call("finalize", peer, 85, 5, body), posConflict)
+	fail(call("legacy", m, 85, 5, legacy(48, `,"metodo_pago":"mixto"`)), badInput)
+	fail(call("legacy", m, 85, 5, legacy(46, "")), posConflict)
+	var method, breakdown string
+	if err := db.QueryRowContext(ctx, `SELECT s.payment_method,string_agg(e.method||':'||e.amount_minor,',' ORDER BY e.id)
+ FROM pos_table_finalizations f JOIN pos_sales s ON s.id=f.sale_id
+ JOIN pos_table_finalization_legs l ON l.check_id=f.check_id JOIN pos_table_tender_events e ON e.id=l.tender_id
+ GROUP BY s.payment_method`).Scan(&method, &breakdown); err != nil || method != "mixto" || breakdown != "debito:750,transferencia:500" {
+		t.Fatalf("wrong split: %s %s %v", method, breakdown, err)
+	}
+	if _, err := db.ExecContext(ctx, `WITH c AS (
+ INSERT INTO pos_table_checks(outlet_id,table_number,actor_id,request_id,request_fingerprint,total_minor)
+ VALUES(85,5,85,'00000000-0000-4000-8000-000000000099',decode(repeat('00',32),'hex'),1250)
+ RETURNING id,outlet_id,table_number)
+ INSERT INTO pos_table_check_slots(check_id,outlet_id,table_number) SELECT id,outlet_id,table_number FROM c`); err != nil {
+		t.Fatal(err)
+	}
+	newID := findCheck(5)
+	if retry := call("finalize", m, 85, 5, body); retry.err != nil || !reflect.DeepEqual(retry.body, x.body) || findCheck(5) != newID {
+		t.Fatalf("old retry did not preserve replacement: %+v", retry)
+	}
+	fail(call("write", m, 85, 5, record(newID, 46, 500, "efectivo")), posTableTenderConflict)
+	if got := call("legacy", m, 85, 5, legacy(49, "")); got.err != nil || got.status != 201 || got.body.(posSale).PaymentMethod != "efectivo" {
+		t.Fatalf("older offline cash contract: %+v", got)
+	}
+
 }

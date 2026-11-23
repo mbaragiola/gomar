@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"strconv"
 
+	"github.com/mbaragiola/gomar/app/internal/postender"
 	"github.com/mbaragiola/gomar/app/internal/tablecheck"
 )
 
@@ -60,14 +61,16 @@ func (a *app) readPOSTableCheck(r *http.Request, tx *sql.Tx, m entityMembership,
 
 func loadPOSTableCheck(ctx context.Context, tx *sql.Tx, outlet, number, id int64) (posTableCheck, error) {
 	row := posTableCheck{ID: strconv.FormatInt(id, 10), State: "sin_cobro", Table: number, Items: []posSaleItem{}}
-	var retired, hasTender bool
-	err := tx.QueryRowContext(ctx, `SELECT c.total_minor,r.check_id IS NOT NULL, EXISTS (SELECT 1 FROM pos_table_tender_events e WHERE e.outlet_id=c.outlet_id AND e.check_id=c.id)
+	var retired, finalized, hasTender bool
+	err := tx.QueryRowContext(ctx, `SELECT c.total_minor,r.check_id IS NOT NULL, EXISTS(SELECT 1 FROM pos_table_finalizations f WHERE f.check_id=c.id), EXISTS (SELECT 1 FROM pos_table_tender_events e WHERE e.outlet_id=c.outlet_id AND e.check_id=c.id)
  FROM pos_table_checks c LEFT JOIN pos_table_check_retirements r ON r.check_id=c.id
- WHERE c.outlet_id=$1 AND c.table_number=$2 AND c.id=$3`, outlet, number, id).Scan(&row.Total, &retired, &hasTender)
+ WHERE c.outlet_id=$1 AND c.table_number=$2 AND c.id=$3`, outlet, number, id).Scan(&row.Total, &retired, &finalized, &hasTender)
 	if err != nil {
 		return posTableCheck{}, err
 	}
-	if retired {
+	if finalized {
+		row.State = "finalizada"
+	} else if retired {
 		row.State = "retirada"
 	} else if hasTender {
 		row.State = "con_registros"
@@ -196,7 +199,7 @@ func readPOSTableCurrentCatalog(ctx context.Context, tx *sql.Tx, outlet int64, i
 	return catalog, rows.Err()
 }
 
-func mcpPOSTableCheck(r *http.Request, tx *sql.Tx, s mcpTokenScope) (any, error) {
+func (a *app) mcpPOSTableCheck(r *http.Request, tx *sql.Tx, s mcpTokenScope) (any, error) {
 	if !posSellingRole(s.role) {
 		return nil, forbiddenRole
 	}
@@ -211,10 +214,10 @@ func mcpPOSTableCheck(r *http.Request, tx *sql.Tx, s mcpTokenScope) (any, error)
 	if err != nil || number < 1 || number > tablecheck.MaxTable || strconv.FormatInt(number, 10) != r.PathValue("table") || r.URL.RawQuery != "" {
 		return nil, badInput
 	}
-	var total int64
+	var total, check int64
 	var hasTender bool
-	err = tx.QueryRowContext(r.Context(), `SELECT c.total_minor, EXISTS (SELECT 1 FROM pos_table_tender_events e WHERE e.outlet_id=s.outlet_id AND e.check_id=s.check_id) FROM pos_table_check_slots s JOIN pos_table_checks c ON c.id=s.check_id WHERE s.outlet_id=$1 AND s.table_number=$2`,
-		outlet, number).Scan(&total, &hasTender)
+	err = tx.QueryRowContext(r.Context(), `SELECT c.total_minor,c.id, EXISTS (SELECT 1 FROM pos_table_tender_events e WHERE e.outlet_id=s.outlet_id AND e.check_id=s.check_id) FROM pos_table_check_slots s JOIN pos_table_checks c ON c.id=s.check_id WHERE s.outlet_id=$1 AND s.table_number=$2`,
+		outlet, number).Scan(&total, &check, &hasTender)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, posTableCheckMissing
 	}
@@ -224,6 +227,15 @@ func mcpPOSTableCheck(r *http.Request, tx *sql.Tx, s mcpTokenScope) (any, error)
 	state := "untendered"
 	if hasTender {
 		state = "manual_records"
+		if a.enablePOSManualTender && a.enablePOSTableFinalization {
+			j, _, _, err := loadPOSTenderHistory(r.Context(), tx, posTenderTarget{scope: postender.Scope{EntityID: s.ID, OutletID: outlet, CheckID: check}, total: total})
+			if err != nil {
+				return nil, err
+			}
+			if j.Balance().OutstandingMinor == 0 {
+				state = "ready_for_review"
+			}
+		}
 	}
 	return struct {
 		Table int64  `json:"table_number"`

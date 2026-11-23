@@ -10,8 +10,9 @@ with_barcode=false
 with_pos_prebill=false
 with_pos_table_checks=false
 with_manual_tender=false
+with_finalization=false
 usage() {
-  printf 'Usage: %s [--with-local-checks] [--with-installed-codex] [--with-purchases] [--with-bookings-wiki] [--with-pos-prebill] [--with-barcode] [--with-pos-table-checks] [--with-manual-tender]\n' "$0" >&2
+  printf 'Usage: %s [--with-local-checks] [--with-installed-codex] [--with-purchases] [--with-bookings-wiki] [--with-pos-prebill] [--with-barcode] [--with-pos-table-checks] [--with-manual-tender] [--with-table-finalization]\n' "$0" >&2
   exit 2
 }
 while (( $# )); do
@@ -40,6 +41,9 @@ while (( $# )); do
     --with-manual-tender)
       "$with_manual_tender" && usage
       with_manual_tender=true ;;
+    --with-table-finalization)
+      "$with_finalization" && usage
+      with_finalization=true ;;
     *) usage ;;
   esac
   shift
@@ -99,7 +103,7 @@ go -C "$repo/app" build -buildvcs=false -o "$tmp/gomar-mcp" ./cmd/gomar-mcp
 # initdb, Chrome, the app, and MCP run with no external network. PostgreSQL
 # listens only on a private Unix socket, so cleanup can stop it outside bwrap.
 timeout 150s "${isolated[@]}" \
-  "$python" -B "$repo/scripts/qa/mcp_stock_journey.py" "$tmp" "$postgres_bin" "$chrome" "$codex" "$with_purchases" "$with_bookings_wiki" "$with_pos_prebill" "$with_barcode" "$with_pos_table_checks" "$with_manual_tender" >"$tmp/report.log"
+  "$python" -B "$repo/scripts/qa/mcp_stock_journey.py" "$tmp" "$postgres_bin" "$chrome" "$codex" "$with_purchases" "$with_bookings_wiki" "$with_pos_prebill" "$with_barcode" "$with_pos_table_checks" "$with_manual_tender" "$with_finalization" >"$tmp/report.log"
 report="$(cat "$tmp/report.log")"
 cleanup
 trap - EXIT

@@ -5,7 +5,7 @@ from pos_prebill_checks import sale_count, use_fixture_connection
 from pos_table_checks import scope, short_snapshot, tool
 
 
-def check_manual_tender(browser, login, origin, psql, issue, connection):
+def check_manual_tender(browser, login, origin, psql, issue, connection, with_finalization=False):
     table_number = 8
     query = {**scope, "table_number": table_number}
     handoff = f"/pos#entity=1&outlet=1&table={table_number}"
@@ -47,7 +47,7 @@ def check_manual_tender(browser, login, origin, psql, issue, connection):
         expect(tender.get_by_role("button", name="Anotar importe")).to_have_count(0)
         expect(panel.get_by_role("button", name="Retirar cuenta sin cobro")).to_have_count(0)
         status = mcp(tool, query)
-        assert status == {"table_number": table_number, "total_minor": 1500, "state": "manual_records", "handoff_url": handoff}
+        assert status == {"table_number": table_number, "total_minor": 1500, "state": "ready_for_review" if with_finalization else "manual_records", "handoff_url": handoff}
         mcp(tool, {**query, "outlet_id": 2}, denied=True)
         mcp(tool, {**query, "entity_id": 2}, denied=True)
     with connection(reader_key) as mcp:

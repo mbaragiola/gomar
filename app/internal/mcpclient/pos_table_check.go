@@ -25,7 +25,7 @@ func (c *Client) ReadPOSTableCheck(ctx context.Context, entity, outlet, table in
 		return POSTableCheck{}, err
 	}
 	if result.TableNumber != table || result.TotalMinor < 1 || result.TotalMinor > tablecheck.MaxTotalMinor ||
-		(result.State != "untendered" && result.State != "manual_records") || result.HandoffURL != fmt.Sprintf("/pos#entity=%d&outlet=%d&table=%d", entity, outlet, table) {
+		(result.State != "untendered" && result.State != "manual_records" && result.State != "ready_for_review") || result.HandoffURL != fmt.Sprintf("/pos#entity=%d&outlet=%d&table=%d", entity, outlet, table) {
 		return POSTableCheck{}, invalidResponse
 	}
 	return result, nil

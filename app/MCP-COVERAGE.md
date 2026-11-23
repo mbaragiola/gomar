@@ -333,7 +333,7 @@ or issues a fiscal document. A check with any notes cannot be retired,
 even if all notes were corrected or the preview flag is turned off.
 
 `gomar_read_pos_table_check` reports `manual_records` when a saved check
-has tender history. This is not evidence of a paid balance. It gives the
+has tender history unless finalization is enabled and the check is ready for review. This is not evidence of a paid balance. It gives the
 same branch-pinned native link as an untendered check; open it, sign in,
 enable that branch's register, and consult the table. If the preview is
 disabled, status still warns about the existing history. Only the scoped
@@ -343,3 +343,21 @@ instructions or inspect the journal; the link carries no credentials or
 tender identifiers. Role and branch restrictions apply on both sides.
 Managed employee sessions do not yet have the saved-table or tender write
 actions and do not see those controls.
+
+### Finalize a covered saved table check
+
+With the opt-in `-enable-pos-table-finalization` flag (requires POS, saved
+table checks and manual tender), `gomar_read_pos_table_check` reports
+`ready_for_review` when all of the saved check's amount is covered by active
+manual records. This is not proof of payment. The pinned business and branch
+and selling role still apply, and no payment details are returned.
+
+Open **Caja** from the scoped handoff, consult the table, and review the
+payment breakdown. Only the authorized clerk in Caja can confirm the exact
+check and version they reviewed. This action stays native-only because the
+clerk must verify payment handled outside Gomar and confirm the exact
+breakdown. Opening the link never records a sale. A confirmation records
+one POS sale, counts it once in sales summaries, and releases the table.
+The normal optional stock rules apply. No provider charge, refund, fiscal
+document or fiscal cancellation is made. The ordinary single-method
+offline sales contract does not change.

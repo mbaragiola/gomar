@@ -47,6 +47,7 @@ type app struct {
 	enablePOS                                 bool
 	enablePOSTableChecks                      bool
 	enablePOSManualTender                     bool
+	enablePOSTableFinalization                bool
 	enableMCP                                 bool
 	enableMCPWikiProposals                    bool
 	enableMCPDocumentProposals                bool

@@ -11,11 +11,12 @@ const props = defineProps<{
   allowed: () => boolean
   formatMoney: (amount: number) => string
   allowTender?: boolean
+  allowFinalization: boolean
 }>()
 
 interface Check {
   id_cuenta: string
-  estado: "sin_cobro" | "retirada" | "con_registros"
+  estado: "sin_cobro" | "retirada" | "con_registros" | "finalizada"
   mesa: number
   total_centavos: number
   items: Line[]
@@ -77,12 +78,12 @@ async function act(action: "save" | "read" | "retire") {
     })
     if (!active || next.signal.aborted || !props.allowed() || table.value !== picked) return
     if (response.mesa !== picked || !Number.isSafeInteger(response.total_centavos) || response.total_centavos < 1
-      || typeof response.id_cuenta !== 'string' || !/^[1-9][0-9]{0,18}$/.test(response.id_cuenta) || !['sin_cobro', 'retirada', 'con_registros'].includes(response.estado)
+      || typeof response.id_cuenta !== 'string' || !/^[1-9][0-9]{0,18}$/.test(response.id_cuenta) || !['sin_cobro', 'retirada', 'con_registros', 'finalizada'].includes(response.estado)
       || retire && (response.id_cuenta !== reviewed?.id_cuenta || response.estado !== 'retirada')
       || !Array.isArray(response.items) || !response.items.length) throw new Error('Respuesta no válida')
     // A confirmed retirement ends the old save intent. A later deliberate
     // click can save the same cart for the next use of this table.
-    if ((save || retire) && response.estado === 'retirada') retry = undefined
+    if ((save || retire) && ['retirada', 'finalizada'].includes(response.estado)) retry = undefined
     loaded.value = response
   } catch (err) {
     if (!active || next.signal.aborted || !props.allowed() || table.value !== picked) return
@@ -122,6 +123,7 @@ onUnmounted(() => {
     <p v-if="error" role="alert" class="error">{{ error }}</p>
     <div v-if="loaded && online" aria-live="polite">
       <h3 v-if="loaded.estado === 'retirada'">Cuenta retirada: mesa {{ loaded.mesa }}</h3>
+      <h3 v-else-if="loaded.estado === 'finalizada'">Venta registrada: mesa {{ loaded.mesa }}</h3>
       <h3 v-else>Cuenta guardada: mesa {{ loaded.mesa }}</h3>
       <ul aria-label="Productos de la cuenta guardada">
         <li v-for="item in loaded.items" :key="item.producto_id">{{ item.cantidad }} × {{ item.nombre }} · {{ formatMoney(item.precio_centavos * item.cantidad) }}</li>
@@ -129,11 +131,14 @@ onUnmounted(() => {
       <strong>Total de la cuenta: {{ formatMoney(loaded.total_centavos) }}</strong>
       <p>No es una factura ni acredita un pago.</p>
       <ManualTender
-        v-if="allowTender && loaded.estado !== 'retirada'"
+        v-if="allowTender && (loaded.estado === 'sin_cobro' || loaded.estado === 'con_registros')"
         :key="loaded.id_cuenta" :scope="scope" :table="loaded.mesa" :check="loaded.id_cuenta"
         :total="loaded.total_centavos" :allowed="allowed" :format-money="formatMoney"
+        :allow-finalization="allowFinalization" :cart-empty="cart.length === 0"
         @has-history="loaded.estado = 'con_registros'"
+        @finalized="loaded.estado = 'finalizada'; retry = undefined"
       />
+      <p v-if="loaded.estado === 'finalizada'" role="status">La mesa quedó libre. Esta acción no emite una factura.</p>
       <p v-if="loaded.estado === 'con_registros'">No se puede retirar una cuenta con registros de pago.</p>
       <template v-if="loaded.estado === 'sin_cobro'">
         <button v-if="!retiring" type="button" :disabled="busy" @click="retiring = true">Retirar cuenta sin cobro</button>
