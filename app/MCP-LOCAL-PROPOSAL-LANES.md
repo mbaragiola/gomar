@@ -73,3 +73,20 @@ two flags. This uses direct tool calls with temporary client settings,
 without a real login, prompt, or model inference. It tests Codex transport
 and tool results, not Claude or how a model chooses tools. It fails rather
 than falling back if the installed client cannot run the check.
+
+
+### Representative staff acceptance
+
+Use the same fixture to check stock and one purchases workflow:
+
+```sh
+bash scripts/qa-mcp-stock-journey.sh --with-purchases --with-installed-codex
+```
+
+The stock journey checks browser approval, refusal and revocation. The
+purchase check uses the same outlet-pinned connection to find ambiguous
+printed references and drafts, then follows the eligible document's native
+handoff. Verify the correct outlet and role, denied attempts, and unchanged
+document and payment records. Neither tool calls nor the browser check
+download attachments, record payments, or run a model. Omit the installed
+client flag to verify packaged stdio protocol behavior only.
