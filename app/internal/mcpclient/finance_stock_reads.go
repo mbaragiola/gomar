@@ -76,11 +76,19 @@ func validRecordedPayment(x RecordedPayment) bool {
 	}
 }
 
-func listFinanceRecords[T any](ctx context.Context, c *Client, entity, outlet int64, after *int64, path string, valid func(T) bool, id func(T) int64) (FinanceRecords[T], error) {
+func listFinanceRecords[T any](ctx context.Context, c *Client, entity, outlet int64, after *int64, extra url.Values, path string, valid func(T) bool, id func(T) int64) (FinanceRecords[T], error) {
 	var result FinanceRecords[T]
 	q, last, err := accountingQuery(after)
 	if err != nil {
 		return result, err
+	}
+	if extra != nil {
+		if q == nil {
+			q = url.Values{}
+		}
+		for key, values := range extra {
+			q[key] = values
+		}
 	}
 	if err := c.getWorkspace(ctx, entity, outlet, path, q, &result); err != nil {
 		return FinanceRecords[T]{}, err
@@ -114,13 +122,31 @@ func readFinanceRecord[T any](ctx context.Context, c *Client, entity, outlet, id
 }
 
 func (c *Client) ListPayables(ctx context.Context, entity, outlet int64, after *int64) (FinanceRecords[PayableRecord], error) {
-	return listFinanceRecords(ctx, c, entity, outlet, after, "/payable-records", validPayable, func(p PayableRecord) int64 { return p.ID })
+	return listFinanceRecords(ctx, c, entity, outlet, after, nil, "/payable-records", validPayable, func(p PayableRecord) int64 { return p.ID })
 }
+
+// ListPayablesDue filters by an inclusive civil-date range. Keep both dates
+// when continuing with next_id: each page reads current records.
+func (c *Client) ListPayablesDue(ctx context.Context, entity, outlet int64, after *int64, from, to string) (FinanceRecords[PayableRecord], error) {
+	for _, raw := range []string{from, to} {
+		date, err := time.Parse(time.DateOnly, raw)
+		if err != nil || date.Year() < 1 || date.Format(time.DateOnly) != raw {
+			return FinanceRecords[PayableRecord]{}, errors.New("indicá due_from y due_to como fechas YYYY-MM-DD")
+		}
+	}
+	if from > to {
+		return FinanceRecords[PayableRecord]{}, errors.New("due_from no puede ser posterior a due_to")
+	}
+	return listFinanceRecords(ctx, c, entity, outlet, after, url.Values{"due_from": {from}, "due_to": {to}}, "/payable-records", func(p PayableRecord) bool {
+		return validPayable(p) && p.DueDate != nil && *p.DueDate >= from && *p.DueDate <= to
+	}, func(p PayableRecord) int64 { return p.ID })
+}
+
 func (c *Client) ReadPayable(ctx context.Context, entity, outlet, id int64) (PayableRecord, error) {
 	return readFinanceRecord(ctx, c, entity, outlet, id, "/payable-records", "indicá el payable_id devuelto por gomar_list_payables", validPayable, func(p PayableRecord) int64 { return p.ID })
 }
 func (c *Client) ListRecordedPayments(ctx context.Context, entity, outlet int64, after *int64) (FinanceRecords[RecordedPayment], error) {
-	return listFinanceRecords(ctx, c, entity, outlet, after, "/recorded-payments", validRecordedPayment, func(p RecordedPayment) int64 { return p.ID })
+	return listFinanceRecords(ctx, c, entity, outlet, after, nil, "/recorded-payments", validRecordedPayment, func(p RecordedPayment) int64 { return p.ID })
 }
 func (c *Client) ReadRecordedPayment(ctx context.Context, entity, outlet, id int64) (RecordedPayment, error) {
 	return readFinanceRecord(ctx, c, entity, outlet, id, "/recorded-payments", "indicá el payment_id devuelto por gomar_list_recorded_payments", validRecordedPayment, func(p RecordedPayment) int64 { return p.ID })

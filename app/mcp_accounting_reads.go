@@ -21,6 +21,10 @@ func mcpAccountingCursor(r *http.Request) (int64, error) {
 	if err != nil {
 		return 0, badInput
 	}
+	return mcpAccountingCursorValues(query)
+}
+
+func mcpAccountingCursorValues(query url.Values) (int64, error) {
 	if len(query) == 0 {
 		return 0, nil
 	}

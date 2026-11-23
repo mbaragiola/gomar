@@ -128,16 +128,47 @@ func mcpScanRecordedPayment(row mcpRecordScanner) (mcpclient.RecordedPayment, er
 	return x, nil
 }
 
-func mcpFinanceRecords[T any](r *http.Request, tx *sql.Tx, s mcpTokenScope, query string, scan func(mcpRecordScanner) (T, error), id func(T) int64) (any, error) {
+func mcpPayablePage(r *http.Request) (int64, []string, error) {
+	query, err := url.ParseQuery(r.URL.RawQuery)
+	if err != nil {
+		return 0, nil, badInput
+	}
+	var due []string
+	from, to := query["due_from"], query["due_to"]
+	if from != nil || to != nil {
+		if len(from) != 1 || len(to) != 1 || !mcpAccountingDate(from[0]) || !mcpAccountingDate(to[0]) || from[0] > to[0] {
+			return 0, nil, badInput
+		}
+		due = []string{from[0], to[0]}
+		query.Del("due_from")
+		query.Del("due_to")
+	}
+	after, err := mcpAccountingCursorValues(query)
+	return after, due, err
+}
+
+func mcpFinanceRecords[T any](r *http.Request, tx *sql.Tx, s mcpTokenScope, query string, payableDueFilter bool, scan func(mcpRecordScanner) (T, error), id func(T) int64) (any, error) {
 	outlet, err := mcpFinanceOutlet(r, tx, s)
 	if err != nil {
 		return nil, err
 	}
-	after, err := mcpAccountingCursor(r)
+	var after int64
+	var due []string
+	if payableDueFilter {
+		after, due, err = mcpPayablePage(r)
+	} else {
+		after, err = mcpAccountingCursor(r)
+	}
 	if err != nil {
 		return nil, err
 	}
-	rows, err := tx.QueryContext(r.Context(), query+` AND p.id>$3 ORDER BY p.id LIMIT $4`, s.ID, outlet, after, mcpPageSize+1)
+	args := []any{s.ID, outlet, after, mcpPageSize + 1}
+	if len(due) != 0 {
+		// Match the native civil-date snapshot comparison, before pagination.
+		query += ` AND p.due_date_snapshot >= $5 AND p.due_date_snapshot <= $6`
+		args = append(args, due[0], due[1])
+	}
+	rows, err := tx.QueryContext(r.Context(), query+` AND p.id>$3 ORDER BY p.id LIMIT $4`, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -177,13 +208,13 @@ func mcpFinanceRecord[T any](r *http.Request, tx *sql.Tx, s mcpTokenScope, query
 }
 
 func mcpListPayableRecords(r *http.Request, tx *sql.Tx, s mcpTokenScope) (any, error) {
-	return mcpFinanceRecords(r, tx, s, mcpPayableRecordSelect+mcpPayableScope, mcpScanPayableRecord, func(x mcpclient.PayableRecord) int64 { return x.ID })
+	return mcpFinanceRecords(r, tx, s, mcpPayableRecordSelect+mcpPayableScope, true, mcpScanPayableRecord, func(x mcpclient.PayableRecord) int64 { return x.ID })
 }
 func mcpReadPayableRecord(r *http.Request, tx *sql.Tx, s mcpTokenScope) (any, error) {
 	return mcpFinanceRecord(r, tx, s, mcpPayableRecordSelect+mcpPayableScope, "payable", missingScopedPayable, mcpScanPayableRecord)
 }
 func mcpListRecordedPayments(r *http.Request, tx *sql.Tx, s mcpTokenScope) (any, error) {
-	return mcpFinanceRecords(r, tx, s, mcpRecordedPaymentSelect+mcpRecordedPaymentScope, mcpScanRecordedPayment, func(x mcpclient.RecordedPayment) int64 { return x.ID })
+	return mcpFinanceRecords(r, tx, s, mcpRecordedPaymentSelect+mcpRecordedPaymentScope, false, mcpScanRecordedPayment, func(x mcpclient.RecordedPayment) int64 { return x.ID })
 }
 func mcpReadRecordedPayment(r *http.Request, tx *sql.Tx, s mcpTokenScope) (any, error) {
 	return mcpFinanceRecord(r, tx, s, mcpRecordedPaymentSelect+mcpRecordedPaymentScope, "payment", missingPayment, mcpScanRecordedPayment)

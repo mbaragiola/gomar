@@ -162,10 +162,75 @@ func TestPostgresMCPFinanceStockDetailsKeepBranchSettlementAndPrivacy(t *testing
 	read("/stock/products/1/movements?days=32&start_date=2026-11-03", broad, 422, nil)
 	ask("GET", "/api/v1/mcp/entities/2/outlets/3/payable-records", "", broad, false, 404)
 	ask("GET", "/api/v1/mcp/entities/1/outlets/2/recorded-payments", "", narrow, false, 404)
+	// Native dates are immutable snapshots, so insert new synthetic records
+	// after asserting the legacy unfiltered pages above.
+	const dueFixture = `
+ INSERT INTO documents(id,entity_id,outlet_id,supplier_id,issuer_cuit,document_type,letter,point_of_sale,number,issue_date,
+ currency,total_minor,description,status,revision,created_at,updated_at)
+ SELECT id,1,CASE WHEN id=70 THEN 2 ELSE 1 END,1,'00000000003','invoice','A',1,id,'2026-11-01','ARS',1000,'private-document-sentinel','reviewed',1,
+ '2026-11-01T00:00:00Z','2026-11-01T00:00:00Z' FROM generate_series(35,70) id;
+ INSERT INTO ap_payables(id,entity_id,outlet_id,supplier_id,source_document_id,currency,original_minor,balance_minor,supplier_name_snapshot,
+ supplier_cuit_snapshot,document_reference_snapshot,issue_date_snapshot,due_date_snapshot,posted_by_id,posted_at)
+ SELECT id,1,CASE WHEN id=70 THEN 2 ELSE 1 END,1,id,'ARS',1000,1000,'private-supplier-sentinel','00000000003','private-source-sentinel',
+ '2026-11-01',CASE id WHEN 35 THEN NULL WHEN 36 THEN '2026-12-01' WHEN 37 THEN '2026-12-02'
+ WHEN 68 THEN '2026-12-04' WHEN 69 THEN '2026-12-05' ELSE '2026-12-03' END,1,'2026-11-02T02:59:59Z'
+ FROM generate_series(35,70) id;
+ `
+	if _, err := db.ExecContext(ctx, dueFixture); err != nil {
+		t.Fatal(err)
+	}
+	const listPath = "/payable-records"
+	const bounds = "?due_from=2026-12-02&due_to=2026-12-04"
+	list = mcpclient.FinanceRecords[mcpclient.PayableRecord]{}
+	read(listPath+bounds, narrow, 200, &list)
+	if len(list.Records) != 30 || list.NextID != 66 {
+		t.Fatal("date filter must run before LIMIT and cursor calculation")
+	}
+	for i, item := range list.Records {
+		if item.ID != int64(i+37) || item.DueDate == nil {
+			t.Fatal("filtered first page scope/order")
+		}
+	}
+	if *list.Records[0].DueDate != "2026-12-02" {
+		t.Fatal("lower boundary must be inclusive")
+	}
+	list = mcpclient.FinanceRecords[mcpclient.PayableRecord]{}
+	read(listPath+bounds+"&after_id=66", narrow, 200, &list)
+	if len(list.Records) != 2 || list.NextID != 0 || list.Records[0].ID != 67 || list.Records[1].ID != 68 || *list.Records[1].DueDate != "2026-12-04" {
+		t.Fatal("upper boundary, foreign outlet and filtered last page")
+	}
+	list = mcpclient.FinanceRecords[mcpclient.PayableRecord]{}
+	read(listPath+"?after_id=34", narrow, 200, &list)
+	if len(list.Records) != 30 || list.Records[0].ID != 35 || list.Records[0].DueDate != nil {
+		t.Fatal("unfiltered page no longer includes the undated payable")
+	}
+	list = mcpclient.FinanceRecords[mcpclient.PayableRecord]{}
+	read(listPath+"?due_from=2026-11-25&due_to=2026-11-25", narrow, 200, &list)
+	if len(list.Records) != 30 || list.Records[0].ID != 1 || list.Records[1].ID != 5 {
+		t.Fatal("same-day filter changed prior cross-outlet settlement exclusions")
+	}
+	for _, suffix := range []string{
+		"?due_from=2026-12-02", "?due_to=2026-12-04", "?due_from=&due_to=", "?due_from=0000-12-02&due_to=2026-12-04",
+		"?due_from=2026-11-31&due_to=2026-12-04", "?due_from=2026-12-2&due_to=2026-12-04", "?due_from=2026-12-05&due_to=2026-12-04",
+		bounds + "&due_from=2026-12-02", bounds + "&due_to=2026-12-04", bounds + "&after_id=0", bounds + "&after_id=1&after_id=2", bounds + "&currency=ARS",
+	} {
+		read(listPath+suffix, narrow, 422, nil)
+	}
+	read("/recorded-payments"+bounds, narrow, 422, nil)
+	ask("GET", "/api/v1/mcp/entities/1/outlets/2/payable-records"+bounds, "", narrow, false, 404)
+	ask("GET", "/api/v1/mcp/entities/2/outlets/3/payable-records"+bounds, "", broad, false, 404)
+	if _, err := db.ExecContext(ctx, `DELETE FROM outlet_grants WHERE membership_id=1 AND outlet_id=1`); err != nil {
+		t.Fatal(err)
+	}
+	read(listPath+bounds, narrow, 404, nil)
+	if _, err := db.ExecContext(ctx, `INSERT INTO outlet_grants VALUES(1,1)`); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := db.ExecContext(ctx, `UPDATE memberships SET role='read_only' WHERE id=1`); err != nil {
 		t.Fatal(err)
 	}
 	read("/payable-records", narrow, 403, nil)
+	read(listPath+bounds, narrow, 403, nil)
 	read("/recorded-payments", narrow, 403, nil)
 	read(stock, narrow, 403, nil)
 }
