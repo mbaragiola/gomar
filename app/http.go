@@ -24,36 +24,37 @@ type app struct {
 	providerOnly        bool
 	mcpClock            func() time.Time
 
-	host                                  string
-	payablesClock                         func() time.Time
-	reconciliationClock                   func() time.Time
-	privateRoot                           *os.Root
-	enableMCPSupplierNameProposals        bool
-	enableMCPStockMinimumProposals        bool
-	enableMCPStockTrackingProposals       bool
-	enableMCPStockProductSetupProposals   bool
-	enableMCPPOSCreateProposals           bool
-	enableMCPReservationCancelProposals   bool
-	enableMCPReservationConfirmProposals  bool
-	enableMCPReservationTableAddProposals bool
-	enableMCPReservationSlotAddProposals  bool
-	enableMCPOutletDisplayLabelProposals  bool
-	publicReservations                    bool
-	enablePOS                             bool
-	enableMCP                             bool
-	enableMCPWikiProposals                bool
-	enableMCPDocumentProposals            bool
-	enableMCPWikiEditProposals            bool
-	enableMCPStockReceiptProposals        bool
-	enableMCPProposalSessions             bool
-	enableMCPDocumentEditProposals        bool
-	enableMCPDocumentNumberProposals      bool
-	enableMCPPOSCatalogProposals          bool
-	enableMCPStockAdjustmentProposals     bool
-	enableMCPDocumentReviewProposals      bool
-	enableMCPReconciliationDraftProposals bool
-	enableDelivery                        bool
-	enableStock                           bool
+	host                                      string
+	payablesClock                             func() time.Time
+	reconciliationClock                       func() time.Time
+	privateRoot                               *os.Root
+	enableMCPSupplierNameProposals            bool
+	enableMCPStockMinimumProposals            bool
+	enableMCPStockTrackingProposals           bool
+	enableMCPStockProductSetupProposals       bool
+	enableMCPPOSCreateProposals               bool
+	enableMCPReservationCancelProposals       bool
+	enableMCPReservationConfirmProposals      bool
+	enableMCPReservationTableAddProposals     bool
+	enableMCPReservationSlotAddProposals      bool
+	enableMCPReservationPolicyNoticeProposals bool
+	enableMCPOutletDisplayLabelProposals      bool
+	publicReservations                        bool
+	enablePOS                                 bool
+	enableMCP                                 bool
+	enableMCPWikiProposals                    bool
+	enableMCPDocumentProposals                bool
+	enableMCPWikiEditProposals                bool
+	enableMCPStockReceiptProposals            bool
+	enableMCPProposalSessions                 bool
+	enableMCPDocumentEditProposals            bool
+	enableMCPDocumentNumberProposals          bool
+	enableMCPPOSCatalogProposals              bool
+	enableMCPStockAdjustmentProposals         bool
+	enableMCPDocumentReviewProposals          bool
+	enableMCPReconciliationDraftProposals     bool
+	enableDelivery                            bool
+	enableStock                               bool
 }
 
 type problem struct {
@@ -242,6 +243,7 @@ func (a *app) routes() http.Handler {
 	a.registerMCPReservationConfirmProposals(addAPI)
 	a.registerMCPReservationTableAddProposals(addAPI)
 	a.registerMCPReservationSlotAddProposals(addAPI)
+	a.registerMCPReservationPolicyNoticeProposals(addAPI)
 	a.registerMCPOutletDisplayLabelProposals(addAPI)
 	a.registerMCPReservationCancelProposals(addAPI)
 	a.registerMCPPOSCreateProposals(addAPI)
