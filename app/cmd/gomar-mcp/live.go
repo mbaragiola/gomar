@@ -96,6 +96,11 @@ func runLive(ctx context.Context, args []string, in io.Reader, out io.Writer) er
 			return errors.New(liveUsage)
 		}
 		addSessionTool = addReconciliationDraftProposalTool
+	case "document_draft_point_of_sale_change":
+		if *proposalSessionFile == "" {
+			return errors.New(liveUsage)
+		}
+		addSessionTool = addDocumentPointOfSaleProposalTool
 	case "document_draft_number_change":
 		if *proposalSessionFile == "" {
 			return errors.New(liveUsage)

@@ -12,7 +12,7 @@ applied change. Features disabled in the app are not available via MCP.
 | Inventory | Tracked balances, thresholds, movement history and stock alert counts; propose receipts, waste, physical counts, initial disabled product setup, and changes to a product’s minimum or tracking | Native only: branch-wide settings. Not built: bills of materials. |
 | Wiki | Search and read by ID; propose new pages and versioned edits | Not built: deletion. |
 | Delivery | Recent order status with limited fields; status counts for the latest 100 inbox records | No native staff write workflow. Provider calls and credentials are not part of MCP. |
-| Documents and intake | Scoped list, detail and totals by currency; propose draft creation, review, date and amount edits, or a printed-number correction | Native only: other document edits, deletion and private file handling. Provider OCR is disabled; staged OCR confirmation is not a shipped workflow. |
+| Documents and intake | Scoped list, detail and totals by currency; propose draft creation, review, date and amount edits, or separate printed-number and printed point-of-sale corrections | Native only: other document edits, deletion and private file handling. Provider OCR is disabled; staged OCR confirmation is not a shipped workflow. |
 | Suppliers | Active supplier names and IDs; propose a legal-name correction that applies across the business | Native only: supplier creation, tax identity and superuser catalog status changes. |
 | Payables and payment records | Outstanding and overdue totals, status counts, outlet-only payable and payment record details, and one payable’s ledger history | Native only: creating payables, recording and reversing internal payments, and receipt handling. MCP reads do not verify bank activity or move money. |
 | Reconciliation | Scoped counts, paged run list, metadata and setup by ID; propose one empty single-outlet draft | Native only: private files, source rows, preparing matches, decisions and closing review. Setup metadata does not prove readiness. |
@@ -20,8 +20,8 @@ applied change. Features disabled in the app are not available via MCP.
 
 The packaged live server registers 34 baseline read tools. Discovery does not
 guarantee access: app flags and current permissions determine which queries
-can run. There are also 24 distinct opt-in proposal actions, not 24
-simultaneous writes. Of those, 20 are named actions and four use distinct older
+can run. There are also 25 distinct opt-in proposal actions, not 25
+simultaneous writes. Of those, 21 are named actions and four use distinct older
 credential options. The stdio process accepts at most one selected named
 action. All proposals require approval in Gomar before changing business data.
 
@@ -139,3 +139,8 @@ A cancellation notice proposal prepares fixed informational wording for one
 existing disabled venue. It applies only to future requests after staff
 separately enable the venue in Gomar. Historical requests keep the wording
 the server captured at submission. See [cancellation notice proposals](MCP-RESERVATION-POLICY-NOTICE-PROPOSALS.md).
+
+The separate printed point-of-sale proposal changes only the numeric prefix
+of one current unposted draft, leaving the number, business, outlet and
+other data unchanged. It does not expand previously issued number-only
+keys. See [point-of-sale proposals](MCP-DOCUMENT-POINT-OF-SALE-PROPOSALS.md).
