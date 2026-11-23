@@ -7,7 +7,7 @@ applied change. Features disabled in the app are not available via MCP.
 
 | Workflow | MCP coverage now | Work still needed |
 | --- | --- | --- |
-| Identity and business scope | Current user, businesses, and outlets | Management views; changes to access stay in Gomar |
+| Identity and business scope | Current user, businesses, and outlets; propose a display-name change for one active outlet | Other management views; changes to access stay in Gomar |
 | POS | Recorded sales totals, product catalog, and separate create, name, price, and availability proposals for confirmation in Gomar | Register sales stay in the native POS; Gomar does not expose shift management |
 | Inventory | Tracked balances, thresholds, movements, and branch-wide stock alert counts; propose receipts, waste, physical counts, initial disabled product setup, and changes to an existing configuration’s minimum or tracking for confirmation in Gomar | Branch-wide settings stay in Gomar; bills of materials are not implemented |
 | Wiki | Search and read by ID; propose new pages and versioned edits for confirmation in Gomar | Gomar does not offer deletion |
@@ -113,3 +113,8 @@ A slot proposal prepares one future Buenos Aires start for an existing
 disabled venue. It cannot enable reservations or change requests or
 contacts. Gomar cannot remove the slot; see
 [disabled venue slot proposals](MCP-RESERVATION-SLOT-ADD-PROPOSALS.md).
+
+An optional outlet display label proposal changes only a currently active
+branch's name. Access, IDs and connected settings do not change. Some
+reports join the current name and can display a prior record under the new
+label. See [outlet display label proposals](MCP-OUTLET-DISPLAY-LABEL-PROPOSALS.md).
