@@ -163,6 +163,94 @@ func TestPostgresPrintedReferenceFindersScopeAndPagination(t *testing.T) {
 	if !reflect.DeepEqual(other, []int64{71}) || next != 0 {
 		t.Fatal("other granted outlet incorrectly included target results", other)
 	}
+	// Drafts are selected before either surface's page limit and never
+	// include the reviewed, deleted or other-outlet fixtures.
+	draftMCP := mcp1 + "?status=draft"
+	draftNative := native1 + "?outlet_id=1&status=draft"
+	readDraftIDs := func(raw []byte, key string) ([]int64, int64) {
+		t.Helper()
+		var result struct {
+			StatusFilter string               `json:"status_filter"`
+			NextID       int64                `json:"next_id"`
+			Drafts       []struct{ ID int64 } `json:"drafts"`
+			Documents    []struct {
+				ID     int64
+				Status string
+			} `json:"documents"`
+		}
+		if err := json.Unmarshal(raw, &result); err != nil || result.StatusFilter != "draft" {
+			t.Fatalf("missing draft acknowledgement: %s", raw)
+		}
+		found := []int64{}
+		if key == "drafts" {
+			if result.Drafts == nil || strings.Contains(string(raw), "sentinel") ||
+				strings.Contains(string(raw), "supplier") || strings.Contains(string(raw), "total_minor") {
+				t.Fatalf("bad native draft projection: %s", raw)
+			}
+			for _, row := range result.Drafts {
+				found = append(found, row.ID)
+			}
+		} else {
+			if result.Documents == nil {
+				t.Fatalf("missing document array: %s", raw)
+			}
+			for _, row := range result.Documents {
+				if row.Status != "draft" {
+					t.Fatalf("non-draft returned: %s", raw)
+				}
+				found = append(found, row.ID)
+			}
+		}
+		return found, result.NextID
+	}
+	for _, mode := range []struct {
+		key, path string
+		read      func(string) []byte
+	}{
+		{"documents", draftMCP, func(path string) []byte { return readMCP(path, narrow, 200) }},
+		{"drafts", draftNative, func(path string) []byte { return readNative(path, 200) }},
+	} {
+		first, next := readDraftIDs(mode.read(mode.path), mode.key)
+		want := make([]int64, 30)
+		for i := range want {
+			want[i] = int64(1 + i*2)
+		}
+		if !reflect.DeepEqual(first, want) || next != 59 {
+			t.Fatalf("%s draft page = %v cursor %d", mode.key, first, next)
+		}
+		second, next := readDraftIDs(mode.read(mode.path+"&after_id=59"), mode.key)
+		if !reflect.DeepEqual(second, []int64{61, 63, 65, 67, 69, 70}) || next != 0 {
+			t.Fatalf("%s second draft page = %v cursor %d", mode.key, second, next)
+		}
+	}
+	for _, value := range []string{"", "Draft", "reviewed", "draft&status=draft", "draft&" + query} {
+		readMCP(mcp1+"?status="+value, narrow, 422)
+		readNative(native1+"?outlet_id=1&status="+value, 422)
+	}
+	readNative(native1+"?status=draft", 422)
+	readMCP("mcp/entities/1/outlets/2/documents?status=draft", narrow, 404)
+	readMCP("mcp/entities/2/outlets/4/documents?status=draft", broad, 404)
+	readNative(native1+"?outlet_id=3&status=draft", 404)
+
+	const draftDetail = "entities/1/outlets/1/documents/35/draft-queue-detail"
+	readNative(draftDetail, 200)
+	readMCP(draftDetail, narrow, 401)
+	readNative(draftDetail+"?status=draft", 422)
+	draftMissing := readNative("entities/1/outlets/1/documents/999/draft-queue-detail", 404)
+	if _, err := db.ExecContext(ctx, "UPDATE memberships SET role='administration'"); err != nil {
+		t.Fatal(err)
+	}
+	// A normal explicit native review in another session happens after
+	// the result page was loaded. The stale key must not open the detail.
+	req("POST", "entities/1/documents/35/review", `{"expected_revision":1,"motivo":"fixture review"}`, "", true, 200)
+	if stale := readNative(draftDetail, 404); string(stale) != string(draftMissing) {
+		t.Fatalf("stale draft disclosed reviewed detail: %s", stale)
+	}
+	if now, _ := readDraftIDs(readMCP(draftMCP+"&after_id=33", narrow, 200), "documents"); len(now) == 0 || now[0] != 37 {
+		t.Fatalf("reviewed draft still in queue: %v", now)
+	}
+	readNative("entities/1/documents/35", 200)
+
 	// Read a matching draft in outlet 1, then use the genuine native edit to
 	// move that same draft to outlet 2. The old outlet's stale button must
 	// not turn into an entity-wide detail read, even with grants on both.
@@ -198,9 +286,14 @@ func TestPostgresPrintedReferenceFindersScopeAndPagination(t *testing.T) {
 	readMCP(mcp1+"?"+query, narrow, 403)
 	readNative(native1+"?outlet_id=1&"+query, 403)
 	readNative(detail2, 403)
+	readMCP(draftMCP, narrow, 403)
+	readNative(draftNative, 403)
+	readNative(draftDetail, 403)
 	if _, err := db.ExecContext(ctx, "UPDATE memberships SET role='purchasing'; DELETE FROM outlet_grants WHERE outlet_id=1"); err != nil {
 		t.Fatal(err)
 	}
 	readMCP(mcp1+"?"+query, narrow, 404)
 	readNative(native1+"?outlet_id=1&"+query, 404)
+	readMCP(draftMCP, narrow, 404)
+	readNative(draftNative, 404)
 }

@@ -37,6 +37,8 @@ registrado, no un conteo físico nuevo.
 **Comprobantes**
 
 > Buscá la Nota de crédito sin letra, punto de venta 00012 y número 00000345 en [sucursal]. Si hay varias coincidencias, mostrame cuáles para elegir en Gomar.
+>
+> Mostrame los comprobantes que todavía están en borrador en [sucursal]. No los marques como revisados.
 
 Usá los cuatro datos tal como figuran en el comprobante. El punto de
 venta impreso no es la sucursal. La búsqueda no abre adjuntos, cambia

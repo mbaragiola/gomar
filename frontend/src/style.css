@@ -347,3 +347,5 @@ a { color: var(--accent); }
 @media (max-width: 420px) {
   .document-reference-finder .form-grid { grid-template-columns: minmax(0, 1fr); }
 }
+
+.draft-queue-control { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; padding: 12px 20px; border-bottom: 1px solid var(--line); }

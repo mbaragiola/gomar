@@ -22,7 +22,7 @@ request a change for approval in Gomar; see the [coverage matrix](MCP-COVERAGE.m
 | `gomar_list_payable_movements` | One payable’s ledger: type, Buenos Aires date (if recorded), signed change and resulting balance in minor units | Same finance role and outlet checks; omits payables tied to cross-outlet splits or reversals. Up to 30 in ledger order; reuse `next_cursor` only for the same payable. No supplier, document, payment or receipt identity. |
 | `gomar_list_recorded_payments` / `gomar_read_recorded_payment` | Internal payment record ID, local dates, status and amount | 30 per page. Excludes cross-outlet settlements and linked reversals, with no method, accounts, notes or receipts. Not confirmation that money moved. |
 | `gomar_document_totals` | Count and net document totals by currency for the selected outlet | All non-deleted documents; credits subtract; exact signed strings in minor units. |
-| `gomar_list_documents` | Document metadata for the selected outlet | No attachments or tax identifiers. Optional exact printed reference; up to 30 per page. |
+| `gomar_list_documents` | Document metadata for the selected outlet | No attachments or tax identifiers. Optional exact printed reference or drafts-only filter; up to 30 per page. |
 | `gomar_read_document` | One document’s status, revision, reference, dates and accounting totals | No supplier data, notes, audit, or attachments. |
 | `gomar_list_suppliers` | Active supplier names and IDs for the business | Requires an authorized selected outlet. No contact or tax details. Up to 30 per page. |
 | `gomar_payment_status_summary` | Recorded payment counts by status | No amounts, account details or receipts. |

@@ -206,3 +206,18 @@ the first. Opening a match in Gomar rechecks the same branch and reference
 in case the document moved or was corrected. With `next_id`, request the
 next page using the same reference and branch. Pages are not a snapshot. The filter does not disclose new
 supplier details, retrieve files, change a record, or approve a review.
+
+### List drafts for review
+
+In Comprobantes, **Ver borradores** shows only current, non-deleted drafts in
+the selected branch. The existing `gomar_list_documents` tool accepts
+`status: "draft"` for the same scope; repeat that filter with `next_id` for
+another page. The ordinary list is unchanged. This filter and a printed
+reference lookup are separate modes and cannot be combined. This list is not
+a claim about other pending work or a snapshot across pages.
+
+Opening a draft in the browser rechecks that it is still a draft in the same
+branch. Finding one does not open it automatically, mark it reviewed or
+create a payable. Review still requires native permission and an explicit
+action in Gomar (or the separately issued review proposal and browser
+approval). The MCP list does not add any private metadata.

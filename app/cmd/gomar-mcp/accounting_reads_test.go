@@ -124,6 +124,19 @@ func TestPrintedReferenceToolFailsClosedWhenFilterUnsupported(t *testing.T) {
 			_, _ = w.Write([]byte(`{"documents":[],` + strings.Replace(correct, "345", "346", 1) + `}`))
 		case "13":
 			_, _ = w.Write([]byte(`{"documents":[],` + correct + `}`))
+		case "15":
+			if r.URL.RawQuery != "after_id=15&status=draft" {
+				t.Errorf("draft query = %q", r.URL.RawQuery)
+			}
+			_, _ = w.Write([]byte(`{"documents":[{"id":16,"type":"credit_note","status":"draft","supplier_id":1,"issue_date":"2026-11-01","currency":"ARS","total_minor":25,"issuer_cuit":"sentinel"}],"status_filter":"draft"}`))
+		case "16":
+			_, _ = w.Write([]byte(`{"documents":[]}`))
+		case "17":
+			_, _ = w.Write([]byte(`{"documents":[{"id":18,"type":"credit_note","status":"reviewed","supplier_id":1,"issue_date":"2026-11-01","currency":"ARS","total_minor":25}],"status_filter":"draft"}`))
+		case "18":
+			_, _ = w.Write([]byte(`{"documents":[],"status_filter":"reviewed"}`))
+		case "19":
+			_, _ = w.Write([]byte(`{"documents":[],"status_filter":"draft"}`))
 		default:
 			t.Error("malformed tool input reached HTTP")
 			w.WriteHeader(400)
@@ -156,6 +169,10 @@ func TestPrintedReferenceToolFailsClosedWhenFilterUnsupported(t *testing.T) {
 		{13, correct, true}, {14, invalid, false}, {14, `"printed_reference":null`, false},
 		{14, strings.Replace(correct, "345", "0", 1), false},
 		{14, strings.Replace(correct, `"letter":""`, `"letter":"","supplier":7`, 1), false},
+		{15, `"status":"draft"`, true}, {16, `"status":"draft"`, false}, {17, `"status":"draft"`, false},
+		{18, `"status":"draft"`, false}, {19, `"status":"draft"`, true},
+		{14, `"status":null`, false}, {14, `"status":""`, false}, {14, `"status":"reviewed"`, false},
+		{14, `"status":"draft",` + correct, false},
 	} {
 		args := map[string]any{}
 		if err := json.Unmarshal([]byte(`{"entity_id":14,"outlet_id":16,`+test.ref+`}`), &args); err != nil {
@@ -169,7 +186,8 @@ func TestPrintedReferenceToolFailsClosedWhenFilterUnsupported(t *testing.T) {
 				t.Fatalf("expected supported filter after %d: %s %v", test.after, payload, err)
 			}
 			raw, err := json.Marshal(result.StructuredContent)
-			if err != nil || !strings.Contains(string(raw), `"printed_reference"`) || strings.Contains(string(raw), "sentinel") {
+			if err != nil || !(strings.Contains(string(raw), `"printed_reference"`) ||
+				strings.Contains(string(raw), `"status_filter":"draft"`)) || strings.Contains(string(raw), "sentinel") {
 				t.Fatalf("unexpected typed output: %s", raw)
 			}
 		} else if err == nil && !result.IsError {

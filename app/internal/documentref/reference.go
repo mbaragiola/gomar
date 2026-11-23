@@ -61,3 +61,19 @@ func TakeQuery(q url.Values) (*Reference, bool) {
 	}
 	return &r, true
 }
+
+const DraftStatus = "draft"
+
+// TakeDraftStatus recognizes the only supported status filter. An explicit
+// empty, other or repeated value is not an unfiltered request.
+func TakeDraftStatus(q url.Values) (draftOnly, valid bool) {
+	values, present := q["status"]
+	if !present {
+		return false, true
+	}
+	if len(values) != 1 || values[0] != DraftStatus {
+		return false, false
+	}
+	q.Del("status")
+	return true, true
+}

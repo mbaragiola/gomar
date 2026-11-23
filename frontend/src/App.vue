@@ -22,6 +22,8 @@ import ReconciliationPanel from './components/ReconciliationPanel.vue'
 import { localDate, localDateTime, money, todayInBuenosAires } from './format'
 import { blankPrintedReference, parsePrintedReference, printedDocumentTypes, printedReferenceLabel, printedReferenceResponse } from './document-reference'
 import type { PrintedReference, PrintedReferenceMatch } from './document-reference'
+import { draftQueueResponse } from './document-draft-queue'
+import type { DraftQueueRow } from './document-draft-queue'
 import type { Document, Entity, EntityManagement, IntakeOperation, OcrConfig, OcrDraft, Outlet, Payable, Payment, Supplier } from './types'
 
 const publicVenue = /^\/reservas\/([a-z0-9][a-z0-9-]{0,63})\/?$/.exec(window.location.pathname)?.[1]
@@ -47,6 +49,12 @@ const referenceNextID = ref(0)
 const referenceLoading = ref(false)
 const referenceError = ref('')
 let referenceGeneration = 0
+const draftQueueActive = ref(false)
+const draftQueueRows = ref<DraftQueueRow[]>([])
+const draftQueueNextID = ref(0)
+const draftQueueLoading = ref(false)
+const draftQueueError = ref('')
+let draftQueueGeneration = 0
 const total = ref<{ cantidad: number; totales: { moneda: string; cantidad: number; total: string }[] }>({ cantidad: 0, totales: [] })
 const selectedEntityId = ref<number | null>(null)
 const selectedOutletId = ref<number | null>(null)
@@ -266,9 +274,19 @@ function clearReferenceSearch(resetForm = true) {
   if (resetForm) Object.assign(referenceForm, blankPrintedReference())
 }
 
+function clearDraftQueue() {
+  draftQueueGeneration += 1
+  draftQueueActive.value = false
+  draftQueueRows.value = []
+  draftQueueNextID.value = 0
+  draftQueueLoading.value = false
+  draftQueueError.value = ''
+}
+
 function clearDocumentState(resetBusy = true) {
   if (resetBusy) clearBusy()
   clearReferenceSearch()
+  clearDraftQueue()
   documents.value = []
   total.value = { cantidad: 0, totales: [] }
   selectedDocument.value = null
@@ -578,6 +596,7 @@ async function saveSupplier(supplier: Supplier) {
 async function loadDocuments(sessionToken = sessionGeneration, contextToken = contextGeneration) {
   const listToken = ++listGeneration
   clearReferenceSearch(false)
+  clearDraftQueue()
   documents.value = []
   total.value = { cantidad: 0, totales: [] }
   selectedDocument.value = null
@@ -611,6 +630,7 @@ async function findPrintedReference(secondPage = false) {
   const context = contextGeneration
   const current = () => run === referenceGeneration && contextIsCurrent(session, context, entity) && selectedOutletId.value === outlet
   if (!secondPage) {
+    clearDraftQueue()
     clearHandoffLocation()
     detailGeneration += 1
     selectedDocument.value = null
@@ -644,6 +664,63 @@ async function findPrintedReference(secondPage = false) {
   }
 }
 
+async function loadDraftQueue(secondPage = false) {
+  const entity = selectedEntityId.value
+  const outlet = selectedOutletId.value
+  if (!entity || !outlet) return
+  const after = secondPage ? draftQueueNextID.value : 0
+  if (secondPage && (!draftQueueActive.value || !after || draftQueueLoading.value)) return
+
+  const run = ++draftQueueGeneration
+  const session = sessionGeneration
+  const context = contextGeneration
+  const current = () => run === draftQueueGeneration && contextIsCurrent(session, context, entity) && selectedOutletId.value === outlet
+  if (!secondPage) {
+    clearReferenceSearch(false)
+    clearHandoffLocation()
+    detailGeneration += 1
+    selectedDocument.value = null
+    uploadFile.value = null
+    mobileDetail.value = false
+    draftQueueRows.value = []
+    draftQueueNextID.value = 0
+  }
+  draftQueueActive.value = true
+  draftQueueLoading.value = true
+  draftQueueError.value = ''
+  const query = new URLSearchParams({ outlet_id: String(outlet), status: 'draft' })
+  if (after) query.set('after_id', String(after))
+  try {
+    const result = await request<unknown>(`/entities/${entity}/documents?${query}`, { cache: 'no-store' })
+    if (!current()) return
+    const page = draftQueueResponse(result, after)
+    draftQueueRows.value = [...draftQueueRows.value, ...page.drafts]
+    draftQueueNextID.value = page.nextID
+  } catch {
+    if (current()) {
+      draftQueueRows.value = []
+      draftQueueNextID.value = 0
+      draftQueueError.value = 'No se pudo cargar la lista de borradores de este local.'
+    }
+  } finally {
+    if (current()) draftQueueLoading.value = false
+  }
+}
+
+async function exitDraftQueue() {
+  const session = sessionGeneration
+  const context = contextGeneration
+  const entity = selectedEntityId.value
+  if (!entity) return
+  detailGeneration += 1
+  mobileDetail.value = false
+  try {
+    await loadDocuments(session, context)
+  } catch (value) {
+    if (contextIsCurrent(session, context, entity)) showError(value)
+  }
+}
+
 async function changeEntity() {
   clearHandoffLocation()
   const sessionToken = sessionGeneration
@@ -673,19 +750,29 @@ function openReferenceDocument(id: number) {
   if (reference) void openDocument(id, reference)
 }
 
-async function openDocument(id: number, reference?: PrintedReference) {
+function openDraftQueueDocument(id: number) {
+  if (draftQueueActive.value) void openDocument(id, 'draft')
+}
+
+async function openDocument(id: number, selection?: PrintedReference | 'draft') {
   clearHandoffLocation()
-  if (!selectedEntityId.value || reference && !selectedOutletId.value) return
+  if (!selectedEntityId.value || selection && !selectedOutletId.value) return
+  const reference = selection === 'draft' ? undefined : selection
+  const draftOnly = selection === 'draft'
   const sessionToken = sessionGeneration
   const contextToken = contextGeneration
   const entityId = selectedEntityId.value
   const detailToken = ++detailGeneration
   const outlet = selectedOutletId.value
+  const draftRun = draftQueueGeneration
   const current = () => contextIsCurrent(sessionToken, contextToken, entityId) && detailToken === detailGeneration &&
-    (!reference || selectedOutletId.value === outlet && appliedReference.value === reference)
+    (!reference || selectedOutletId.value === outlet && appliedReference.value === reference) &&
+    (!draftOnly || draftQueueActive.value && draftQueueGeneration === draftRun &&
+      selectedOutletId.value === outlet && staffView.value === 'documents')
   selectedDocument.value = null
   error.value = ''
   if (reference) referenceError.value = ''
+  if (draftOnly) draftQueueError.value = ''
   try {
     let detail: Document
     if (reference) {
@@ -699,6 +786,12 @@ async function openDocument(id: number, reference?: PrintedReference) {
       if (detail.id !== id || detail.entity_id !== entityId || detail.outlet.id !== outlet ||
         detail.tipo !== reference.document_type || detail.letra !== reference.letter ||
         detail.punto_venta !== reference.point_of_sale || detail.numero !== reference.number) throw new Error('No se encontró el comprobante.')
+    } else if (draftOnly) {
+      detail = await request<Document>(`/entities/${entityId}/outlets/${outlet}/documents/${id}/draft-queue-detail`, {
+        cache: 'no-store', referrerPolicy: 'no-referrer',
+      })
+      if (detail.id !== id || detail.entity_id !== entityId ||
+        detail.outlet.id !== outlet || detail.estado !== 'draft') throw new Error('No se encontró el borrador.')
     } else {
       detail = await request<Document>(`/entities/${entityId}/documents/${id}`)
     }
@@ -709,6 +802,7 @@ async function openDocument(id: number, reference?: PrintedReference) {
   } catch (value) {
     if (current()) {
       if (reference) referenceError.value = 'El comprobante ya no coincide en este local. Hacé la búsqueda de nuevo.'
+      else if (draftOnly) draftQueueError.value = 'El comprobante ya no está disponible como borrador en este local. Actualizá la lista.'
       else showError(value)
     }
   }
@@ -1029,6 +1123,7 @@ async function uploadAttachment() {
     if (!contextIsCurrent(sessionToken, contextToken, entityId) || attachmentDocumentID.value !== documentId) return
     uploadFile.value = null
     if (target) await syncAttachmentHandoff()
+    else if (draftQueueActive.value) await openDocument(documentId, 'draft')
     else await openDocument(documentId)
   } catch (value) {
     if (contextIsCurrent(sessionToken, contextToken, entityId)) showError(value)
@@ -1043,6 +1138,9 @@ async function reviewDocument() {
   const contextToken = contextGeneration
   const entityId = selectedEntityId.value
   const documentId = selectedDocument.value.id
+  const reviewedFromQueue = draftQueueActive.value
+  const queueRun = draftQueueGeneration
+  const reviewDetail = detailGeneration
   const expectedRevision = selectedDocument.value.revision
   const motivo = window.prompt('Motivo de la revisión:')?.trim()
   if (!motivo) return
@@ -1052,6 +1150,13 @@ async function reviewDocument() {
       { method: 'POST', body: JSON.stringify({ motivo, expected_revision: expectedRevision }) },
     )
     if (!contextIsCurrent(sessionToken, contextToken, entityId)) return
+    if (reviewedFromQueue) {
+      if (staffView.value === 'documents' && draftQueueActive.value && draftQueueGeneration === queueRun) {
+        if (detailGeneration === reviewDetail) await loadDraftQueue()
+        else draftQueueRows.value = draftQueueRows.value.filter((draft) => draft.id !== documentId)
+      }
+      return
+    }
     selectedDocument.value = reviewed
     await loadDocuments(sessionToken, contextToken)
     if (contextIsCurrent(sessionToken, contextToken, entityId)) await openDocument(documentId)
@@ -1512,8 +1617,8 @@ onBeforeUnmount(() => window.removeEventListener('hashchange', syncAttachmentHan
         </section>
 
         <section v-show="staffView === 'documents'" class="summary-grid staff-totals" :class="{ 'staff-mobile-detail': showDocumentDetail || showCreate }">
-          <article class="metric card"><span>{{ appliedReference ? 'Todos los comprobantes del local' : 'Comprobantes' }}</span><strong>{{ total.cantidad }}</strong></article>
-          <article v-for="row in total.totales" :key="row.moneda" class="metric card"><span>{{ appliedReference ? 'Total del local' : 'Total' }} {{ row.moneda }}</span><strong>{{ money(row.total, row.moneda) }}</strong></article>
+          <article class="metric card"><span>{{ (appliedReference || draftQueueActive) ? 'Todos los comprobantes del local' : 'Comprobantes' }}</span><strong>{{ total.cantidad }}</strong></article>
+          <article v-for="row in total.totales" :key="row.moneda" class="metric card"><span>{{ (appliedReference || draftQueueActive) ? 'Total del local' : 'Total' }} {{ row.moneda }}</span><strong>{{ money(row.total, row.moneda) }}</strong></article>
         </section>
 
         <ReconciliationPanel
@@ -1647,6 +1752,13 @@ onBeforeUnmount(() => window.removeEventListener('hashchange', syncAttachmentHan
         <div v-show="staffView === 'documents' && !showCreate" class="content-grid" :class="{ 'staff-has-document': showDocumentDetail }">
           <section class="card list-card">
             <div class="section-heading"><div><p class="eyebrow">REGISTRO</p><h2>Comprobantes</h2></div><span>{{ outlets.find((o) => o.id === selectedOutletId)?.nombre }}</span></div>
+            <div v-if="selectedOutletId && canReadBusiness" class="draft-queue-control">
+              <button v-if="!draftQueueActive" type="button" class="secondary" @click="loadDraftQueue()">Ver borradores</button>
+              <template v-else>
+                <button type="button" class="secondary" @click="exitDraftQueue">Ver todos</button>
+                <button type="button" class="text-button" :disabled="draftQueueLoading" @click="loadDraftQueue()">Actualizar borradores</button>
+              </template>
+            </div>
             <details v-if="selectedOutletId && canReadBusiness" class="document-reference-finder">
               <summary>Buscar por referencia impresa</summary>
               <form class="form-grid" @submit.prevent="findPrintedReference()">
@@ -1687,6 +1799,21 @@ onBeforeUnmount(() => window.removeEventListener('hashchange', syncAttachmentHan
                 </button>
               </div>
               <button v-if="referenceNextID" type="button" class="text-button document-reference-status" :disabled="referenceLoading" @click="findPrintedReference(true)">Más coincidencias</button>
+            </template>
+            <template v-else-if="draftQueueActive">
+              <p v-if="draftQueueError" class="document-reference-status" role="alert">{{ draftQueueError }}</p>
+              <p class="document-reference-status" role="status">
+                <template v-if="draftQueueLoading">Buscando borradores de este local…</template>
+                <template v-else-if="draftQueueRows.length">Borradores de este local. Abrí uno para ver el detalle.</template>
+                <template v-else-if="!draftQueueError">No hay borradores en este local.</template>
+              </p>
+              <div v-if="draftQueueRows.length" class="document-list">
+                <button v-for="row in draftQueueRows" :key="row.id" type="button" class="document-row" :class="{ active: selectedDocument?.id === row.id }" @click="openDraftQueueDocument(row.id)">
+                  <span><strong>{{ row.reference || printedDocumentTypes[row.type] }}</strong><small>Comprobante {{ row.id }} · {{ localDate(row.issue_date) }}</small></span>
+                  <span class="status draft">Borrador</span>
+                </button>
+              </div>
+              <button v-if="draftQueueNextID" type="button" class="text-button document-reference-status" :disabled="draftQueueLoading" @click="loadDraftQueue(true)">Más borradores</button>
             </template>
             <div v-else-if="documents.length" class="document-list">
               <button v-for="item in documents" :key="item.id" class="document-row" :class="{ active: attachmentDocumentID === item.id }" @click="openDocument(item.id)">

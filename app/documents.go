@@ -154,11 +154,7 @@ func scanDocument(row interface{ Scan(...any) error }, entityID int64) (document
 		return documentListItem{}, err
 	}
 	item.TypeLabel, item.StatusLabel = documentTypes[item.Type], documentStates[item.Status]
-	name := item.TypeLabel
-	if item.Letter != "" {
-		name += " " + item.Letter
-	}
-	item.Reference = fmt.Sprintf("%s %05d-%08d", name, item.PointOfSale, item.Number)
+	item.Reference = fmt.Sprintf("%s%s %05d-%08d", item.TypeLabel, prefixDocumentLetter(item.Letter), item.PointOfSale, item.Number)
 	item.Subtotal, item.Tax, item.Total = optionalMoney(subtotal), optionalMoney(tax), minorString(big.NewInt(total))
 	return item, nil
 }
@@ -172,11 +168,12 @@ func listDocuments(r *http.Request, tx *sql.Tx, m entityMembership, _ []byte) (i
 	if err != nil {
 		return 0, nil, badInput
 	}
-	reference, valid := documentref.TakeQuery(query)
-	if !valid {
+	reference, validReference := documentref.TakeQuery(query)
+	draftOnly, validStatus := documentref.TakeDraftStatus(query)
+	if !validReference || !validStatus || draftOnly && reference != nil {
 		return 0, nil, badInput
 	}
-	if reference != nil {
+	if reference != nil || draftOnly {
 		if !only.Valid || len(query["outlet_id"]) != 1 {
 			return 0, nil, badInput
 		}
@@ -184,6 +181,9 @@ func listDocuments(r *http.Request, tx *sql.Tx, m entityMembership, _ []byte) (i
 		cursor, err := mcpAccountingCursorValues(query)
 		if err != nil {
 			return 0, nil, err
+		}
+		if draftOnly {
+			return nativeDraftQueue(r, tx, m, only.Int64, cursor)
 		}
 		return nativePrintedReferenceMatches(r, tx, m, only.Int64, cursor, *reference)
 	}
@@ -240,6 +240,53 @@ func nativePrintedReferenceMatches(r *http.Request, tx *sql.Tx, m entityMembersh
 	return 200, result, rows.Err()
 }
 
+type draftQueueRow struct {
+	ID        int64  `json:"id"`
+	IssueDate string `json:"issue_date"`
+	Type      string `json:"type"`
+	Reference string `json:"reference,omitempty"`
+}
+
+func nativeDraftQueue(r *http.Request, tx *sql.Tx, m entityMembership, outlet, cursor int64) (int, any, error) {
+	rows, err := tx.QueryContext(r.Context(), `SELECT d.id,d.issue_date,d.document_type,d.letter,d.point_of_sale,d.number`+documentScope+
+		` AND d.id>$4 AND d.status='draft' ORDER BY d.id LIMIT $5`, m.ID, m.id, outlet, cursor, mcpPageSize+1)
+	if err != nil {
+		return 0, nil, err
+	}
+	defer rows.Close()
+	page := struct {
+		Drafts       []draftQueueRow `json:"drafts"`
+		StatusFilter string          `json:"status_filter"`
+		NextID       int64           `json:"next_id,omitempty"`
+	}{Drafts: []draftQueueRow{}, StatusFilter: documentref.DraftStatus}
+	for rows.Next() {
+		var row draftQueueRow
+		var letter string
+		var point, number int64
+		if err := rows.Scan(&row.ID, &row.IssueDate, &row.Type, &letter, &point, &number); err != nil {
+			return 0, nil, err
+		}
+		// Do not project noncanonical legacy letter text. The rest of the
+		// draft remains selectable even if it has no recognized label.
+		if letter == "" || len(letter) == 1 && letter[0] >= 'A' && letter[0] <= 'Z' {
+			row.Reference = fmt.Sprintf("%s%s %05d-%08d", documentTypes[row.Type], prefixDocumentLetter(letter), point, number)
+		}
+		page.Drafts = append(page.Drafts, row)
+	}
+	if len(page.Drafts) > mcpPageSize {
+		page.Drafts = page.Drafts[:mcpPageSize]
+		page.NextID = page.Drafts[mcpPageSize-1].ID
+	}
+	return 200, page, rows.Err()
+}
+
+func prefixDocumentLetter(letter string) string {
+	if letter == "" {
+		return ""
+	}
+	return " " + letter
+}
+
 func documentDetail(r *http.Request, tx *sql.Tx, m entityMembership, _ []byte) (int, any, error) {
 	id, err := pathID(r, "document")
 	if err != nil {
@@ -253,6 +300,14 @@ func documentDetail(r *http.Request, tx *sql.Tx, m entityMembership, _ []byte) (
 // have grants on two outlets, but must not land in the other outlet if a
 // native edit moved the document after the list was loaded.
 func (a *app) printedReferenceDocumentDetail(w http.ResponseWriter, r *http.Request, u user) error {
+	return a.selectedDocumentDetail(w, r, u, false)
+}
+
+func (a *app) draftQueueDocumentDetail(w http.ResponseWriter, r *http.Request, u user) error {
+	return a.selectedDocumentDetail(w, r, u, true)
+}
+
+func (a *app) selectedDocumentDetail(w http.ResponseWriter, r *http.Request, u user, draftOnly bool) error {
 	w.Header().Set("Referrer-Policy", "no-referrer")
 	if len(r.Header.Values("Authorization")) != 0 {
 		return missingDocumentDetail
@@ -269,15 +324,23 @@ func (a *app) printedReferenceDocumentDetail(w http.ResponseWriter, r *http.Requ
 	if err != nil {
 		return missingDocumentDetail
 	}
-	query, err := url.ParseQuery(r.URL.RawQuery)
-	if err != nil {
-		return badInput
+	var reference *documentref.Reference
+	if draftOnly {
+		if r.URL.RawQuery != "" || r.URL.ForceQuery {
+			return badInput
+		}
+	} else {
+		query, err := url.ParseQuery(r.URL.RawQuery)
+		if err != nil {
+			return badInput
+		}
+		var valid bool
+		reference, valid = documentref.TakeQuery(query)
+		if !valid || reference == nil || len(query) != 0 {
+			return badInput
+		}
 	}
-	reference, valid := documentref.TakeQuery(query)
-	if !valid || reference == nil || len(query) != 0 {
-		return badInput
-	}
-	// Check the branch and printed reference, then read the authorized
+	// Check the branch and selection criterion, then read the authorized
 	// attachment metadata and audit in one read-only database snapshot.
 	// A concurrent native move/correction cannot mix rows from both versions.
 	tx, err := a.db.BeginTx(r.Context(), &sql.TxOptions{Isolation: sql.LevelRepeatableRead, ReadOnly: true})
@@ -289,9 +352,15 @@ func (a *app) printedReferenceDocumentDetail(w http.ResponseWriter, r *http.Requ
 	if err != nil {
 		return err
 	}
-	item, err := scanDocument(tx.QueryRowContext(r.Context(), selectDocuments+
-		` AND d.id=$4 AND d.document_type=$5 AND d.letter=$6 AND d.point_of_sale=$7 AND d.number=$8`,
-		m.ID, m.id, outlet, id, reference.DocumentType, reference.Letter, reference.PointOfSale, reference.Number), m.ID)
+	statement := selectDocuments + " AND d.id=$4"
+	args := []any{m.ID, m.id, outlet, id}
+	if draftOnly {
+		statement += " AND d.status='draft'"
+	} else {
+		statement += " AND d.document_type=$5 AND d.letter=$6 AND d.point_of_sale=$7 AND d.number=$8"
+		args = append(args, reference.DocumentType, reference.Letter, reference.PointOfSale, reference.Number)
+	}
+	item, err := scanDocument(tx.QueryRowContext(r.Context(), statement, args...), m.ID)
 	if errors.Is(err, sql.ErrNoRows) {
 		return missingDocumentDetail
 	}
