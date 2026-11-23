@@ -101,3 +101,9 @@ contain attachment data or a handoff link. Open, upload, and download files
 only in Gomar using its existing controls. The private attachment picker
 accepts one PNG or JPEG per upload, up to 10 MiB and 40 megapixels per
 image. It does not accept PDFs.
+
+### Attach a private payment receipt
+
+In **Cuentas a pagar**, the private receipt picker for an existing payment
+record accepts one PNG or JPEG, up to 10 MiB and 40 megapixels. It does not
+accept PDFs. Receipts stay in the app and are not available through MCP.

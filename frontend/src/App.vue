@@ -1462,8 +1462,9 @@ onBeforeUnmount(() => window.removeEventListener('hashchange', syncAttachmentHan
                 <p v-else-if="paymentDraft.estado === 'posted'" class="ocr-status">Pago registrado. Para corregirlo, registrá una reversión.</p>
                 <p v-else class="ocr-status">Pago revertido.</p>
                 <form v-if="!paymentDraft.tiene_comprobante" :key="paymentDraft.id" class="upload" @submit.prevent="uploadPaymentReceipt">
-                  <label class="file-picker">{{ paymentReceipt?.name ?? 'Adjuntar comprobante privado' }}<input type="file" accept=".pdf,.png,.jpg,.jpeg" required @change="paymentReceipt = ($event.target as HTMLInputElement).files?.[0] ?? null" /></label>
+                  <label class="file-picker">{{ paymentReceipt?.name ?? 'Adjuntar comprobante privado' }}<input aria-describedby="payment-receipt-format-help" type="file" accept=".png,.jpg,.jpeg,image/png,image/jpeg" required @change="paymentReceipt = ($event.target as HTMLInputElement).files?.[0] ?? null" /></label>
                   <button class="secondary" :disabled="!paymentReceipt">Adjuntar</button>
+                  <small id="payment-receipt-format-help">Un comprobante en PNG o JPEG. Máximo 10 MiB y 40 megapíxeles por imagen.</small>
                 </form>
                 <button v-else class="secondary" @click="downloadPaymentReceipt(paymentDraft)">Descargar comprobante</button>
                 <button class="text-button" @click="clearPaymentDraft">Preparar otro pago</button>

@@ -1063,12 +1063,15 @@ describe('aplicación', () => {
     await rowFor('PAGO PRIMERO').find('button').trigger('click')
     await flushPromises()
     const receiptInput = wrapper.find('.payment-box input[type="file"]')
+    expect(receiptInput.attributes('accept')?.split(',')).toEqual(['.png', '.jpg', '.jpeg', 'image/png', 'image/jpeg'])
+    expect(wrapper.get('#' + receiptInput.attributes('aria-describedby')).text())
+      .toBe('Un comprobante en PNG o JPEG. Máximo 10 MiB y 40 megapíxeles por imagen.')
     Object.defineProperty(receiptInput.element, 'files', {
       configurable: true,
-      value: [new File(['evidence'], 'primero.pdf', { type: 'application/pdf' })],
+      value: [new File(['evidence'], 'primero.png', { type: 'image/png' })],
     })
     await receiptInput.trigger('change')
-    expect(wrapper.text()).toContain('primero.pdf')
+    expect(wrapper.text()).toContain('primero.png')
 
     await rowFor('PAGO PRIMERO').find('button').trigger('click')
     await rowFor('PAGO SEGUNDO').find('button').trigger('click')
@@ -1080,7 +1083,7 @@ describe('aplicación', () => {
 
     expect(wrapper.text()).toContain('Borrador #56')
     expect(wrapper.text()).not.toContain('Borrador #55')
-    expect(wrapper.text()).not.toContain('primero.pdf')
+    expect(wrapper.text()).not.toContain('primero.png')
     expect(wrapper.find('.payment-box .file-picker').text()).toContain('Adjuntar comprobante privado')
   })
 })
