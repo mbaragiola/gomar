@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -23,10 +24,10 @@ func TestPostgresMCPBookingReadsOmitPrivateDataAndRespectFlags(t *testing.T) {
 	}
 	if _, err := db.ExecContext(ctx, `
  INSERT INTO entities(id,name,cuit,active) VALUES(1,'Synthetic Area','00000000001',TRUE),(2,'Other Entity','00000000002',TRUE);
- INSERT INTO outlets(id,entity_id,name,active) VALUES(1,1,'Centro',TRUE),(2,1,'Norte',TRUE),(3,2,'Centro',TRUE),(4,1,'Unconfigured',TRUE),(5,1,'No grant',TRUE);
+ INSERT INTO outlets(id,entity_id,name,active) VALUES(1,1,'Centro',TRUE),(2,1,'Norte',TRUE),(3,2,'Centro',TRUE),(4,1,'Unconfigured',TRUE),(5,1,'No grant',TRUE),(6,1,'Configured with no menu',TRUE);
  INSERT INTO memberships(id,user_id,entity_id,role,active) VALUES(1,1,1,'administration',TRUE);
- INSERT INTO outlet_grants VALUES(1,1),(1,2),(1,4);
- INSERT INTO reservation_venues VALUES(1,'venue-one','Centro','private-policy',TRUE),(2,'venue-two','Norte','private-policy',FALSE);
+ INSERT INTO outlet_grants VALUES(1,1),(1,2),(1,4),(1,6);
+ INSERT INTO reservation_venues VALUES(1,'venue-one','Centro','private-policy',TRUE),(2,'venue-two','Norte','private-policy',FALSE),(6,'venue-six','Configured with no menu','',FALSE);
  INSERT INTO reservation_tables VALUES(1,'private-table-label',8);
  INSERT INTO reservation_slots VALUES(1,'2030-11-20T02:59:59Z'),(1,'2030-11-20T03:00:00.001Z'),
  (1,'2030-11-20T12:00:00Z'),(1,'2030-11-21T03:00:00.100Z'),(2,'2030-11-20T12:00:00Z');
@@ -140,23 +141,26 @@ func TestPostgresMCPBookingReadsOmitPrivateDataAndRespectFlags(t *testing.T) {
 	invoke(noFlags, "GET", p+movements, "", token, false, 404)
 	const setup = "/reservation-setup"
 	const zone = "America/Argentina/Buenos_Aires"
+	saved, unsaved := true, false
 	for _, tc := range []struct {
 		outlet string
 		want   mcpclient.ReservationSetup
 	}{
-		{"1", mcpclient.ReservationSetup{VenueConfigured: true, VenueEnabled: true, PublicFeatureEnabled: true, Timezone: zone}},
-		{"2", mcpclient.ReservationSetup{VenueConfigured: true, VenueEnabled: false, PublicFeatureEnabled: true, Timezone: zone}},
-		{"4", mcpclient.ReservationSetup{VenueConfigured: false, VenueEnabled: false, PublicFeatureEnabled: true, Timezone: zone}},
+		{"1", mcpclient.ReservationSetup{VenueConfigured: true, VenueEnabled: true, PublicFeatureEnabled: true, MenuSaved: &saved, Timezone: zone}},
+		{"2", mcpclient.ReservationSetup{VenueConfigured: true, VenueEnabled: false, PublicFeatureEnabled: true, MenuSaved: &saved, Timezone: zone}},
+		{"4", mcpclient.ReservationSetup{VenueConfigured: false, VenueEnabled: false, PublicFeatureEnabled: true, MenuSaved: &unsaved, Timezone: zone}},
+		{"6", mcpclient.ReservationSetup{VenueConfigured: true, VenueEnabled: false, PublicFeatureEnabled: true, MenuSaved: &unsaved, Timezone: zone}},
 	} {
 		row := invoke(routes, "GET", "/api/v1/mcp/entities/1/outlets/"+tc.outlet+setup, "", wide, false, 200)
 		var seen map[string]json.RawMessage
 		decode(row, &seen)
-		if len(seen) != 4 {
+		if len(seen) != 5 || seen["menu_saved"] == nil || row.Header().Get("Cache-Control") != "no-store" {
 			t.Fatal("unexpected setup fields")
 		}
 		var got mcpclient.ReservationSetup
 		decode(row, &got)
-		if got != tc.want || strings.Contains(row.Body.String(), "private") || strings.Contains(row.Body.String(), "venue-one") {
+		if !reflect.DeepEqual(got, tc.want) || strings.Contains(row.Body.String(), "private") || strings.Contains(row.Body.String(), "venue-one") ||
+			strings.Contains(row.Body.String(), "PAYLOAD") || strings.Contains(row.Body.String(), "2030-11-20") {
 			t.Fatal(got)
 		}
 		native := invoke(routes, "GET", "/api/v1/entities/1/outlets/"+tc.outlet+"/reservations/settings", "", "", true, map[bool]int{true: 200, false: 404}[tc.want.VenueConfigured])
@@ -166,11 +170,17 @@ func TestPostgresMCPBookingReadsOmitPrivateDataAndRespectFlags(t *testing.T) {
 			if config.Enabled != got.VenueEnabled || config.Timezone != got.Timezone {
 				t.Fatal("native settings mismatch")
 			}
+			side := invoke(routes, "GET", "/api/v1/entities/1/outlets/"+tc.outlet+"/reservations/menu", "", "", true, 200)
+			var status reservationMenuStatus
+			decode(side, &status)
+			if status.Available != *got.MenuSaved {
+				t.Fatal("native menu status mismatch")
+			}
 		}
 	}
 	var off mcpclient.ReservationSetup
 	decode(invoke(noFlags, "GET", p+setup, "", token, false, 200), &off)
-	if off != (mcpclient.ReservationSetup{VenueConfigured: true, VenueEnabled: true, PublicFeatureEnabled: false, Timezone: zone}) {
+	if !reflect.DeepEqual(off, mcpclient.ReservationSetup{VenueConfigured: true, VenueEnabled: true, PublicFeatureEnabled: false, MenuSaved: &saved, Timezone: zone}) {
 		t.Fatal(off)
 	}
 	invoke(routes, "GET", "/api/v1/mcp/entities/1/outlets/5"+setup, "", wide, false, 404)
