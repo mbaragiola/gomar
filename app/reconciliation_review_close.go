@@ -63,10 +63,7 @@ func (a *app) closeReconciliationReview(w http.ResponseWriter, r *http.Request, 
 	if !errors.Is(err, sql.ErrNoRows) {
 		return err
 	}
-	if run.State != "review" {
-		return problem{409, "La conciliación no está en revisión."}
-	}
-	unresolved, err := supportedReconciliationClosure(tx, run)
+	unresolved, err := reconciliationClosureEligibility(tx, run)
 	if err != nil {
 		return err
 	}
@@ -112,6 +109,20 @@ func (a *app) closeReconciliationReview(w http.ResponseWriter, r *http.Request, 
 	return nil
 }
 
+var (
+	reconciliationNotInReview           = problem{409, "La conciliación no está en revisión."}
+	unsupportedReconciliationReviewData = problem{503, "El cierre no está disponible para estos datos de revisión."}
+)
+
+// Keep the document-state checks shared. Native locking, replay and revision
+// handling are separate and this read cannot guarantee a future closure.
+func reconciliationClosureEligibility(tx *sql.Tx, run reconciliationReadRun) (int64, error) {
+	if run.State != "review" {
+		return 0, reconciliationNotInReview
+	}
+	return supportedReconciliationClosure(tx, run)
+}
+
 func supportedReconciliationClosure(tx *sql.Tx, run reconciliationReadRun) (int64, error) {
 	var rows, members, confirmed, rejected int64
 	var native bool
@@ -128,7 +139,7 @@ func supportedReconciliationClosure(tx *sql.Tx, run reconciliationReadRun) (int6
 	}
 	if !native || run.Rules != 1 || rows != run.Counts.Rows || members != rows ||
 		confirmed != run.Counts.Confirmed || rejected != run.Counts.Rejected || confirmed > rows/2 {
-		return 0, problem{503, "El cierre no está disponible para estos datos de revisión."}
+		return 0, unsupportedReconciliationReviewData
 	}
 	return rows - 2*confirmed, nil
 }
