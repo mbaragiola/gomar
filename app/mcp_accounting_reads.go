@@ -6,6 +6,8 @@ import (
 	"net/url"
 	"slices"
 	"strconv"
+
+	"github.com/mbaragiola/gomar/app/internal/documentref"
 )
 
 func (a *app) registerMCPAccountingReads(add func(string, string, http.HandlerFunc)) {
@@ -50,7 +52,15 @@ type mcpDocumentMetadata struct {
 }
 
 func mcpAccountingDocuments(r *http.Request, tx *sql.Tx, s mcpTokenScope) (any, error) {
-	cursor, err := mcpAccountingCursor(r)
+	query, err := url.ParseQuery(r.URL.RawQuery)
+	if err != nil {
+		return nil, badInput
+	}
+	reference, valid := documentref.TakeQuery(query)
+	if !valid {
+		return nil, badInput
+	}
+	cursor, err := mcpAccountingCursorValues(query)
 	if err != nil {
 		return nil, err
 	}
@@ -58,19 +68,30 @@ func mcpAccountingDocuments(r *http.Request, tx *sql.Tx, s mcpTokenScope) (any, 
 	if err != nil {
 		return nil, err
 	}
-	rows, err := tx.QueryContext(r.Context(), `SELECT d.id,d.document_type,d.status,d.supplier_id,
+	statement := `SELECT d.id,d.document_type,d.status,d.supplier_id,
 		d.issue_date,d.due_date,d.currency,d.total_minor FROM documents d
 		JOIN suppliers p ON p.id=d.supplier_id AND p.entity_id=d.entity_id
-		WHERE d.entity_id=$1 AND d.outlet_id=$2 AND d.id>$3 AND d.deleted_at IS NULL
-		ORDER BY d.id LIMIT $4`, s.ID, outlet, cursor, mcpPageSize+1)
+		WHERE d.entity_id=$1 AND d.outlet_id=$2 AND d.id>$3 AND d.deleted_at IS NULL`
+	args := []any{s.ID, outlet, cursor, mcpPageSize + 1}
+	if reference != nil {
+		statement = `SELECT d.id,d.document_type,d.status,d.supplier_id,d.issue_date,d.due_date,d.currency,d.total_minor` +
+			documentScope + " AND d.id>$4 AND d.document_type=$6 AND d.letter=$7 AND d.point_of_sale=$8 AND d.number=$9"
+		args = []any{s.ID, s.id, outlet, cursor, mcpPageSize + 1, reference.DocumentType, reference.Letter, reference.PointOfSale, reference.Number}
+	}
+	limit := " ORDER BY d.id LIMIT $4"
+	if reference != nil {
+		limit = " ORDER BY d.id LIMIT $5"
+	}
+	rows, err := tx.QueryContext(r.Context(), statement+limit, args...)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 	result := struct {
-		Documents []mcpDocumentMetadata `json:"documents"`
-		NextID    int64                 `json:"next_id,omitempty"`
-	}{Documents: []mcpDocumentMetadata{}}
+		Documents []mcpDocumentMetadata  `json:"documents"`
+		NextID    int64                  `json:"next_id,omitempty"`
+		Reference *documentref.Reference `json:"printed_reference,omitempty"`
+	}{Documents: []mcpDocumentMetadata{}, Reference: reference}
 	for rows.Next() {
 		var d mcpDocumentMetadata
 		if err := rows.Scan(&d.ID, &d.Type, &d.Status, &d.Supplier, &d.Issue, &d.Due, &d.Currency, &d.Total); err != nil {

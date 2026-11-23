@@ -20,6 +20,8 @@ import PublicReservations from './components/PublicReservations.vue'
 import StaffReservations from './components/StaffReservations.vue'
 import ReconciliationPanel from './components/ReconciliationPanel.vue'
 import { localDate, localDateTime, money, todayInBuenosAires } from './format'
+import { blankPrintedReference, parsePrintedReference, printedDocumentTypes, printedReferenceLabel, printedReferenceResponse } from './document-reference'
+import type { PrintedReference, PrintedReferenceMatch } from './document-reference'
 import type { Document, Entity, EntityManagement, IntakeOperation, OcrConfig, OcrDraft, Outlet, Payable, Payment, Supplier } from './types'
 
 const publicVenue = /^\/reservas\/([a-z0-9][a-z0-9-]{0,63})\/?$/.exec(window.location.pathname)?.[1]
@@ -38,6 +40,13 @@ const entities = ref<Entity[]>([])
 const outlets = ref<Outlet[]>([])
 const suppliers = ref<Supplier[]>([])
 const documents = ref<Document[]>([])
+const referenceForm = reactive(blankPrintedReference())
+const appliedReference = ref<PrintedReference | null>(null)
+const referenceMatches = ref<PrintedReferenceMatch[]>([])
+const referenceNextID = ref(0)
+const referenceLoading = ref(false)
+const referenceError = ref('')
+let referenceGeneration = 0
 const total = ref<{ cantidad: number; totales: { moneda: string; cantidad: number; total: string }[] }>({ cantidad: 0, totales: [] })
 const selectedEntityId = ref<number | null>(null)
 const selectedOutletId = ref<number | null>(null)
@@ -247,8 +256,19 @@ function finishBusy(token: number) {
   if (token === busyGeneration) busy.value = false
 }
 
+function clearReferenceSearch(resetForm = true) {
+  referenceGeneration += 1
+  appliedReference.value = null
+  referenceMatches.value = []
+  referenceNextID.value = 0
+  referenceLoading.value = false
+  referenceError.value = ''
+  if (resetForm) Object.assign(referenceForm, blankPrintedReference())
+}
+
 function clearDocumentState(resetBusy = true) {
   if (resetBusy) clearBusy()
+  clearReferenceSearch()
   documents.value = []
   total.value = { cantidad: 0, totales: [] }
   selectedDocument.value = null
@@ -557,6 +577,7 @@ async function saveSupplier(supplier: Supplier) {
 
 async function loadDocuments(sessionToken = sessionGeneration, contextToken = contextGeneration) {
   const listToken = ++listGeneration
+  clearReferenceSearch(false)
   documents.value = []
   total.value = { cantidad: 0, totales: [] }
   selectedDocument.value = null
@@ -571,6 +592,56 @@ async function loadDocuments(sessionToken = sessionGeneration, contextToken = co
   if (!contextIsCurrent(sessionToken, contextToken, entityId) || listToken !== listGeneration || outletId !== selectedOutletId.value) return
   documents.value = nextDocuments
   total.value = nextTotal
+}
+
+async function findPrintedReference(secondPage = false) {
+  const reference = secondPage ? appliedReference.value : parsePrintedReference(referenceForm)
+  const entity = selectedEntityId.value
+  const outlet = selectedOutletId.value
+  if (!entity || !outlet) return
+  if (!reference) {
+    referenceError.value = 'Indicá el tipo, la letra (o Sin letra), el punto de venta y el número tal como están impresos.'
+    return
+  }
+  const after = secondPage ? referenceNextID.value : 0
+  if (secondPage && (!after || referenceLoading.value)) return
+
+  const run = ++referenceGeneration
+  const session = sessionGeneration
+  const context = contextGeneration
+  const current = () => run === referenceGeneration && contextIsCurrent(session, context, entity) && selectedOutletId.value === outlet
+  if (!secondPage) {
+    clearHandoffLocation()
+    detailGeneration += 1
+    selectedDocument.value = null
+    uploadFile.value = null
+    mobileDetail.value = false
+    referenceMatches.value = []
+    referenceNextID.value = 0
+  }
+  appliedReference.value = reference
+  referenceError.value = ''
+  referenceLoading.value = true
+  const query = new URLSearchParams({
+    outlet_id: String(outlet), document_type: reference.document_type, letter: reference.letter,
+    point_of_sale: String(reference.point_of_sale), number: String(reference.number),
+  })
+  if (after) query.set('after_id', String(after))
+  try {
+    const result = await request<unknown>(`/entities/${entity}/documents?${query}`, { cache: 'no-store' })
+    if (!current()) return
+    const page = printedReferenceResponse(result, reference, after)
+    referenceMatches.value = [...referenceMatches.value, ...page.matches]
+    referenceNextID.value = page.nextID
+  } catch {
+    if (current()) {
+      referenceMatches.value = []
+      referenceNextID.value = 0
+      referenceError.value = 'No se pudo buscar el comprobante en este local. Verificá tu acceso e intentá de nuevo.'
+    }
+  } finally {
+    if (current()) referenceLoading.value = false
+  }
 }
 
 async function changeEntity() {
@@ -597,23 +668,49 @@ async function changeOutlet() {
   }
 }
 
-async function openDocument(id: number) {
+function openReferenceDocument(id: number) {
+  const reference = appliedReference.value
+  if (reference) void openDocument(id, reference)
+}
+
+async function openDocument(id: number, reference?: PrintedReference) {
   clearHandoffLocation()
-  if (!selectedEntityId.value) return
+  if (!selectedEntityId.value || reference && !selectedOutletId.value) return
   const sessionToken = sessionGeneration
   const contextToken = contextGeneration
   const entityId = selectedEntityId.value
   const detailToken = ++detailGeneration
+  const outlet = selectedOutletId.value
+  const current = () => contextIsCurrent(sessionToken, contextToken, entityId) && detailToken === detailGeneration &&
+    (!reference || selectedOutletId.value === outlet && appliedReference.value === reference)
   selectedDocument.value = null
   error.value = ''
+  if (reference) referenceError.value = ''
   try {
-    const detail = await request<Document>(`/entities/${entityId}/documents/${id}`)
-    if (contextIsCurrent(sessionToken, contextToken, entityId) && detailToken === detailGeneration) {
+    let detail: Document
+    if (reference) {
+      const query = new URLSearchParams({
+        document_type: reference.document_type, letter: reference.letter,
+        point_of_sale: String(reference.point_of_sale), number: String(reference.number),
+      })
+      detail = await request<Document>(`/entities/${entityId}/outlets/${outlet}/documents/${id}/printed-reference-detail?${query}`, {
+        cache: 'no-store', referrerPolicy: 'no-referrer',
+      })
+      if (detail.id !== id || detail.entity_id !== entityId || detail.outlet.id !== outlet ||
+        detail.tipo !== reference.document_type || detail.letra !== reference.letter ||
+        detail.punto_venta !== reference.point_of_sale || detail.numero !== reference.number) throw new Error('No se encontró el comprobante.')
+    } else {
+      detail = await request<Document>(`/entities/${entityId}/documents/${id}`)
+    }
+    if (current()) {
       selectedDocument.value = detail
       showMobileDocument()
     }
   } catch (value) {
-    if (contextIsCurrent(sessionToken, contextToken, entityId) && detailToken === detailGeneration) showError(value)
+    if (current()) {
+      if (reference) referenceError.value = 'El comprobante ya no coincide en este local. Hacé la búsqueda de nuevo.'
+      else showError(value)
+    }
   }
 }
 
@@ -1415,8 +1512,8 @@ onBeforeUnmount(() => window.removeEventListener('hashchange', syncAttachmentHan
         </section>
 
         <section v-show="staffView === 'documents'" class="summary-grid staff-totals" :class="{ 'staff-mobile-detail': showDocumentDetail || showCreate }">
-          <article class="metric card"><span>Comprobantes</span><strong>{{ total.cantidad }}</strong></article>
-          <article v-for="row in total.totales" :key="row.moneda" class="metric card"><span>Total {{ row.moneda }}</span><strong>{{ money(row.total, row.moneda) }}</strong></article>
+          <article class="metric card"><span>{{ appliedReference ? 'Todos los comprobantes del local' : 'Comprobantes' }}</span><strong>{{ total.cantidad }}</strong></article>
+          <article v-for="row in total.totales" :key="row.moneda" class="metric card"><span>{{ appliedReference ? 'Total del local' : 'Total' }} {{ row.moneda }}</span><strong>{{ money(row.total, row.moneda) }}</strong></article>
         </section>
 
         <ReconciliationPanel
@@ -1550,7 +1647,48 @@ onBeforeUnmount(() => window.removeEventListener('hashchange', syncAttachmentHan
         <div v-show="staffView === 'documents' && !showCreate" class="content-grid" :class="{ 'staff-has-document': showDocumentDetail }">
           <section class="card list-card">
             <div class="section-heading"><div><p class="eyebrow">REGISTRO</p><h2>Comprobantes</h2></div><span>{{ outlets.find((o) => o.id === selectedOutletId)?.nombre }}</span></div>
-            <div v-if="documents.length" class="document-list">
+            <details v-if="selectedOutletId && canReadBusiness" class="document-reference-finder">
+              <summary>Buscar por referencia impresa</summary>
+              <form class="form-grid" @submit.prevent="findPrintedReference()">
+                <label>Tipo de comprobante
+                  <select v-model="referenceForm.document_type" required>
+                    <option value="" disabled>Seleccioná el tipo</option>
+                    <option v-for="(label, type) in printedDocumentTypes" :key="type" :value="type">{{ label }}</option>
+                  </select>
+                </label>
+                <label>Letra impresa
+                  <select v-model="referenceForm.letter">
+                    <option value="-" disabled>Seleccioná la letra</option>
+                    <option value="">Sin letra</option>
+                    <option v-for="letter in 'ABCDEFGHIJKLMNOPQRSTUVWXYZ'" :key="letter" :value="letter">{{ letter }}</option>
+                  </select>
+                </label>
+                <label>Punto de venta impreso<input v-model="referenceForm.point_of_sale" inputmode="numeric" pattern="[0-9]{1,5}" maxlength="5" required /></label>
+                <label>Número impreso<input v-model="referenceForm.number" inputmode="numeric" pattern="[0-9]{1,8}" maxlength="8" required /></label>
+                <div class="full form-actions">
+                  <button v-if="appliedReference" type="button" class="secondary" @click="clearReferenceSearch()">Quitar búsqueda</button>
+                  <button class="primary" :disabled="referenceLoading">Buscar en este local</button>
+                </div>
+              </form>
+            </details>
+            <p v-if="referenceError" class="document-reference-status" role="alert">{{ referenceError }}</p>
+            <template v-if="appliedReference">
+              <p class="document-reference-status" role="status">
+                {{ printedReferenceLabel(appliedReference) }}:
+                <template v-if="referenceLoading">Buscando en este local…</template>
+                <template v-else-if="referenceMatches.length > 1 || referenceNextID">Hay varias coincidencias. Abrí la que corresponda.</template>
+                <template v-else-if="referenceMatches.length === 1">Una coincidencia. Abrí el comprobante para ver el detalle.</template>
+                <template v-else-if="!referenceError">No hay coincidencias en este local.</template>
+              </p>
+              <div v-if="referenceMatches.length" class="document-list">
+                <button v-for="match in referenceMatches" :key="match.id" type="button" class="document-row" :class="{ active: selectedDocument?.id === match.id }" @click="openReferenceDocument(match.id)">
+                  <span><strong>Comprobante {{ match.id }}</strong><small>{{ localDate(match.issue_date) }}</small></span>
+                  <span class="status" :class="match.status">{{ match.status === 'draft' ? 'Pendiente' : 'Revisado' }}</span>
+                </button>
+              </div>
+              <button v-if="referenceNextID" type="button" class="text-button document-reference-status" :disabled="referenceLoading" @click="findPrintedReference(true)">Más coincidencias</button>
+            </template>
+            <div v-else-if="documents.length" class="document-list">
               <button v-for="item in documents" :key="item.id" class="document-row" :class="{ active: attachmentDocumentID === item.id }" @click="openDocument(item.id)">
                 <span><strong>{{ item.supplier.razon_social }}</strong><small>{{ item.referencia }}</small></span>
                 <span class="row-end"><strong>{{ money(item.total, item.moneda) }}</strong><small>{{ localDate(item.fecha_emision) }}</small></span>

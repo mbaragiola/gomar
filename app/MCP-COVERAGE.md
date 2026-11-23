@@ -190,3 +190,19 @@ business-read permission for that branch. It returns only the product ID,
 name, price in ARS cents, current catalog revision, and active status.
 Inactive products remain readable, like in the native catalog. It does
 not search, show stock or costs, record a sale, or change the product.
+
+### Find a document by its printed reference
+
+In Comprobantes, use **Buscar por referencia impresa** for the selected
+branch. In MCP, use the same four fields as an optional `printed_reference`
+in `gomar_list_documents`: fiscal document type, uppercase letter (empty
+for no letter), printed point of sale (1–99,999), and printed number
+(1–99,999,999). This is the number on a document, not the branch ID. All
+four fields are required for a lookup; omitting the lookup preserves the
+ordinary list. Results use the current branch grant and business reading
+permission. Different issuers can print the same reference. If several
+documents match, open the right one explicitly in Gomar rather than using
+the first. Opening a match in Gomar rechecks the same branch and reference
+in case the document moved or was corrected. With `next_id`, request the
+next page using the same reference and branch. Pages are not a snapshot. The filter does not disclose new
+supplier details, retrieve files, change a record, or approve a review.

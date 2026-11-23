@@ -34,6 +34,14 @@ Usá hasta 31 días en Buenos Aires. La sucursal debe tener stock habilitado
 y tu rol debe permitir consultarlo. Gomar muestra el saldo estimado que tiene
 registrado, no un conteo físico nuevo.
 
+**Comprobantes**
+
+> Buscá la Nota de crédito sin letra, punto de venta 00012 y número 00000345 en [sucursal]. Si hay varias coincidencias, mostrame cuáles para elegir en Gomar.
+
+Usá los cuatro datos tal como figuran en el comprobante. El punto de
+venta impreso no es la sucursal. La búsqueda no abre adjuntos, cambia
+datos ni marca el comprobante como revisado.
+
 **Cuentas a pagar**
 
 > Mostrame las cuentas a pagar de [sucursal] para que elija una. Una vez que la identifiquemos, explicame cómo cambió su saldo: alta, aplicaciones de pagos y reversiones, con la fecha si está registrada.
