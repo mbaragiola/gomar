@@ -28,8 +28,15 @@ var reservationTableAddChanged = problem{409, "Cambió la configuración del loc
 var reservationTableAddEnabled = problem{409, "Solo se puede preparar una mesa para un local de reservas desactivado."}
 var reservationTableAddAcknowledgment = problem{422, "Confirmá que Gomar no permite retirar esta mesa y que podría ampliar la disponibilidad al habilitar reservas."}
 
+func validReservationTableNumber(number int) bool { return number >= 1 && number <= 9999 }
+
+// Match the same numbered Mesa label, including legacy case, spaces and leading zeros.
+func reservationTableNumberPattern(number int) string {
+	return "^[[:space:]]*mesa[[:space:]]+0*" + strconv.Itoa(number) + "[[:space:]]*$"
+}
+
 func validReservationTableAdd(in reservationTableAddInput) bool {
-	return in.TableNumber >= 1 && in.TableNumber <= 9999 && in.Capacity >= 1 && in.Capacity <= 12
+	return validReservationTableNumber(in.TableNumber) && in.Capacity >= 1 && in.Capacity <= 12
 }
 
 func decodeReservationTableAdd(raw []byte) (reservationTableAddInput, error) {
@@ -67,8 +74,8 @@ func readReservationTableAdd(ctx context.Context, tx *sql.Tx, s reservationConfi
 	var exists bool
 	err := tx.QueryRowContext(ctx, `SELECT v.enabled,
  EXISTS(SELECT 1 FROM reservation_tables t WHERE t.outlet_id=v.outlet_id
-   AND lower(t.label) ~ ('^[[:space:]]*mesa[[:space:]]+0*' || $2 || '[[:space:]]*$'))
- FROM reservation_venues v WHERE v.outlet_id=$1`, s.Outlet, number).Scan(&p.VenueEnabled, &exists)
+   AND lower(t.label) ~ $2)
+ FROM reservation_venues v WHERE v.outlet_id=$1`, s.Outlet, reservationTableNumberPattern(in.TableNumber)).Scan(&p.VenueEnabled, &exists)
 	if errors.Is(err, sql.ErrNoRows) {
 		return reservationTableAddPreview{}, reservationUnavailable
 	}
