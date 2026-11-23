@@ -63,6 +63,7 @@ func (a *app) registerPOS(add func(string, string, http.HandlerFunc)) {
 	if a.enablePOSTableChecks {
 		add(posPath+"/table-checks", http.MethodPost, a.scopedRequest("read_business_data", a.lockOutletForOperation(a.savePOSTableCheck), true))
 		add(posPath+"/table-checks/{table}", http.MethodGet, a.scoped("read_business_data", a.readPOSTableCheck))
+		add(posPath+"/table-checks/{table}/retire", http.MethodPost, a.scopedRequest("read_business_data", a.lockOutletForOperation(a.retirePOSTableCheck), true))
 	}
 	add(posPath+"/catalog", "POST", a.scopedRequest("manage_entity_access", a.lockOutletForOperation(savePOSProduct), true))
 	add(posPath+"/catalog/{product}", "PUT", a.scopedRequest("manage_entity_access", a.lockOutletForOperation(savePOSProduct), true))

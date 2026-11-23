@@ -56,6 +56,7 @@ var postgresMigrationNames = []string{
 	"032_employee_onboarding.sql",
 	"033_pos_product_barcode.sql",
 	"034_pos_table_checks.sql",
+	"035_pos_table_check_retirement.sql",
 }
 
 func postgresConfig(dsn string) (*pgx.ConnConfig, error) {

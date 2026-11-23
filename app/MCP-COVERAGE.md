@@ -9,7 +9,7 @@ For everyday examples, see the [Spanish prompt guide](MCP-GUIA-DE-CONSULTAS.md).
 | Workflow | Shipped MCP reads and opt-in proposals | Intentionally stays in Gomar or is not built |
 | --- | --- | --- |
 | Identity and business scope | Current user, businesses, and outlets; propose a display-name change for one active outlet | Native only: business and outlet administration beyond that rename, membership and grant management, credentials and provider sign-in. |
-| POS | Recorded sales totals, product catalog with exact barcode lookup, one exact saved table check and native handoff; propose product creation and separate name, price, availability or barcode changes | Native only: scan into the local cart, save a tab-local untendered cart, preview/print an unsaved table check, register sales, checkout and offline sales sync. Not built: editing or settling a saved table check, and shift management. |
+| POS | Recorded sales totals, product catalog with exact barcode lookup, one exact saved table check and native handoff; propose product creation and separate name, price, availability or barcode changes | Native only: scan into the local cart, save a tab-local untendered cart, explicitly retire an inspected untendered check, preview/print an unsaved table check, register sales, checkout and offline sales sync. Not built: editing or settling a saved table check, and shift management. |
 | Inventory | Tracked balances and thresholds, including an exact configured item by ID, movement history, filtered alert pages and stock alert counts; propose receipts, waste, physical counts, initial disabled product setup, and changes to a product’s minimum or tracking | Native only: branch-wide settings. Not built: bills of materials. |
 | Wiki | Search and read by ID; propose new pages and versioned edits | Not built: deletion. |
 | Delivery | Recent order status with limited fields; status counts for the latest 100 inbox records | No native staff write workflow. Provider calls and credentials are not part of MCP. |
@@ -261,8 +261,7 @@ authorized branch while online. Saving requires a deliberate native click:
 no MCP caller has the unrecorded tab-local cart or may create one from
 guessed items. Saved rows use the exact current catalog revisions and can be
 consulted by authorized staff in the same branch. They do not register a
-sale, payment, stock change, reservation, or fiscal document. This first
-increment doesn't edit, retire, or settle an existing saved check.
+sale, payment, stock change, reservation, or fiscal document. An operator can retire a saved check and free the table for another check; this doesn't edit or settle it. Retirement preserves the original check and reason.
 
 `gomar_read_pos_table_check` returns the saved table number, total in ARS
 cents, fixed untendered status, and a same-origin **Caja** handoff. It uses
@@ -273,6 +272,13 @@ the exact business and branch. The operator then chooses **Consultar mesa**;
 the browser API rechecks current scope before showing the saved items.
 Opening the link never requests or saves a cart, and changing the link does
 not change the authorized branch.
+Retiring is native only. The handoff lets the operator inspect the current
+items inside Caja before confirming a reason. MCP cannot confirm that a
+check was saved in error or cancelled without consumption or payment.
+A stale browser action targets the originally inspected check, not a
+replacement at the same table. After retirement the MCP exact lookup
+finds no active check until a replacement is saved; it does not reveal
+retirement history or create a replacement.
 
 ### Find a document by its printed reference
 
