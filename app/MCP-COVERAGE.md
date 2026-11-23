@@ -10,7 +10,7 @@ For everyday examples, see the [Spanish prompt guide](MCP-GUIA-DE-CONSULTAS.md).
 | --- | --- | --- |
 | Identity and business scope | Current user, businesses, and outlets; propose a display-name change for one active outlet | Native only: business and outlet administration beyond that rename, membership and grant management, credentials and provider sign-in. |
 | POS | Recorded sales totals, product catalog; propose product creation and separate name, price or availability changes | Native only: register sales, checkout and offline sales sync. Not built: shift management. |
-| Inventory | Tracked balances, thresholds, movement history and stock alert counts; propose receipts, waste, physical counts, initial disabled product setup, and changes to a product’s minimum or tracking | Native only: branch-wide settings. Not built: bills of materials. |
+| Inventory | Tracked balances and thresholds, including an exact configured item by ID, movement history and stock alert counts; propose receipts, waste, physical counts, initial disabled product setup, and changes to a product’s minimum or tracking | Native only: branch-wide settings. Not built: bills of materials. |
 | Wiki | Search and read by ID; propose new pages and versioned edits | Not built: deletion. |
 | Delivery | Recent order status with limited fields; status counts for the latest 100 inbox records | No native staff write workflow. Provider calls and credentials are not part of MCP. |
 | Documents and intake | Scoped list, detail and totals by currency; propose draft creation, review, date and amount edits, or separate printed-number and printed point-of-sale corrections | Native only: other document edits, deletion and private file handling. Provider OCR is disabled; staged OCR confirmation is not a shipped workflow. |
@@ -19,7 +19,7 @@ For everyday examples, see the [Spanish prompt guide](MCP-GUIA-DE-CONSULTAS.md).
 | Reconciliation | Scoped counts, paged run list, metadata and setup by ID and a read-only close eligibility check; propose one empty single-outlet draft | Native only: private files, source rows, preparing matches, decisions and closing review. Setup metadata does not prove readiness. |
 | Reservations and menus | Daily counts, setup flags, one exact configured future start and one numbered table check, staff queue and detail, public candidate times, published menu metadata; propose confirmation or cancellation of an existing request and prepare a table, future slot, or fixed informational cancellation notice for an existing disabled venue | Native only: public booking, guest and contact details, custom venue settings and enablement, actual menu files and publication. Preparation never enables or books anything. |
 
-The packaged live server registers 39 baseline read tools. Discovery does not
+The packaged live server registers 40 baseline read tools. Discovery does not
 guarantee access: app flags and current permissions determine which queries
 can run. There are also 25 distinct opt-in proposal actions, not 25
 simultaneous writes. Of those, 21 are named actions and four use distinct older

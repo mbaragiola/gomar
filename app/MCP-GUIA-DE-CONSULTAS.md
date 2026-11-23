@@ -58,3 +58,11 @@ Confirmar en el chat no aplica el cambio.
 
 Son ejemplos de pedidos, no un registro de conversaciones ejecutadas. Para
 ver el alcance completo, consultá la [cobertura de MCP](MCP-COVERAGE.md).
+
+
+Para un producto con ID conocido: «¿Cuántas unidades quedan del producto 84
+en esta sucursal? ¿Está bajo el mínimo o está apagado el control de stock?».
+`gomar_read_stock_product` muestra el saldo registrado, el mínimo y si el
+control está activo tanto en el local como para el producto. Si está
+apagado en cualquiera de los dos, no calcula una alerta. Sólo consulta
+productos con stock configurado y no cambia el inventario.
