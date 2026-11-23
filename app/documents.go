@@ -13,6 +13,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/mbaragiola/gomar/app/internal/documentref"
 )
 
 const documentScope = `
@@ -167,6 +168,25 @@ func listDocuments(r *http.Request, tx *sql.Tx, m entityMembership, _ []byte) (i
 	if err != nil {
 		return 0, nil, err
 	}
+	query, err := url.ParseQuery(r.URL.RawQuery)
+	if err != nil {
+		return 0, nil, badInput
+	}
+	reference, valid := documentref.TakeQuery(query)
+	if !valid {
+		return 0, nil, badInput
+	}
+	if reference != nil {
+		if !only.Valid || len(query["outlet_id"]) != 1 {
+			return 0, nil, badInput
+		}
+		query.Del("outlet_id")
+		cursor, err := mcpAccountingCursorValues(query)
+		if err != nil {
+			return 0, nil, err
+		}
+		return nativePrintedReferenceMatches(r, tx, m, only.Int64, cursor, *reference)
+	}
 	rows, err := tx.Query(selectDocuments+
 		" ORDER BY d.issue_date DESC,d.id DESC", m.ID, m.id, only)
 	if err != nil {
@@ -182,6 +202,42 @@ func listDocuments(r *http.Request, tx *sql.Tx, m entityMembership, _ []byte) (i
 		items = append(items, item)
 	}
 	return 200, items, rows.Err()
+}
+
+type printedReferenceMatch struct {
+	ID        int64  `json:"id"`
+	IssueDate string `json:"issue_date"`
+	Status    string `json:"status"`
+}
+
+// Native lookup lists only enough to select one row. Full reference
+// information about a document still requires an explicit native detail read.
+func nativePrintedReferenceMatches(r *http.Request, tx *sql.Tx, m entityMembership, outlet, cursor int64, reference documentref.Reference) (int, any, error) {
+	rows, err := tx.QueryContext(r.Context(), `SELECT d.id, d.issue_date, d.status`+documentScope+
+		` AND d.id>$4 AND d.document_type=$5 AND d.letter=$6 AND d.point_of_sale=$7 AND d.number=$8
+		ORDER BY d.id LIMIT $9`,
+		m.ID, m.id, outlet, cursor, reference.DocumentType, reference.Letter, reference.PointOfSale, reference.Number, mcpPageSize+1)
+	if err != nil {
+		return 0, nil, err
+	}
+	defer rows.Close()
+	result := struct {
+		Matches   []printedReferenceMatch `json:"matches"`
+		Reference documentref.Reference   `json:"printed_reference"`
+		NextID    int64                   `json:"next_id,omitempty"`
+	}{Matches: []printedReferenceMatch{}, Reference: reference}
+	for rows.Next() {
+		var row printedReferenceMatch
+		if err := rows.Scan(&row.ID, &row.IssueDate, &row.Status); err != nil {
+			return 0, nil, err
+		}
+		result.Matches = append(result.Matches, row)
+	}
+	if len(result.Matches) > mcpPageSize {
+		result.Matches = result.Matches[:mcpPageSize]
+		result.NextID = result.Matches[mcpPageSize-1].ID
+	}
+	return 200, result, rows.Err()
 }
 
 func documentDetail(r *http.Request, tx *sql.Tx, m entityMembership, _ []byte) (int, any, error) {

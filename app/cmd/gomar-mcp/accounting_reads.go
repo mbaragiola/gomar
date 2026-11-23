@@ -1,7 +1,12 @@
 package main
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
+	"errors"
+
+	"github.com/mbaragiola/gomar/app/internal/documentref"
 
 	"github.com/mbaragiola/gomar/app/internal/mcpclient"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -12,9 +17,46 @@ type accountingPageArgs struct {
 	AfterID *int64 `json:"after_id,omitempty" jsonschema:"Cursor next_id de la página anterior; omitilo al empezar"`
 }
 
+type documentPageArgs struct {
+	accountingPageArgs
+	Reference *documentref.Reference `json:"printed_reference,omitempty" jsonschema:"Opcional: referencia exacta completa. No adivines sus partes ni el local."`
+}
+
+// Keep an absent filter backward compatible, but never treat an explicitly
+// incomplete filter (including null) as a request for the ordinary list.
+func (args *documentPageArgs) UnmarshalJSON(data []byte) error {
+	type pageAliases accountingPageArgs
+	var input struct {
+		pageAliases
+		Reference json.RawMessage `json:"printed_reference"`
+	}
+	if err := json.Unmarshal(data, &input); err != nil {
+		return err
+	}
+	*args = documentPageArgs{accountingPageArgs: accountingPageArgs(input.pageAliases)}
+	if input.Reference == nil {
+		return nil
+	}
+	var fields struct {
+		documentref.Reference
+		ExplicitLetter *string `json:"letter"`
+	}
+	d := json.NewDecoder(bytes.NewReader(input.Reference))
+	d.DisallowUnknownFields()
+	if err := d.Decode(&fields); err != nil || fields.ExplicitLetter == nil {
+		return errors.New("indicá todos los campos de la referencia impresa, incluida la letra")
+	}
+	fields.Reference.Letter = *fields.ExplicitLetter
+	if !fields.Reference.Valid() {
+		return errors.New("la referencia impresa no es válida")
+	}
+	args.Reference = &fields.Reference
+	return nil
+}
+
 func addAccountingReadTools(server *mcp.Server, client *mcpclient.Client) {
-	readTool(server, "gomar_list_documents", "Listá hasta 30 comprobantes de una sucursal autorizada, sin adjuntos ni CUIT. Los importes están en centavos; un crédito se distingue por el tipo de comprobante. Usá next_id para pedir la página siguiente.", func(ctx context.Context, in accountingPageArgs) (mcpclient.DocumentList, error) {
-		return client.Documents(ctx, in.EntityID, in.OutletID, in.AfterID)
+	readTool(server, "gomar_list_documents", "Listá hasta 30 comprobantes de una sucursal autorizada, sin adjuntos ni CUIT. Los importes están en centavos; un crédito se distingue por el tipo de comprobante. Podés filtrar por referencia impresa exacta: tipo, letra (vacía si no tiene), punto de venta y número. Distintos emisores pueden compartirla: no elijas el primer resultado ni cambies de sucursal. Si hay next_id, repetí la misma referencia en la página siguiente.", func(ctx context.Context, in documentPageArgs) (mcpclient.DocumentList, error) {
+		return client.DocumentsByReference(ctx, in.EntityID, in.OutletID, in.AfterID, in.Reference)
 	})
 	readTool(server, "gomar_document_totals", "Sumá los comprobantes no eliminados de una sucursal, incluidos borradores y revisados, sin límite de fecha. Las notas de crédito restan. Cada moneda se informa por separado y el total es un texto con un entero exacto en centavos. No son ventas de caja ni pagos.", func(ctx context.Context, in outletArgs) (mcpclient.DocumentTotals, error) {
 		return client.DocumentTotals(ctx, in.EntityID, in.OutletID)

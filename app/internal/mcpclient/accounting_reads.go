@@ -8,6 +8,8 @@ import (
 	"strings"
 	"time"
 	"unicode/utf8"
+
+	"github.com/mbaragiola/gomar/app/internal/documentref"
 )
 
 type DocumentMetadata struct {
@@ -22,8 +24,9 @@ type DocumentMetadata struct {
 }
 
 type DocumentList struct {
-	Documents []DocumentMetadata `json:"documents"`
-	NextID    int64              `json:"next_id,omitempty"`
+	Documents []DocumentMetadata     `json:"documents"`
+	NextID    int64                  `json:"next_id,omitempty"`
+	Reference *documentref.Reference `json:"printed_reference,omitempty"`
 }
 
 type DocumentCurrencyTotal struct {
@@ -81,16 +84,48 @@ func accountingDate(value string) bool {
 }
 
 func (c *Client) Documents(ctx context.Context, entity, outlet int64, after *int64) (DocumentList, error) {
-	var result DocumentList
+	return c.DocumentsByReference(ctx, entity, outlet, after, nil)
+}
+
+// DocumentsByReference preserves the old list when the reference is omitted.
+// Filtered calls must not treat an unfiltered old-server response as a match.
+func (c *Client) DocumentsByReference(ctx context.Context, entity, outlet int64, after *int64, reference *documentref.Reference) (DocumentList, error) {
+	var wire struct {
+		DocumentList
+		Reference *struct {
+			DocumentType string  `json:"document_type"`
+			Letter       *string `json:"letter"`
+			PointOfSale  int64   `json:"point_of_sale"`
+			Number       int64   `json:"number"`
+		} `json:"printed_reference"`
+	}
 	query, last, err := accountingQuery(after)
 	if err != nil {
-		return result, err
+		return DocumentList{}, err
 	}
-	if err := c.getWorkspace(ctx, entity, outlet, "/documents", query, &result); err != nil {
-		return result, err
+	if reference != nil {
+		if !reference.Valid() {
+			return DocumentList{}, errors.New("indicá tipo, letra (vacía si no tiene), punto de venta y número impresos")
+		}
+		if query == nil {
+			query = make(url.Values)
+		}
+		reference.AddQuery(query)
+	}
+	if err := c.getWorkspace(ctx, entity, outlet, "/documents", query, &wire); err != nil {
+		return DocumentList{}, err
+	}
+	result := wire.DocumentList
+	if reference != nil {
+		actual := wire.Reference
+		if actual == nil || actual.Letter == nil || *actual.Letter != reference.Letter ||
+			actual.DocumentType != reference.DocumentType || actual.PointOfSale != reference.PointOfSale || actual.Number != reference.Number {
+			return DocumentList{}, invalidResponse
+		}
+		result.Reference = reference
 	}
 	for _, d := range result.Documents {
-		if d.ID <= last || d.Supplier <= 0 || (d.Type != "invoice" && d.Type != "credit_note" && d.Type != "debit_note") ||
+		if d.ID <= last || (reference != nil && d.Type != reference.DocumentType) || d.Supplier <= 0 || (d.Type != "invoice" && d.Type != "credit_note" && d.Type != "debit_note") ||
 			(d.Status != "draft" && d.Status != "reviewed") || !accountingDate(d.Issue) || (d.Due != nil && !accountingDate(*d.Due)) ||
 			(d.Currency != "ARS" && d.Currency != "USD") || d.Total < 0 {
 			return DocumentList{}, invalidResponse
