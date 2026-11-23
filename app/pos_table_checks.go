@@ -18,6 +18,8 @@ var (
 )
 
 type posTableCheck struct {
+	ID    string        `json:"id_cuenta"`
+	State string        `json:"estado"`
 	Table int64         `json:"mesa"`
 	Total int64         `json:"total_centavos"`
 	Items []posSaleItem `json:"items"`
@@ -44,20 +46,29 @@ func (a *app) readPOSTableCheck(r *http.Request, tx *sql.Tx, m entityMembership,
 	if err != nil || number < 1 || number > tablecheck.MaxTable || strconv.FormatInt(number, 10) != r.PathValue("table") || r.URL.RawQuery != "" {
 		return 0, nil, badInput
 	}
-	row, err := loadPOSTableCheck(r.Context(), tx, outlet, number)
+	var id int64
+	err = tx.QueryRowContext(r.Context(), `SELECT check_id FROM pos_table_check_slots WHERE outlet_id=$1 AND table_number=$2`, outlet, number).Scan(&id)
+	if errors.Is(err, sql.ErrNoRows) {
+		return 0, nil, posTableCheckMissing
+	}
+	if err != nil {
+		return 0, nil, err
+	}
+	row, err := loadPOSTableCheck(r.Context(), tx, outlet, number, id)
 	return http.StatusOK, row, err
 }
 
-func loadPOSTableCheck(ctx context.Context, tx *sql.Tx, outlet, number int64) (posTableCheck, error) {
-	row := posTableCheck{Table: number, Items: []posSaleItem{}}
-	var id int64
-	err := tx.QueryRowContext(ctx, `SELECT id,total_minor FROM pos_table_checks WHERE outlet_id=$1 AND table_number=$2`,
-		outlet, number).Scan(&id, &row.Total)
-	if errors.Is(err, sql.ErrNoRows) {
-		return posTableCheck{}, posTableCheckMissing
-	}
+func loadPOSTableCheck(ctx context.Context, tx *sql.Tx, outlet, number, id int64) (posTableCheck, error) {
+	row := posTableCheck{ID: strconv.FormatInt(id, 10), State: "sin_cobro", Table: number, Items: []posSaleItem{}}
+	var retired bool
+	err := tx.QueryRowContext(ctx, `SELECT c.total_minor,r.check_id IS NOT NULL
+ FROM pos_table_checks c LEFT JOIN pos_table_check_retirements r ON r.check_id=c.id
+ WHERE c.outlet_id=$1 AND c.table_number=$2 AND c.id=$3`, outlet, number, id).Scan(&row.Total, &retired)
 	if err != nil {
 		return posTableCheck{}, err
+	}
+	if retired {
+		row.State = "retirada"
 	}
 	items, err := tx.QueryContext(ctx, `SELECT i.product_id,i.revision,i.quantity,v.name,v.price_minor
  FROM pos_table_check_items i JOIN pos_product_versions v
@@ -106,15 +117,15 @@ func (a *app) savePOSTableCheck(r *http.Request, tx *sql.Tx, m entityMembership,
 	}
 	ctx := r.Context()
 	fp := i.Fingerprint()
-	var priorNumber int64
+	var priorID, priorNumber int64
 	var priorFP []byte
-	err = tx.QueryRowContext(ctx, `SELECT table_number,request_fingerprint FROM pos_table_checks
- WHERE outlet_id=$1 AND actor_id=$2 AND request_id=$3`, outlet, m.userID, i.ID()).Scan(&priorNumber, &priorFP)
+	err = tx.QueryRowContext(ctx, `SELECT id,table_number,request_fingerprint FROM pos_table_checks
+ WHERE outlet_id=$1 AND actor_id=$2 AND request_id=$3`, outlet, m.userID, i.ID()).Scan(&priorID, &priorNumber, &priorFP)
 	if err == nil {
 		if priorNumber != i.Table() || !bytes.Equal(priorFP, fp[:]) {
 			return 0, nil, posConflict
 		}
-		result, reread := loadPOSTableCheck(ctx, tx, outlet, priorNumber)
+		result, reread := loadPOSTableCheck(ctx, tx, outlet, priorNumber, priorID)
 		return http.StatusOK, result, reread
 	}
 	if !errors.Is(err, sql.ErrNoRows) {
@@ -122,7 +133,7 @@ func (a *app) savePOSTableCheck(r *http.Request, tx *sql.Tx, m entityMembership,
 	}
 
 	var exists bool
-	if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM pos_table_checks WHERE outlet_id=$1 AND table_number=$2)`,
+	if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM pos_table_check_slots WHERE outlet_id=$1 AND table_number=$2)`,
 		outlet, i.Table()).Scan(&exists); err != nil {
 		return 0, nil, err
 	}
@@ -143,15 +154,16 @@ func (a *app) savePOSTableCheck(r *http.Request, tx *sql.Tx, m entityMembership,
 	}
 	var id int64
 	err = tx.QueryRowContext(ctx, `INSERT INTO pos_table_checks(outlet_id,table_number,actor_id,request_id,request_fingerprint,total_minor)
- VALUES($1,$2,$3,$4,$5,$6) ON CONFLICT(outlet_id,table_number) DO NOTHING RETURNING id`,
+ VALUES($1,$2,$3,$4,$5,$6) RETURNING id`,
 		outlet, i.Table(), m.userID, i.ID(), fp[:], total).Scan(&id)
-	if errors.Is(err, sql.ErrNoRows) {
-		return 0, nil, posTableCheckOccupied
-	}
 	if err != nil {
 		return 0, nil, err
 	}
-	result := posTableCheck{Table: i.Table(), Total: total, Items: make([]posSaleItem, 0, len(lines))}
+	if _, err := tx.ExecContext(ctx, `INSERT INTO pos_table_check_slots(check_id,outlet_id,table_number)
+ VALUES($1,$2,$3)`, id, outlet, i.Table()); err != nil {
+		return 0, nil, err
+	}
+	result := posTableCheck{ID: strconv.FormatInt(id, 10), State: "sin_cobro", Table: i.Table(), Total: total, Items: make([]posSaleItem, 0, len(lines))}
 	for _, line := range lines {
 		if _, err := tx.ExecContext(ctx, `INSERT INTO pos_table_check_items(check_id,outlet_id,product_id,revision,quantity)
  VALUES($1,$2,$3,$4,$5)`, id, outlet, line.ProductID, line.Revision, line.Quantity); err != nil {
@@ -198,7 +210,7 @@ func mcpPOSTableCheck(r *http.Request, tx *sql.Tx, s mcpTokenScope) (any, error)
 		return nil, badInput
 	}
 	var total int64
-	err = tx.QueryRowContext(r.Context(), `SELECT total_minor FROM pos_table_checks WHERE outlet_id=$1 AND table_number=$2`,
+	err = tx.QueryRowContext(r.Context(), `SELECT c.total_minor FROM pos_table_check_slots s JOIN pos_table_checks c ON c.id=s.check_id WHERE s.outlet_id=$1 AND s.table_number=$2`,
 		outlet, number).Scan(&total)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, posTableCheckMissing
