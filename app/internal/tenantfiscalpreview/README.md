@@ -38,3 +38,23 @@ ceiling narrow the fixture; they are not guidance for a real issuer.
 - Turnate subscription billing is a different issuer and repository.
   Matching functional rules on retry and proof do not imply shared accounts,
   databases, sequences, or operational dependency.
+
+## Durable fixture only
+
+The opt-in outbox installs its own schema explicitly in a new
+`gomar_qa_*` database; app migrations and startup do not know about it.
+`scripts/qa-tenant-fiscal-outbox.sh` runs its race test against a private Unix
+socket and disposable PostgreSQL cluster without network access.
+
+The fixture freezes an outlet sale per confirmation. Enqueue replays return
+the same intent. A database claim reserves one number for one synthetic
+issuer and point of sale, with one fixed document class. If a claimant is
+lost, its number remains blocked and can be looked up after the lease
+expires. Only a matching authorization moves the channel to the next number;
+absence, rejection and mismatched results do not. A second database client
+can read the persisted request without obtaining another dispatch claim.
+
+There is no worker or transport here. A future dispatcher must use a claim
+only once, and must handle an uncertain provider outcome with lookup rather
+than calling submit a second time. The package does not send a reply, perform
+retries, take custody of credentials or decide a production recovery policy.
