@@ -179,6 +179,28 @@ func appendPayableMovement(tx *sql.Tx, actor, payable int64, payment *int64, kin
 	return err
 }
 
+// payableDocumentEligibility is the document-state portion of the posting
+// gate. Native request validation, actor permission and locking remain in the
+// write path; a read-only caller cannot guarantee a later write.
+func payableDocumentEligibility(posted bool, status, kind string, total int64, supplierMatches bool) (string, error) {
+	switch {
+	case posted:
+		return "already_posted", problem{409, "La factura ya está registrada en cuentas a pagar."}
+	case status != "reviewed":
+		return "not_reviewed", problem{422, "Solo se puede registrar una factura revisada en cuentas a pagar."}
+	case kind != "invoice":
+		return "not_invoice", problem{422, "En esta etapa solo se pueden registrar facturas en cuentas a pagar."}
+	case total <= 0:
+		return "nonpositive_total", problem{422, "La factura debe tener un total mayor que cero."}
+	case total > maxPayableMinor:
+		return "total_out_of_range", problem{422, "Total: ingresá un importe válido."}
+	case !supplierMatches:
+		return "supplier_mismatch", problem{422, "El CUIT actual del proveedor no coincide con el comprobante. Corregilo y revisalo de nuevo."}
+	default:
+		return "", nil
+	}
+}
+
 func (a *app) postPayable(r *http.Request, tx *sql.Tx, m entityMembership, body []byte) (int, any, error) {
 	var input struct {
 		Reason *string `json:"motivo"`
@@ -220,19 +242,8 @@ func (a *app) postPayable(r *http.Request, tx *sql.Tx, m entityMembership, body 
 	if err != nil {
 		return 0, nil, err
 	}
-	switch {
-	case posted:
-		return 0, nil, problem{409, "La factura ya está registrada en cuentas a pagar."}
-	case status != "reviewed":
-		return 0, nil, problem{422, "Solo se puede registrar una factura revisada en cuentas a pagar."}
-	case kind != "invoice":
-		return 0, nil, problem{422, "En esta etapa solo se pueden registrar facturas en cuentas a pagar."}
-	case total <= 0:
-		return 0, nil, problem{422, "La factura debe tener un total mayor que cero."}
-	case total > maxPayableMinor:
-		return 0, nil, problem{422, "Total: ingresá un importe válido."}
-	case issuer != supplierCUIT:
-		return 0, nil, problem{422, "El CUIT actual del proveedor no coincide con el comprobante. Corregilo y revisalo de nuevo."}
+	if _, err := payableDocumentEligibility(posted, status, kind, total, issuer == supplierCUIT); err != nil {
+		return 0, nil, err
 	}
 
 	reference := documentTypes[kind]

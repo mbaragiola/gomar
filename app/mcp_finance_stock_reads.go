@@ -13,6 +13,7 @@ import (
 )
 
 func (a *app) registerMCPFinanceStockReads(add func(string, string, http.HandlerFunc)) {
+	add(mcpWorkspaceBase+"/documents/{document}/payable-preflight", http.MethodGet, a.mcpRead(mcpPayablePreflight))
 	add(mcpWorkspaceBase+"/payable-records", http.MethodGet, a.mcpRead(mcpListPayableRecords))
 	add(mcpWorkspaceBase+"/payable-records/{payable}", http.MethodGet, a.mcpRead(mcpReadPayableRecord))
 	add(mcpWorkspaceBase+"/payable-records/{payable}/movements", http.MethodGet, a.mcpRead(mcpListPayableMovements))
