@@ -90,6 +90,27 @@ func (c *Client) ReservationSetup(ctx context.Context, entity, outlet int64) (Re
 	return ReservationSetup{VenueConfigured: *w.VenueConfigured, VenueEnabled: *w.VenueEnabled, PublicFeatureEnabled: *w.PublicFeatureEnabled, MenuSaved: w.MenuSaved, Timezone: w.Timezone}, nil
 }
 
+type ReservationStartSetup struct {
+	StartConfigured bool `json:"start_configured"`
+}
+
+func (c *Client) ReservationStartSetup(ctx context.Context, entity, outlet int64, start string) (ReservationStartSetup, error) {
+	at, err := time.Parse(time.RFC3339, start)
+	if err != nil || at.UTC().Format(time.RFC3339) != start || at.Second() != 0 {
+		return ReservationStartSetup{}, errors.New("indicá start_at en UTC canónico, como AAAA-MM-DDTHH:MM:00Z")
+	}
+	var w struct {
+		StartConfigured *bool `json:"start_configured"`
+	}
+	if err := c.getWorkspace(ctx, entity, outlet, "/reservation-start-setup", url.Values{"start_at": {start}}, &w); err != nil {
+		return ReservationStartSetup{}, err
+	}
+	if w.StartConfigured == nil {
+		return ReservationStartSetup{}, invalidResponse
+	}
+	return ReservationStartSetup{StartConfigured: *w.StartConfigured}, nil
+}
+
 func (c *Client) ReservationStatus(ctx context.Context, entity, outlet int64, date string) (ReservationStatus, error) {
 	var result ReservationStatus
 	if _, err := parseReportDate(date); err != nil {

@@ -15,6 +15,7 @@ import (
 func (a *app) registerMCPBookingReads(add func(string, string, http.HandlerFunc)) {
 	add(mcpWorkspaceBase+"/reservation-status", http.MethodGet, a.mcpRead(mcpReservationStatus))
 	add(mcpWorkspaceBase+"/reservation-setup", http.MethodGet, a.mcpRead(a.mcpReservationSetup))
+	add(mcpWorkspaceBase+"/reservation-start-setup", http.MethodGet, a.mcpRead(a.mcpReservationStartSetup))
 	add(mcpWorkspaceBase+"/published-menu", http.MethodGet, a.mcpRead(a.mcpPublishedMenu))
 	if a.enablePOS {
 		add(mcpWorkspaceBase+"/pos-catalog", http.MethodGet, a.mcpRead(mcpPOSCatalog))
@@ -51,6 +52,41 @@ func (a *app) mcpReservationSetup(r *http.Request, tx *sql.Tx, s mcpTokenScope) 
 		return nil, err
 	}
 	result.VenueConfigured = true
+	return result, nil
+}
+
+func (a *app) mcpReservationStartSetup(r *http.Request, tx *sql.Tx, s mcpTokenScope) (any, error) {
+	outlet, err := mcpWorkspaceOutlet(r, tx, s)
+	if err != nil {
+		return nil, err
+	}
+	ctx := r.Context()
+	if err := requireReservationStaff(ctx, tx, s.entityMembership, outlet); err != nil {
+		return nil, err
+	}
+	raw, err := mcpOptionalQuery(r, "start_at")
+	if err != nil {
+		return nil, err
+	}
+	if _, err := parseReservationSlotAddStart(raw); err != nil {
+		return nil, err
+	}
+	start, err := reservationStart(raw, a.tokenTime())
+	if err != nil {
+		return nil, err
+	}
+	// Check configuration only: no venue enable/public flag, tables, requests
+	// or pending proposals are consulted here.
+	var result mcpclient.ReservationStartSetup
+	err = tx.QueryRowContext(ctx, `SELECT EXISTS (
+		SELECT 1 FROM reservation_slots s WHERE s.outlet_id=v.outlet_id AND s.start_at=$2
+	) FROM reservation_venues v WHERE v.outlet_id=$1`, outlet, start).Scan(&result.StartConfigured)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, reservationUnavailable
+	}
+	if err != nil {
+		return nil, err
+	}
 	return result, nil
 }
 

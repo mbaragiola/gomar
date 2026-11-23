@@ -12,6 +12,11 @@ type reservationDateArgs struct {
 	Date string `json:"date" jsonschema:"Día de Buenos Aires en formato AAAA-MM-DD"`
 }
 
+type reservationStartSetupArgs struct {
+	outletArgs
+	StartAt string `json:"start_at" jsonschema:"Un inicio exacto futuro en UTC canónico AAAA-MM-DDTHH:MM:00Z, del horario del local (Buenos Aires)."`
+}
+
 type movementArgs struct {
 	outletArgs
 	ProductID int64  `json:"product_id" jsonschema:"ID exacto devuelto por gomar_list_stock"`
@@ -25,6 +30,9 @@ func addBookingReadTools(server *mcp.Server, client *mcpclient.Client) {
 	})
 	readTool(server, "gomar_read_reservation_setup", "Consultá si el local tiene reservas configuradas, si esa configuración está habilitada, si Gomar habilita las reservas públicas y qué zona horaria usa. Solo para administración del local. menu_saved indica si hay un menú guardado incluso si no está publicado; si falta el campo, el servidor no lo informó. No devuelve el archivo ni sus metadatos. Las opciones activas no garantizan que haya horarios, mesas ni una página accesible. No muestra datos privados ni toma reservas.", func(ctx context.Context, in outletArgs) (mcpclient.ReservationSetup, error) {
 		return client.ReservationSetup(ctx, in.EntityID, in.OutletID)
+	})
+	readTool(server, "gomar_read_reservation_start_setup", "Consultá si un inicio exacto ya está configurado para reservas en este local, incluso si está desactivado. Solo para administración del local. La hora debe ser futura, en la grilla de 90 minutos y dentro de los 60 días de Buenos Aires. Devuelve solo si está configurado; no comprueba disponibilidad, mesas ni solicitudes y no realiza cambios.", func(ctx context.Context, in reservationStartSetupArgs) (mcpclient.ReservationStartSetup, error) {
+		return client.ReservationStartSetup(ctx, in.EntityID, in.OutletID, in.StartAt)
 	})
 	readTool(server, "gomar_published_menu", "Consultá si el menú PDF está publicado para la sucursal. Devuelve sólo disponibilidad y datos del archivo publicado; no descarga ni envía el PDF.", func(ctx context.Context, in outletArgs) (mcpclient.PublishedMenu, error) {
 		return client.PublishedMenu(ctx, in.EntityID, in.OutletID)

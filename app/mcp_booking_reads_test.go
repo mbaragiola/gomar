@@ -186,6 +186,56 @@ func TestPostgresMCPBookingReadsOmitPrivateDataAndRespectFlags(t *testing.T) {
 	invoke(routes, "GET", "/api/v1/mcp/entities/1/outlets/5"+setup, "", wide, false, 404)
 	check(setup+"?date=2030-11-20", 422)
 
+	const exactStart = "/reservation-start-setup"
+	const startQuery = "?start_at=2030-11-21T00:00:00Z"
+	startRead := func(outlet, query, key string, status int, configured bool) {
+		t.Helper()
+		got := invoke(routes, "GET", "/api/v1/mcp/entities/1/outlets/"+outlet+exactStart+query, "", key, false, status)
+		if got.Header().Get("Cache-Control") != "no-store" {
+			t.Fatal("stored a scoped configuration lookup")
+		}
+		expected := `{"start_configured":false}`
+		if configured {
+			expected = `{"start_configured":true}`
+		}
+		if status == 200 && strings.TrimSpace(got.Body.String()) != expected {
+			t.Fatalf("unexpected scoped configuration: %s", got.Body.String())
+		}
+	}
+	startRead("1", startQuery, token, 200, false)
+	startRead("2", startQuery, wide, 200, false)
+	if _, err := db.ExecContext(ctx, `INSERT INTO reservation_slots(outlet_id,start_at) VALUES(2,'2030-11-21T00:00:00Z')`); err != nil {
+		t.Fatal(err)
+	}
+	startRead("2", startQuery, wide, 200, true)
+	startRead("1", startQuery, token, 200, false)
+	startRead("6", startQuery, wide, 200, false)
+	startRead("4", startQuery, wide, 404, false)
+	startRead("2", startQuery, token, 404, false)
+	startRead("5", startQuery, wide, 404, false)
+	invoke(routes, "GET", "/api/v1/mcp/entities/2/outlets/3"+exactStart+startQuery, "", wide, false, 404)
+	offReply := invoke(noFlags, "GET", "/api/v1/mcp/entities/1/outlets/2"+exactStart+startQuery, "", wide, false, 200)
+	if strings.TrimSpace(offReply.Body.String()) != `{"start_configured":true}` {
+		t.Fatal("disabled publication changed configured-start status")
+	}
+	horizonDay := time.Date(2030, 11, 20, 0, 0, 0, 0, reservationLocation)
+	startRead("1", "?start_at="+horizonDay.AddDate(0, 0, 60).UTC().Format(time.RFC3339), token, 200, false)
+	startRead("1", "?start_at="+horizonDay.AddDate(0, 0, 61).UTC().Format(time.RFC3339), token, 422, false)
+	for _, invalid := range []string{
+		"", "?start_at=", "?start_at=2030-11-20T12:00:00Z", "?start_at=2030-11-21T00:30:00Z",
+		"?start_at=2030-11-21T00:00:00.000Z", "?start_at=2030-11-20T21:00:00-03:00",
+		startQuery + "&start_at=2030-11-21T00:00:00Z", startQuery + "&party_size=2",
+	} {
+		startRead("1", invalid, token, 422, false)
+	}
+	if _, err := db.ExecContext(ctx, `DELETE FROM outlet_grants WHERE membership_id=1 AND outlet_id=2`); err != nil {
+		t.Fatal(err)
+	}
+	startRead("2", startQuery, wide, 404, false)
+	if _, err := db.ExecContext(ctx, `INSERT INTO outlet_grants VALUES(1,2)`); err != nil {
+		t.Fatal(err)
+	}
+
 	var catalog mcpclient.POSCatalog
 	decode(check("/pos-catalog", 200), &catalog)
 	if catalog.Currency != "ARS" || len(catalog.Products) != 30 || catalog.NextProductID != 30 || catalog.Products[0].PriceMinor != 101 {
@@ -214,6 +264,7 @@ func TestPostgresMCPBookingReadsOmitPrivateDataAndRespectFlags(t *testing.T) {
 	}
 	check(day, 403)
 	check(setup, 403)
+	startRead("1", startQuery, token, 403, false)
 	check("/published-menu", 403)
 	check("/pos-catalog", 200)
 	check(movements, 403)
