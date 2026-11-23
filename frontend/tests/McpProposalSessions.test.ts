@@ -1393,3 +1393,102 @@ describe('Mesa para un local de reservas desactivado', () => {
     panel.unmount()
   })
 })
+
+describe('Turno para un local de reservas desactivado', () => {
+  const path = base + '/reservation-slot-add-proposals'
+  const slot = { start_at: '2030-05-21T01:30:00Z', start_local: '2030-05-20T22:30:00-03:00', timezone: 'America/Argentina/Buenos_Aires', venue_enabled: false }
+  function fakeFetch(reply: Response, preview: unknown = slot) {
+    return vi.fn((url: string) => {
+      if (url.endsWith('/proposal-sessions')) return Promise.resolve(result({ sessions: [] }))
+      if (url === path) return Promise.resolve(result({ proposals: [pending()] }))
+      if (url === path + '/8') return Promise.resolve(result({ ...pending(), digest, slot_add: preview }))
+      if (url === path + '/8/decision') return Promise.resolve(reply)
+      throw Error('unexpected test request')
+    })
+  }
+  async function show(fetch: unknown, canAddReservationSlot = true) {
+    vi.stubGlobal('fetch', fetch)
+    const panel = mount(McpProposalSessions, {
+      props: { entity: 2, outlet: 7, outletName: 'Centro de prueba', canRename: false, canAddReservationSlot },
+    })
+    await button(panel, 'Sesiones de propuestas').trigger('click')
+    await flushPromises()
+    return panel
+  }
+  async function read(panel: ReturnType<typeof mount>) {
+    await button(panel, 'Ver propuesta 8 de turno para reservas').trigger('click')
+    await flushPromises()
+  }
+  it('requires separate acknowledgement and shows the previous Buenos Aires day, not UTC date', async () => {
+    const fetch = fakeFetch(result({ ...pending(), status: 'approved', start_at: slot.start_at }))
+    const panel = await show(fetch)
+    const choice = panel.get('input[type=checkbox]')
+    expect((choice.element as HTMLInputElement).checked).toBe(false)
+    expect(button(panel, 'Crear sesión de propuestas').attributes()).toHaveProperty('disabled')
+    await choice.setValue(true)
+    expect(panel.text()).toContain('--proposal-session-action=reservation_slot_add')
+    await read(panel)
+    for (const phrase of ['Centro de prueba', 'Horario de Buenos Aires', '2030-05-20 · 22:30',
+      'si alguien habilita', 'hay una mesa adecuada', 'no se puede retirar este turno desde Gomar', 'no se envían avisos']) {
+      expect(panel.text()).toContain(phrase)
+    }
+    expect(panel.text()).not.toContain('2030-05-21')
+    await button(panel, 'Continuar con el turno').trigger('click')
+    const acknowledgement = panel.get('[aria-label="Confirmar decisión"] input[type=checkbox]')
+    expect((acknowledgement.element as HTMLInputElement).checked).toBe(false)
+    expect(button(panel, 'Agregar turno sin habilitar reservas').attributes()).toHaveProperty('disabled')
+    expect(fetch.mock.calls.some(([url]) => url.endsWith('/decision'))).toBe(false)
+    await acknowledgement.setValue(true)
+    await button(panel, 'Agregar turno sin habilitar reservas').trigger('click')
+    await flushPromises()
+    expect(fetch).toHaveBeenLastCalledWith(path + '/8/decision', expect.objectContaining({
+      method: 'POST', body: JSON.stringify({ decision: 'approve', digest, confirm: true, acknowledge_no_remove: true }),
+    }))
+    expect(panel.text()).toContain('Turno agregado. Las reservas del local siguen desactivadas.')
+    panel.unmount()
+  })
+  it.each([{ venue_enabled: true }, { timezone: 'UTC' }, { start_local: '2030-05-21T01:30:00-03:00' }, { start_at: '2030-05-21T01:30:01Z' }])(
+    'will not confirm a mismatched or active-venue preview %s', async patch => {
+      const fetch = fakeFetch(result({}), { ...slot, ...patch })
+      const panel = await show(fetch)
+      await read(panel)
+      expect(panel.get('[role=alert]').text()).toContain('No pude abrir la propuesta.')
+      expect(button(panel, 'Continuar con el turno')).toBeUndefined()
+      panel.unmount()
+    },
+  )
+  it.each([409, 410, 200])('never retries an expired, stale or inconsistent result: %s', async code => {
+    const fetch = fakeFetch(result({ ...pending(), status: 'approved', start_at: '2030-05-21T03:00:00Z' }, code))
+    const panel = await show(fetch)
+    await read(panel)
+    await button(panel, 'Continuar con el turno').trigger('click')
+    await panel.get('[aria-label="Confirmar decisión"] input').setValue(true)
+    await button(panel, 'Agregar turno sin habilitar reservas').trigger('click')
+    await flushPromises()
+    expect(panel.get('[role=alert]').text()).toMatch(/No se agregó|venció|No pude verificar/)
+    await read(panel)
+    expect(button(panel, 'Continuar con el turno').attributes()).toHaveProperty('disabled')
+    expect(fetch.mock.calls.filter(([url]) => url.endsWith('/decision'))).toHaveLength(1)
+    panel.unmount()
+  })
+  it('rejects without creating a slot', async () => {
+    const fetch = fakeFetch(result({ ...pending(), status: 'rejected' }))
+    const panel = await show(fetch)
+    await read(panel)
+    await button(panel, 'Rechazar propuesta').trigger('click')
+    await button(panel, 'Sí, rechazar').trigger('click')
+    await flushPromises()
+    expect(panel.text()).toContain('No se agregó un turno.')
+    expect(fetch).toHaveBeenLastCalledWith(path + '/8/decision', expect.objectContaining({
+      method: 'POST', body: JSON.stringify({ decision: 'reject', digest, confirm: true }),
+    }))
+    panel.unmount()
+  })
+  it('does not query this action without the current capability', async () => {
+    const fetch = fakeFetch(result({}))
+    const panel = await show(fetch, false)
+    expect(fetch.mock.calls.some(([url]) => url === path)).toBe(false)
+    expect(panel.text()).not.toContain('Preparar un turno para reservas')
+    panel.unmount()
+  })
+})

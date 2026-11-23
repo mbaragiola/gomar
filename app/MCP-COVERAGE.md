@@ -16,7 +16,7 @@ applied change. Features disabled in the app are not available via MCP.
 | Suppliers | Active supplier names and IDs in the business | Guarded create and edit |
 | Payables and payment records | Outstanding and overdue totals, counts by status, outlet-only payable and payment record details, and one payable’s ledger history | Guarded accounting entries and reviews, not movement of money |
 | Reconciliation | Scoped run counts by status, paged run list, metadata by ID, and proposal for an empty draft | Source handling, matches, decisions, and review stay in Gomar |
-| Reservations and menus | Daily reservation totals, staff setup state, scoped staff queue and detail, available public reservation times by day and party size, published menu metadata, separate confirmation and cancellation proposals, and preparing a numbered table while the venue is disabled | Booking, menu and venue settings stay in Gomar |
+| Reservations and menus | Daily reservation totals, staff setup state, scoped staff queue and detail, available public reservation times by day and party size, published menu metadata, separate confirmation and cancellation proposals, and preparing a numbered table or one future time while the venue is disabled | Booking, menu and venue settings stay in Gomar |
 
 ## Verification levels
 
@@ -108,3 +108,8 @@ A table proposal adds exactly one numbered table to an existing disabled
 venue. It cannot enable reservations, add shifts, change requests or
 contacts, or send notices. Gomar cannot remove the table; see
 [disabled venue table proposals](MCP-RESERVATION-TABLE-ADD-PROPOSALS.md).
+
+A slot proposal prepares one future Buenos Aires start for an existing
+disabled venue. It cannot enable reservations or change requests or
+contacts. Gomar cannot remove the slot; see
+[disabled venue slot proposals](MCP-RESERVATION-SLOT-ADD-PROPOSALS.md).
