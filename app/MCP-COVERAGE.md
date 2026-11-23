@@ -230,3 +230,14 @@ branch. Finding one does not open it automatically, mark it reviewed or
 create a payable. Review still requires native permission and an explicit
 action in Gomar (or the separately issued review proposal and browser
 approval). The MCP list does not add any private metadata.
+
+### Revoke your own read connections in Gomar
+
+Credential management is native-only. In **Conectar Claude o Codex**, a
+signed-in operator returning to the same active, granted branch can see
+only their own still-valid read access IDs and issue/expiry times. A
+previously issued secret cannot be recovered. The list never includes
+business-wide keys, proposal keys, other operators, or bearer material.
+Each **Revocar acceso** button uses the existing owner-only browser action;
+opening the panel does not revoke anything. MCP can use an authorized read
+key but cannot list, recover, or revoke credentials.
