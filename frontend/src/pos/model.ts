@@ -17,6 +17,7 @@ export interface Grant extends Context {
   label: string
   catalog: Product[]
   tableChecks?: boolean
+  manualTender?: boolean
 }
 export interface Line {
   producto_id: number

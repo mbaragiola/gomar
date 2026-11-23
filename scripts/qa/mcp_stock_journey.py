@@ -32,6 +32,9 @@ if with_pos_prebill:
 with_pos_table_checks = len(sys.argv) > 9 and sys.argv[9] == "true"
 if with_pos_table_checks:
     from pos_table_checks import check_saved_table
+with_manual_tender = len(sys.argv) > 10 and sys.argv[10] == "true"
+if with_manual_tender:
+    from pos_manual_tender_checks import check_manual_tender
 
 scope = {"entity_id": 1, "outlet_id": 1}
 base = "/api/v1/entities/1/outlets/1"
@@ -94,7 +97,7 @@ COMMIT;
         purchase_seed(psql)
     if with_bookings_wiki:
         booking_seed(psql)
-    if with_pos_prebill or with_pos_table_checks:
+    if with_pos_prebill or with_pos_table_checks or with_manual_tender:
         run([*app, "-create-admin", "qa-pos-limited"], input=password + "\n", capture_output=True)
         psql("""
 BEGIN;
@@ -467,8 +470,10 @@ def main():
         app_flags.extend(["-public-reservations", "-enable-mcp-reservation-confirm-proposals"])
     if with_barcode:
         app_flags.append("-enable-mcp-pos-catalog-proposals")
-    if with_pos_table_checks:
+    if with_pos_table_checks or with_manual_tender:
         app_flags.append("-enable-pos-table-checks")
+    if with_manual_tender:
+        app_flags.append("-enable-pos-manual-tender")
     with (root / "native.log").open("w") as log:
         server = subprocess.Popen([root / "gomar", "-state", root / "state", "-listen", address, *app_flags],
                                   env=env, stdout=log, stderr=subprocess.STDOUT)
@@ -495,6 +500,8 @@ def main():
                         assert snapshot() == before
                     if with_pos_table_checks:
                         check_saved_table(browser, login, origin, psql, issue, connection)
+                    if with_manual_tender:
+                        check_manual_tender(browser, login, origin, psql, issue, connection)
                     journey(browser)
                     if with_barcode:
                         barcode_journey(browser)
@@ -505,6 +512,8 @@ def main():
             server.wait(timeout=8)
     if with_barcode:
         print("PASS: exact barcode lookup and native approval in MCP; desktop/mobile Chrome scans, offline cache, and no sale")
+    if with_manual_tender:
+        print("PASS: manual tender desktop/mobile, native corrections, MCP status/handoff and denials; no sale or funds movement")
     transport = "one installed Codex dual-lane session" if codex else "one packaged MCP session"
     print(f"PASS: {transport}, Chrome review, denials, revocation, and exact stock readback")
     if with_purchases:

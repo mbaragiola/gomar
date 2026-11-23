@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { ApiError, request } from '../api'
+import ManualTender from './ManualTender.vue'
 import type { Context, Line } from './model'
 
 const props = defineProps<{
@@ -9,11 +10,12 @@ const props = defineProps<{
   online: boolean
   allowed: () => boolean
   formatMoney: (amount: number) => string
+  allowTender?: boolean
 }>()
 
 interface Check {
   id_cuenta: string
-  estado: "sin_cobro" | "retirada"
+  estado: "sin_cobro" | "retirada" | "con_registros"
   mesa: number
   total_centavos: number
   items: Line[]
@@ -75,7 +77,7 @@ async function act(action: "save" | "read" | "retire") {
     })
     if (!active || next.signal.aborted || !props.allowed() || table.value !== picked) return
     if (response.mesa !== picked || !Number.isSafeInteger(response.total_centavos) || response.total_centavos < 1
-      || typeof response.id_cuenta !== 'string' || !/^[1-9][0-9]{0,18}$/.test(response.id_cuenta) || !['sin_cobro', 'retirada'].includes(response.estado)
+      || typeof response.id_cuenta !== 'string' || !/^[1-9][0-9]{0,18}$/.test(response.id_cuenta) || !['sin_cobro', 'retirada', 'con_registros'].includes(response.estado)
       || retire && (response.id_cuenta !== reviewed?.id_cuenta || response.estado !== 'retirada')
       || !Array.isArray(response.items) || !response.items.length) throw new Error('Respuesta no válida')
     // A confirmed retirement ends the old save intent. A later deliberate
@@ -126,6 +128,13 @@ onUnmounted(() => {
       </ul>
       <strong>Total de la cuenta: {{ formatMoney(loaded.total_centavos) }}</strong>
       <p>No es una factura ni acredita un pago.</p>
+      <ManualTender
+        v-if="allowTender && loaded.estado !== 'retirada'"
+        :key="loaded.id_cuenta" :scope="scope" :table="loaded.mesa" :check="loaded.id_cuenta"
+        :total="loaded.total_centavos" :allowed="allowed" :format-money="formatMoney"
+        @has-history="loaded.estado = 'con_registros'"
+      />
+      <p v-if="loaded.estado === 'con_registros'">No se puede retirar una cuenta con registros de pago.</p>
       <template v-if="loaded.estado === 'sin_cobro'">
         <button v-if="!retiring" type="button" :disabled="busy" @click="retiring = true">Retirar cuenta sin cobro</button>
         <fieldset v-else>

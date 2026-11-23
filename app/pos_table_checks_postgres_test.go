@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net/http/httptest"
 	"reflect"
+	"slices"
 	"sort"
 	"strings"
 	"testing"
@@ -12,7 +13,7 @@ import (
 
 func TestPostgresSavedPOSTableCheck(t *testing.T) {
 	ctx, db := testPostgresDB(t)
-	if err := migratePostgresThrough(ctx, db, postgresMigrationNames[:len(postgresMigrationNames)-1]); err != nil {
+	if err := migratePostgresThrough(ctx, db, postgresMigrationNames[:slices.Index(postgresMigrationNames, "035_pos_table_check_retirement.sql")]); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := db.ExecContext(ctx, `

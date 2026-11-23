@@ -16,6 +16,7 @@ func TestPOSTableCheckRequiresExactSameOriginHandoff(t *testing.T) {
 		wantOK            bool
 	}{
 		{"exact", native, "untendered", true},
+		{"manual records", native, "manual_records", true},
 		{"different outlet", "/pos#entity=1&outlet=3&table=7", "untendered", false},
 		{"different table", "/pos#entity=1&outlet=2&table=8", "untendered", false},
 		{"absolute address", "https://example.com" + native, "untendered", false},
@@ -44,7 +45,7 @@ func TestPOSTableCheckRequiresExactSameOriginHandoff(t *testing.T) {
 				}
 				return
 			}
-			if err != nil || got != (POSTableCheck{7, 1234, "untendered", native}) {
+			if err != nil || got != (POSTableCheck{7, 1234, tt.state, native}) {
 				t.Fatalf("wrong result: %+v %v", got, err)
 			}
 		})

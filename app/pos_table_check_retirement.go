@@ -35,6 +35,17 @@ func (a *app) retirePOSTableCheck(r *http.Request, tx *sql.Tx, m entityMembershi
 		return 0, nil, badInput
 	}
 	ctx := r.Context()
+	// Keep this guard even when the tender preview flag is off.
+	var hasTender bool
+	if err := tx.QueryRowContext(ctx, `SELECT EXISTS (
+	SELECT 1 FROM pos_table_check_slots s JOIN pos_table_tender_events e
+	ON e.outlet_id=s.outlet_id AND e.check_id=s.check_id
+	WHERE s.outlet_id=$1 AND s.table_number=$2 AND s.check_id=$3)`, outlet, number, id).Scan(&hasTender); err != nil {
+		return 0, nil, err
+	}
+	if hasTender {
+		return 0, nil, posTableTenderBlocksRetirement
+	}
 	// Same outlet lock as Save. A stale action must never free a replacement's slot.
 	result, err := tx.ExecContext(ctx, `DELETE FROM pos_table_check_slots WHERE outlet_id=$1 AND table_number=$2 AND check_id=$3`, outlet, number, id)
 	if err != nil {
