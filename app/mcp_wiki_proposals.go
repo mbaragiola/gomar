@@ -771,6 +771,9 @@ func (a *app) pruneWikiProposals(ctx context.Context) error {
 	if err := a.pruneReservationCancelProposals(ctx, now); err != nil {
 		return err
 	}
+	if err := a.pruneReservationTableAddProposals(ctx, now); err != nil {
+		return err
+	}
 	if err := a.pruneReservationConfirmProposals(ctx, now); err != nil {
 		return err
 	}

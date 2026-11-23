@@ -4,11 +4,12 @@ import { ApiError, request } from '../api'
 
 type Status = 'pending' | 'approved' | 'rejected' | 'expired' | 'revoked'
 type ProductCreate = { name: string; price_minor: number; active: boolean; currency: string; catalog_count: number; catalog_limit: number }
+type ReservationTableAdd = { table_number: number; table_label: string; capacity: number; venue_enabled: false }
 type StockProductSetup = { product_id: number; expected_revision: number; name: string; minimum: number; tracking_enabled: false }
 type StockTracking = { product_id: number; expected_revision: number; name: string; current_tracking_enabled: boolean; tracking_enabled: boolean; minimum: number }
 type StockMinimum = { product_id: number; expected_revision: number; name: string; current_minimum: number; minimum: number }
 type SupplierName = { supplier_id: number; expected_revision: number; name: string; current_name: string; business_wide: true }
-type Proposal = { id: number; status: Status; expires_at: string; product_id?: number; product_revision?: number; rename?: Rename; document_id?: number; document_revision?: number; review?: Review; run_id?: number; draft?: Draft; edit?: DocumentEdit; movement_id?: number; minimum?: number; minimum_change?: StockMinimum; tracking_change?: StockTracking; stock_setup?: StockProductSetup; tracking_enabled?: boolean; adjustment?: StockAdjustment; change?: CatalogChange; product?: ProductCreate; supplier_id?: number; supplier_revision?: number; supplier?: SupplierName; reservation_reference?: string; confirmation?: ReservationConfirmation; cancellation?: ReservationCancellation; digest?: string }
+type Proposal = { id: number; status: Status; expires_at: string; product_id?: number; product_revision?: number; rename?: Rename; document_id?: number; document_revision?: number; review?: Review; run_id?: number; draft?: Draft; edit?: DocumentEdit; movement_id?: number; minimum?: number; minimum_change?: StockMinimum; tracking_change?: StockTracking; stock_setup?: StockProductSetup; table_add?: ReservationTableAdd; table_label?: string; capacity?: number; tracking_enabled?: boolean; adjustment?: StockAdjustment; change?: CatalogChange; product?: ProductCreate; supplier_id?: number; supplier_revision?: number; supplier?: SupplierName; reservation_reference?: string; confirmation?: ReservationConfirmation; cancellation?: ReservationCancellation; digest?: string }
 type Rename = {
   product_id: number; expected_revision: number; name: string; current_name: string
   unchanged_price_minor: number; unchanged_active: boolean
@@ -37,7 +38,7 @@ type ReservationCancellation = {
   reservation_reference: string; start_utc: string; start_local: string; timezone: string
   party_size: number; status: 'pending' | 'confirmed'; table_label?: string
 }
-type Action = 'pos_product_rename' | 'document_draft_review' | 'reconciliation_draft_create' | 'document_draft_edit' | 'stock_waste_record' | 'stock_physical_count' | 'pos_product_price_change' | 'pos_product_availability_change' | 'reservation_confirm' | 'reservation_cancel' | 'pos_product_create' | 'stock_minimum_change' | 'stock_tracking_change' | 'stock_product_setup' | 'supplier_legal_name_change'
+type Action = 'pos_product_rename' | 'document_draft_review' | 'reconciliation_draft_create' | 'document_draft_edit' | 'stock_waste_record' | 'stock_physical_count' | 'pos_product_price_change' | 'pos_product_availability_change' | 'reservation_confirm' | 'reservation_table_add' | 'reservation_cancel' | 'pos_product_create' | 'stock_minimum_change' | 'stock_tracking_change' | 'stock_product_setup' | 'supplier_legal_name_change'
 type ScopedProposal = Proposal & { kind: Action }
 type Session = { id: number; expires_at: string; actions: string[] }
 const actionName = 'pos_product_rename'
@@ -49,6 +50,7 @@ const countAction = 'stock_physical_count'
 const priceAction = 'pos_product_price_change'
 const availabilityAction = 'pos_product_availability_change'
 const reservationAction = 'reservation_confirm'
+const tableAddAction = 'reservation_table_add'
 const cancelAction = 'reservation_cancel'
 const createAction = 'pos_product_create'
 const minimumAction = 'stock_minimum_change'
@@ -56,12 +58,13 @@ const trackingAction = 'stock_tracking_change'
 const stockSetupAction = 'stock_product_setup'
 const supplierAction = 'supplier_legal_name_change'
 const isReservation = (action: Action) => action === reservationAction || action === cancelAction
-const guardDecisionRetry = (action: Action) => isReservation(action) || action === minimumAction || action === trackingAction || action === stockSetupAction || action === supplierAction
+const guardDecisionRetry = (action: Action) => isReservation(action) || action === tableAddAction || action === minimumAction || action === trackingAction || action === stockSetupAction || action === supplierAction
 const isCatalog = (action: Action) => action === priceAction || action === availabilityAction
 const isStock = (action: Action) => action === wasteAction || action === countAction
 const actionLabels: Record<Action, string> = {
   reservation_cancel: 'Cancelar una reserva',
   reservation_confirm: 'Confirmar una reserva pendiente',
+  reservation_table_add: 'Preparar una mesa para reservas',
   supplier_legal_name_change: 'Cambiar la razón social de un proveedor',
   stock_minimum_change: 'Cambiar el mínimo de stock',
   stock_tracking_change: 'Cambiar el seguimiento de stock',
@@ -86,6 +89,13 @@ const actionUI: Record<Action, {
     rejectConfirm: '¿Querés rechazar la propuesta y dejar la reserva sin cambios?',
     stale: 'No se canceló la reserva. La propuesta o la reserva cambiaron. Revisá el estado antes de preparar otra propuesta.',
     approved: 'Reserva cancelada. No se envió ningún aviso.', rejected: 'Propuesta rechazada. No se modificó la reserva.',
+  },
+  reservation_table_add: {
+    path: '/reservation-table-add-proposals', previewSuffix: ' de mesa para reservas', proceed: 'Continuar con la mesa',
+    approve: 'Agregar mesa sin habilitar reservas', confirm: '¿Querés agregar esta mesa al local indicado sin habilitar sus reservas?',
+    rejectConfirm: '¿Querés rechazar sin agregar la mesa?',
+    stale: 'No se agregó la mesa. La configuración del local o la propuesta cambiaron. Prepará otra propuesta.',
+    approved: 'Mesa agregada. Las reservas del local siguen desactivadas.', rejected: 'Propuesta rechazada. No se agregó una mesa.',
   },
   reservation_confirm: {
     path: '/reservation-confirm-proposals', previewSuffix: ' de reserva', proceed: 'Continuar con la reserva',
@@ -207,6 +217,10 @@ function validReservation(x: ReservationConfirmation | undefined): x is Reservat
     positive(x.party_size) && positive(x.table_capacity) && x.party_size <= x.table_capacity &&
     typeof x.table_label === 'string' && !!x.table_label.trim() && validReservationStart(x)
 }
+function validReservationTableAdd(x: ReservationTableAdd | undefined): x is ReservationTableAdd {
+  return !!x && positive(x.table_number) && x.table_number <= 9999 && x.table_label === `Mesa ${x.table_number}` &&
+    positive(x.capacity) && x.capacity <= 12 && x.venue_enabled === false
+}
 function validReservationCancellation(x: ReservationCancellation | undefined): x is ReservationCancellation {
   return !!x && reservationReference(x.reservation_reference) && positive(x.party_size) &&
     (x.status === 'pending' ? x.table_label === undefined
@@ -291,7 +305,7 @@ const stateLabel = (active: boolean) => active ? 'Activo' : 'Inactivo'
 const prices = new Intl.NumberFormat('es-AR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
 const amount = (value: number | null) => value === null ? 'No informado' : prices.format(value / 100)
 type Decision = 'approve' | 'reject'
-const props = defineProps<{ entity: number; outlet: number; outletName: string; businessName?: string; canRename: boolean; canReviewDocuments?: boolean; canCreateReconciliationDraft?: boolean; canEditDocuments?: boolean; canAdjustStock?: boolean; canChangeCatalog?: boolean; canConfirmReservations?: boolean; canCancelReservations?: boolean; canCreateProducts?: boolean; canSetStockMinimum?: boolean; canChangeStockTracking?: boolean; canSetupStockProduct?: boolean; canChangeSupplierName?: boolean }>()
+const props = defineProps<{ entity: number; outlet: number; outletName: string; businessName?: string; canRename: boolean; canReviewDocuments?: boolean; canCreateReconciliationDraft?: boolean; canEditDocuments?: boolean; canAdjustStock?: boolean; canChangeCatalog?: boolean; canConfirmReservations?: boolean; canAddReservationTable?: boolean; canCancelReservations?: boolean; canCreateProducts?: boolean; canSetStockMinimum?: boolean; canChangeStockTracking?: boolean; canSetupStockProduct?: boolean; canChangeSupplierName?: boolean }>()
 const scopePath = `/entities/${props.entity}/outlets/${props.outlet}`
 const base = (kind: Action) => scopePath + actionUI[kind].path
 const allowed = (kind: Action) => kind === supplierAction ? !!props.canChangeSupplierName && !!props.businessName?.trim() && !!props.outletName.trim()
@@ -299,6 +313,7 @@ const allowed = (kind: Action) => kind === supplierAction ? !!props.canChangeSup
   : kind === trackingAction ? !!props.canChangeStockTracking && !!props.outletName.trim()
   : kind === minimumAction ? !!props.canSetStockMinimum
   : kind === cancelAction ? !!props.canCancelReservations
+  : kind === tableAddAction ? !!props.canAddReservationTable && !!props.outletName.trim()
   : kind === reservationAction ? !!props.canConfirmReservations
   : kind === createAction ? !!props.canCreateProducts
   : isCatalog(kind) ? !!props.canChangeCatalog
@@ -306,7 +321,7 @@ const allowed = (kind: Action) => kind === supplierAction ? !!props.canChangeSup
   : kind === editAction ? !!props.canEditDocuments
   : kind === draftAction ? !!props.canCreateReconciliationDraft
   : kind === reviewAction ? !!props.canReviewDocuments : props.canRename
-const actionChoices = computed(() => ([actionName, reviewAction, draftAction, editAction, wasteAction, countAction, priceAction, availabilityAction, reservationAction, cancelAction, createAction, minimumAction, trackingAction, stockSetupAction, supplierAction] as const).filter(allowed))
+const actionChoices = computed(() => ([actionName, reviewAction, draftAction, editAction, wasteAction, countAction, priceAction, availabilityAction, reservationAction, tableAddAction, cancelAction, createAction, minimumAction, trackingAction, stockSetupAction, supplierAction] as const).filter(allowed))
 const setSelected = (kind: Action, event: Event) => {
   if (event.target instanceof HTMLInputElement) selected.value = event.target.checked ? kind : null
 }
@@ -317,6 +332,7 @@ const validPreview = (kind: Action, proposal: Proposal) => kind === supplierActi
   : kind === trackingAction ? validStockTracking(proposal.tracking_change)
   : kind === minimumAction ? validStockMinimum(proposal.minimum_change)
   : kind === cancelAction ? validReservationCancellation(proposal.cancellation)
+  : kind === tableAddAction ? validReservationTableAdd(proposal.table_add)
   : kind === reservationAction ? validReservation(proposal.confirmation)
   : kind === createAction ? validProduct(proposal.product)
   : isCatalog(kind) ? validCatalog(kind, proposal.change)
@@ -356,6 +372,8 @@ const displayExpiry = (time: number) => new Intl.DateTimeFormat('es-AR', {
 const closedScopedDecisions = reactive(new Set<string>())
 const decisionKey = (kind: Action, id: number) => `${kind}:${id}`
 const cancelAcknowledged = ref(false)
+const tableAddAcknowledged = ref(false)
+const needsTableAddAcknowledgement = computed(() => deciding.value?.kind === tableAddAction && deciding.value.action === 'approve')
 const trackingAcknowledged = ref(false)
 const needsTrackingAcknowledgement = computed(() => deciding.value?.kind === trackingAction &&
   deciding.value.action === 'approve' && viewed.value?.tracking_change?.tracking_enabled === false)
@@ -444,7 +462,7 @@ async function perform(message: string, action: (run: number) => Promise<void>, 
       error.value = cause.status === 410 ? 'La propuesta venció o se revocó su clave.' : actionUI[kind].stale
       try { await list(run) } catch { /* Keep the decision error. */ }
     } else {
-      if ((kind === cancelAction || kind === minimumAction || kind === trackingAction || kind === stockSetupAction || kind === supplierAction) && deciding.value) clearPreview()
+      if ((kind === cancelAction || kind === tableAddAction || kind === minimumAction || kind === trackingAction || kind === stockSetupAction || kind === supplierAction) && deciding.value) clearPreview()
       error.value = message
     }
   } finally {
@@ -468,6 +486,7 @@ async function preview(id: number, kind: Action) {
 function begin(action: Decision) {
   if (!canDecide.value || busy.value || !viewed.value?.digest) return
   cancelAcknowledged.value = false
+  tableAddAcknowledged.value = false
   trackingAcknowledged.value = false
   deciding.value = { id: viewed.value.id, digest: viewed.value.digest, action, kind: viewed.value.kind }
 }
@@ -478,12 +497,15 @@ async function decide() {
   if (busy.value || !target || !proposed || !canDecide.value || target.id !== proposed.id ||
     target.digest !== proposed.digest || target.kind !== proposed.kind ||
     (target.kind === cancelAction && target.action === 'approve' && !cancelAcknowledged.value) ||
-    (needsTrackingAcknowledgement.value && !trackingAcknowledged.value)) return
-  if (target.kind === cancelAction || target.kind === minimumAction || target.kind === trackingAction || target.kind === stockSetupAction || target.kind === supplierAction) closedScopedDecisions.add(decisionKey(target.kind, target.id))
+    (needsTrackingAcknowledgement.value && !trackingAcknowledged.value) ||
+    (needsTableAddAcknowledgement.value && !tableAddAcknowledged.value)) return
+  if (target.kind === cancelAction || target.kind === tableAddAction || target.kind === minimumAction || target.kind === trackingAction || target.kind === stockSetupAction || target.kind === supplierAction) closedScopedDecisions.add(decisionKey(target.kind, target.id))
   await perform(target.kind === cancelAction
     ? 'No pude verificar el resultado. Revisá el estado en Reservas antes de hacer otro cambio.'
-    : target.kind === minimumAction
-      ? 'No pude verificar el resultado. Revisá el mínimo de stock antes de preparar otra propuesta.'
+    : target.kind === tableAddAction
+      ? 'No pude verificar el resultado. Consultá la configuración de reservas antes de preparar otra mesa.'
+      : target.kind === minimumAction
+        ? 'No pude verificar el resultado. Revisá el mínimo de stock antes de preparar otra propuesta.'
       : target.kind === stockSetupAction
         ? 'No pude verificar el resultado. Revisá la configuración de stock antes de preparar otra propuesta.'
         : target.kind === trackingAction
@@ -494,7 +516,8 @@ async function decide() {
     const result = await request<Proposal>(`${base(target.kind)}/${target.id}/decision`, {
       method: 'POST', cache: 'no-store',
       body: JSON.stringify({ decision: target.action, digest: target.digest, confirm: true,
-        ...(needsTrackingAcknowledgement.value ? { acknowledge_no_backfill: trackingAcknowledged.value } : {}) }),
+        ...(needsTrackingAcknowledgement.value ? { acknowledge_no_backfill: trackingAcknowledged.value } : {}),
+        ...(needsTableAddAcknowledgement.value ? { acknowledge_no_remove: tableAddAcknowledged.value } : {}) }),
     })
     if (!active(run)) return
     const validApproval = target.kind === supplierAction
@@ -511,6 +534,9 @@ async function decide() {
       : target.kind === minimumAction
       ? result.product_id === proposed.minimum_change?.product_id && validMinimum(result.minimum) &&
         result.minimum === proposed.minimum_change?.minimum && result.product_revision === undefined
+      : target.kind === tableAddAction
+      ? result.table_label === proposed.table_add?.table_label && result.capacity === proposed.table_add?.capacity &&
+        result.table_add === undefined && result.reservation_reference === undefined
       : isReservation(target.kind)
       ? reservationReference(result.reservation_reference) &&
         result.reservation_reference === (target.kind === cancelAction ? proposed.cancellation : proposed.confirmation)?.reservation_reference
@@ -527,6 +553,9 @@ async function decide() {
     if (result.id !== target.id || result.status !== (target.action === 'approve' ? 'approved' : 'rejected') ||
       (target.action === 'approve' && !validApproval) ||
       (isReservation(target.kind) && target.action === 'reject' && result.reservation_reference !== undefined) ||
+      (target.kind === tableAddAction && target.action === 'reject' &&
+        (result.table_label !== undefined || result.capacity !== undefined || result.table_add !== undefined ||
+         result.reservation_reference !== undefined)) ||
       (target.kind === stockSetupAction && target.action === 'reject' &&
         (result.product_id !== undefined || result.product_revision !== undefined || result.tracking_enabled !== undefined ||
          result.stock_setup !== undefined || result.minimum !== undefined)) ||
@@ -690,6 +719,12 @@ onBeforeUnmount(() => {
           <p v-else>No hay mesa asignada.</p>
           <p>La cancelación no se puede deshacer y no envía aviso.</p>
         </div>
+        <div v-else-if="viewed.kind === tableAddAction && viewed.table_add">
+          <p>Local: <strong>{{ outletName }}</strong></p>
+          <p>Mesa: <strong>{{ viewed.table_add.table_label }}</strong> · Capacidad: <strong>{{ viewed.table_add.capacity }} personas</strong>.</p>
+          <p>Las reservas de este local están desactivadas y seguirán así. La mesa puede ampliar la disponibilidad de horarios ya creados solo si alguien habilita las reservas más adelante.</p>
+          <p>Por ahora no se puede retirar esta mesa desde Gomar. No se agregan turnos, no se modifican solicitudes y no se envían avisos.</p>
+        </div>
         <div v-else-if="viewed.kind === reservationAction && viewed.confirmation">
           <p>Local: <strong>{{ outletName }}</strong></p>
           <p>Referencia: <strong>{{ viewed.confirmation.reservation_reference }}</strong></p>
@@ -817,13 +852,17 @@ onBeforeUnmount(() => {
             <input v-model="cancelAcknowledged" type="checkbox" :disabled="busy">
             Entiendo que la cancelación es definitiva.
           </label>
+          <label v-if="needsTableAddAcknowledgement">
+            <input v-model="tableAddAcknowledged" type="checkbox" :disabled="busy">
+            Entiendo que Gomar no permite retirar esta mesa y que podría ampliar la disponibilidad si se habilitan las reservas.
+          </label>
           <label v-if="needsTrackingAcknowledgement">
             <input v-model="trackingAcknowledged" type="checkbox" :disabled="busy">
             Entiendo que las ventas registradas durante la pausa no descuentan stock, incluso al sincronizar ventas sin conexión, y que esos descuentos no se recuperan al reactivar.
           </label>
           <button
             type="button" :class="deciding.action === 'approve' && deciding.kind !== cancelAction ? 'primary' : 'danger'"
-            :disabled="busy || (deciding.kind === cancelAction && deciding.action === 'approve' && !cancelAcknowledged) || (needsTrackingAcknowledgement && !trackingAcknowledged)"
+            :disabled="busy || (deciding.kind === cancelAction && deciding.action === 'approve' && !cancelAcknowledged) || (needsTrackingAcknowledgement && !trackingAcknowledged) || (needsTableAddAcknowledgement && !tableAddAcknowledged)"
             @click="decide"
           >
             {{ deciding.action === 'approve' ? actionUI[viewed.kind].approve : 'Sí, rechazar' }}
@@ -841,6 +880,7 @@ onBeforeUnmount(() => {
         <p v-if="viewed.status === 'approved' && viewed.document_id">Comprobante {{ viewed.document_id }} · Versión {{ viewed.document_revision }}</p>
         <p v-if="viewed.status === 'approved' && viewed.run_id">Conciliación {{ viewed.run_id }}</p>
         <p v-if="viewed.status === 'approved' && viewed.movement_id">Movimiento {{ viewed.movement_id }}</p>
+        <p v-if="viewed.kind === tableAddAction && viewed.status === 'approved' && viewed.table_label && viewed.capacity">{{ viewed.table_label }} · Capacidad: {{ viewed.capacity }} personas · Reservas desactivadas al agregar.</p>
         <p v-if="isReservation(viewed.kind) && viewed.status === 'approved' && reservationReference(viewed.reservation_reference)">Reserva {{ viewed.reservation_reference }}</p>
         <button type="button" class="text-button" @click="clearPreview">Cerrar vista previa</button>
       </template>

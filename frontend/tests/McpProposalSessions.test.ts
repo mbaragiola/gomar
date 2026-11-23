@@ -1297,3 +1297,99 @@ describe('Configuración inicial de stock', () => {
     panel.unmount()
   })
 })
+
+describe('Mesa para un local de reservas desactivado', () => {
+  const path = base + '/reservation-table-add-proposals'
+  const table = { table_number: 11, table_label: 'Mesa 11', capacity: 6, venue_enabled: false }
+  function fakeFetch(reply: Response, preview: unknown = table) {
+    return vi.fn((url: string) => {
+      if (url.endsWith('/proposal-sessions')) return Promise.resolve(result({ sessions: [] }))
+      if (url === path) return Promise.resolve(result({ proposals: [pending()] }))
+      if (url === path + '/8') return Promise.resolve(result({ ...pending(), digest, table_add: preview }))
+      if (url === path + '/8/decision') return Promise.resolve(reply)
+      throw Error('unexpected test request')
+    })
+  }
+  async function show(fetch: unknown, canAddReservationTable = true) {
+    vi.stubGlobal('fetch', fetch)
+    const panel = mount(McpProposalSessions, {
+      props: { entity: 2, outlet: 7, outletName: 'Centro de prueba', canRename: false, canAddReservationTable },
+    })
+    await button(panel, 'Sesiones de propuestas').trigger('click')
+    await flushPromises()
+    return panel
+  }
+  async function read(panel: ReturnType<typeof mount>) {
+    await button(panel, 'Ver propuesta 8 de mesa para reservas').trigger('click')
+    await flushPromises()
+  }
+  it('requires an unchecked explicit no-remove acknowledgement after the exact preview', async () => {
+    const fetch = fakeFetch(result({ ...pending(), status: 'approved', table_label: 'Mesa 11', capacity: 6 }))
+    const panel = await show(fetch)
+    const choice = panel.get('input[type=checkbox]')
+    expect((choice.element as HTMLInputElement).checked).toBe(false)
+    expect(button(panel, 'Crear sesión de propuestas').attributes()).toHaveProperty('disabled')
+    await choice.setValue(true)
+    expect(panel.text()).toContain('--proposal-session-action=reservation_table_add')
+    await read(panel)
+    for (const phrase of ['Centro de prueba', 'Mesa 11', '6 personas', 'están desactivadas y seguirán así', 'solo si alguien habilita las reservas',
+      'no se puede retirar esta mesa desde Gomar', 'no se modifican solicitudes y no se envían avisos']) expect(panel.text()).toContain(phrase)
+    await button(panel, 'Continuar con la mesa').trigger('click')
+    const acknowledge = panel.get('[aria-label="Confirmar decisión"] input[type=checkbox]')
+    expect((acknowledge.element as HTMLInputElement).checked).toBe(false)
+    expect(button(panel, 'Agregar mesa sin habilitar reservas').attributes()).toHaveProperty('disabled')
+    expect(fetch.mock.calls.some(([url]) => url.endsWith('/decision'))).toBe(false)
+    await acknowledge.setValue(true)
+    await button(panel, 'Agregar mesa sin habilitar reservas').trigger('click')
+    await flushPromises()
+    expect(fetch).toHaveBeenLastCalledWith(path + '/8/decision', expect.objectContaining({
+      method: 'POST', body: JSON.stringify({ decision: 'approve', digest, confirm: true, acknowledge_no_remove: true }),
+    }))
+    expect(panel.text()).toContain('Mesa agregada. Las reservas del local siguen desactivadas.')
+    panel.unmount()
+  })
+  it.each([{ venue_enabled: true }, { capacity: 13 }, { table_label: 'Mesa 12' }, { table_number: 0 }])(
+    'does not approve an inconsistent, invalid or active venue preview %s', async patch => {
+      const fetch = fakeFetch(result({}), { ...table, ...patch })
+      const panel = await show(fetch)
+      await read(panel)
+      expect(panel.get('[role=alert]').text()).toContain('No pude abrir la propuesta.')
+      expect(button(panel, 'Continuar con la mesa')).toBeUndefined()
+      panel.unmount()
+    },
+  )
+  it.each([409, 200])('never retries an enable race or inconsistent receipt: %s', async code => {
+    const fetch = fakeFetch(result({ ...pending(), status: 'approved', table_label: 'Mesa 11', capacity: 7 }, code))
+    const panel = await show(fetch)
+    await read(panel)
+    await button(panel, 'Continuar con la mesa').trigger('click')
+    await panel.get('[aria-label="Confirmar decisión"] input').setValue(true)
+    await button(panel, 'Agregar mesa sin habilitar reservas').trigger('click')
+    await flushPromises()
+    expect(panel.get('[role=alert]').text()).toMatch(/No se agregó|No pude verificar/)
+    await read(panel)
+    expect(button(panel, 'Continuar con la mesa').attributes()).toHaveProperty('disabled')
+    expect(fetch.mock.calls.filter(([url]) => url.endsWith('/decision'))).toHaveLength(1)
+    panel.unmount()
+  })
+  it('rejects without dismissing a request or adding a table', async () => {
+    const fetch = fakeFetch(result({ ...pending(), status: 'rejected' }))
+    const panel = await show(fetch)
+    await read(panel)
+    await button(panel, 'Rechazar propuesta').trigger('click')
+    await button(panel, 'Sí, rechazar').trigger('click')
+    await flushPromises()
+    expect(panel.text()).toContain('No se agregó una mesa.')
+    expect(fetch).toHaveBeenLastCalledWith(path + '/8/decision', expect.objectContaining({
+      method: 'POST', body: JSON.stringify({ decision: 'reject', digest, confirm: true }),
+    }))
+    panel.unmount()
+  })
+  it('does not query this action without the current capability', async () => {
+    const fetch = fakeFetch(result({}))
+    const panel = await show(fetch, false)
+    expect(fetch.mock.calls.some(([url]) => url === path)).toBe(false)
+    expect(panel.text()).not.toContain('Preparar una mesa para reservas')
+    panel.unmount()
+  })
+})

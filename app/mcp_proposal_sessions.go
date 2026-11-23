@@ -63,7 +63,7 @@ func proposalLoginHash(r *http.Request) ([32]byte, error) {
 }
 
 func (a *app) registerNamedProposalSessions(add func(string, string, http.HandlerFunc)) {
-	if !a.posRenameProposalsEnabled() && !a.documentReviewProposalsEnabled() && !a.reconciliationDraftProposalsEnabled() && !a.documentEditProposalsEnabled() && !a.stockAdjustmentProposalsEnabled() && !a.posCatalogProposalsEnabled() && !a.reservationConfirmProposalsEnabled() && !a.reservationCancelProposalsEnabled() && !a.posCreateProposalsEnabled() && !a.stockMinimumProposalsEnabled() && !a.stockTrackingProposalsEnabled() && !a.stockProductSetupProposalsEnabled() && !a.supplierNameProposalsEnabled() {
+	if !a.posRenameProposalsEnabled() && !a.documentReviewProposalsEnabled() && !a.reconciliationDraftProposalsEnabled() && !a.documentEditProposalsEnabled() && !a.stockAdjustmentProposalsEnabled() && !a.posCatalogProposalsEnabled() && !a.reservationConfirmProposalsEnabled() && !a.reservationTableAddProposalsEnabled() && !a.reservationCancelProposalsEnabled() && !a.posCreateProposalsEnabled() && !a.stockMinimumProposalsEnabled() && !a.stockTrackingProposalsEnabled() && !a.stockProductSetupProposalsEnabled() && !a.supplierNameProposalsEnabled() {
 		return
 	}
 	add(proposalSessionsAuthPath, http.MethodPost, a.protectedWikiProposal(a.issueNamedProposalSession))
@@ -134,6 +134,11 @@ func (a *app) issueNamedProposalSession(w http.ResponseWriter, r *http.Request, 
 			return badInput
 		}
 		_, err = a.lockPOSRenameScope(ctx, tx, posRenameScope{u.id, input.Entity, input.Outlet})
+	case reservationTableAddSessionAction:
+		if !a.reservationTableAddProposalsEnabled() {
+			return badInput
+		}
+		err = a.lockReservationTableAddScope(ctx, tx, reservationConfirmScope{u.id, input.Entity, input.Outlet})
 	case reservationConfirmSessionAction:
 		if !a.reservationConfirmProposalsEnabled() {
 			return badInput
@@ -257,6 +262,10 @@ func (a *app) revokeNamedProposalSession(w http.ResponseWriter, r *http.Request,
 		return err
 	}
 	if _, err = tx.ExecContext(ctx, `UPDATE mcp_reservation_cancel_proposals SET status='revoked',cancellation_preview=NULL,decided_at=$1
+ WHERE session_id=$2 AND actor_id=$3 AND status='pending'`, now, id, u.id); err != nil {
+		return err
+	}
+	if _, err = tx.ExecContext(ctx, `UPDATE mcp_reservation_table_add_proposals SET status='revoked',table_preview=NULL,decided_at=$1
  WHERE session_id=$2 AND actor_id=$3 AND status='pending'`, now, id, u.id); err != nil {
 		return err
 	}
