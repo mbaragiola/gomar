@@ -69,6 +69,7 @@ type ReservationSetup struct {
 	VenueConfigured      bool   `json:"venue_configured"`
 	VenueEnabled         bool   `json:"venue_enabled"`
 	PublicFeatureEnabled bool   `json:"public_feature_enabled"`
+	MenuSaved            *bool  `json:"menu_saved,omitempty"` // nil means the server did not report menu status
 	Timezone             string `json:"timezone"`
 }
 
@@ -77,15 +78,16 @@ func (c *Client) ReservationSetup(ctx context.Context, entity, outlet int64) (Re
 		VenueConfigured      *bool  `json:"venue_configured"`
 		VenueEnabled         *bool  `json:"venue_enabled"`
 		PublicFeatureEnabled *bool  `json:"public_feature_enabled"`
+		MenuSaved            *bool  `json:"menu_saved,omitempty"`
 		Timezone             string `json:"timezone"`
 	}
 	if err := c.getWorkspace(ctx, entity, outlet, "/reservation-setup", nil, &w); err != nil {
 		return ReservationSetup{}, err
 	}
-	if w.VenueConfigured == nil || w.VenueEnabled == nil || w.PublicFeatureEnabled == nil || w.Timezone != "America/Argentina/Buenos_Aires" || (!*w.VenueConfigured && *w.VenueEnabled) {
+	if w.VenueConfigured == nil || w.VenueEnabled == nil || w.PublicFeatureEnabled == nil || w.Timezone != "America/Argentina/Buenos_Aires" || (!*w.VenueConfigured && (*w.VenueEnabled || (w.MenuSaved != nil && *w.MenuSaved))) {
 		return ReservationSetup{}, invalidResponse
 	}
-	return ReservationSetup{VenueConfigured: *w.VenueConfigured, VenueEnabled: *w.VenueEnabled, PublicFeatureEnabled: *w.PublicFeatureEnabled, Timezone: w.Timezone}, nil
+	return ReservationSetup{VenueConfigured: *w.VenueConfigured, VenueEnabled: *w.VenueEnabled, PublicFeatureEnabled: *w.PublicFeatureEnabled, MenuSaved: w.MenuSaved, Timezone: w.Timezone}, nil
 }
 
 func (c *Client) ReservationStatus(ctx context.Context, entity, outlet int64, date string) (ReservationStatus, error) {

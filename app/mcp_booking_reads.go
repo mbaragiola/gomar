@@ -37,8 +37,13 @@ func (a *app) mcpReservationSetup(r *http.Request, tx *sql.Tx, s mcpTokenScope) 
 	if r.URL.RawQuery != "" || r.URL.ForceQuery {
 		return nil, badInput
 	}
-	result := mcpclient.ReservationSetup{Timezone: reservationTimezone, PublicFeatureEnabled: a.publicReservations}
-	err = tx.QueryRowContext(r.Context(), `SELECT enabled FROM reservation_venues WHERE outlet_id=$1`, outlet).Scan(&result.VenueEnabled)
+	saved := false
+	result := mcpclient.ReservationSetup{Timezone: reservationTimezone, PublicFeatureEnabled: a.publicReservations, MenuSaved: &saved}
+	// Private preparation status only. Do not read the menu body or metadata,
+	// and do not make its existence depend on the publication flags.
+	err = tx.QueryRowContext(r.Context(), `SELECT v.enabled, EXISTS(
+		SELECT 1 FROM reservation_menus m WHERE m.outlet_id=v.outlet_id
+	) FROM reservation_venues v WHERE v.outlet_id=$1`, outlet).Scan(&result.VenueEnabled, &saved)
 	if errors.Is(err, sql.ErrNoRows) {
 		return result, nil
 	}
