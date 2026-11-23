@@ -30,6 +30,8 @@ type user struct {
 	id               int64
 	name, password   string
 	staff, superuser bool
+	employee         bool
+	employeeOrg      int64
 }
 
 func randomToken() string {
@@ -120,14 +122,29 @@ func currentUser(w http.ResponseWriter, r *http.Request, db sessionStore) (user,
 	var saved []byte
 	var u user
 	var active bool
-	query := `SELECT u.id,u.username,u.password,u.staff,u.superuser,u.active,s.password_digest
-		FROM sessions s JOIN users u ON u.id=s.user_id
-		WHERE s.token_hash=$1 AND s.expires>$2`
-	if requiresProviderSession(r) {
-		query += " AND s.auth_method='provider'"
+	var err error
+	if employeeLoginAllowed(r.Context()) {
+		err = db.QueryRowContext(r.Context(), `SELECT u.id,COALESCE(e.handle,u.username),u.password,u.staff,u.superuser,u.active,s.password_digest,(e.user_id IS NOT NULL),COALESCE(e.entity_id,0)
+   FROM sessions s JOIN users u ON u.id=s.user_id LEFT JOIN organization_employees e ON e.user_id=u.id
+   WHERE s.token_hash=$1 AND s.expires>$2 AND
+    ((e.user_id IS NULL AND s.auth_method<>'employee' AND (NOT $3 OR s.auth_method='provider')) OR
+     (s.auth_method='employee' AND e.status='active' AND NOT u.staff AND NOT u.superuser
+      AND EXISTS(SELECT 1 FROM memberships m JOIN entities org ON org.id=m.entity_id
+       WHERE m.user_id=u.id AND m.entity_id=e.entity_id AND m.active AND org.active)))`, key[:], time.Now().Unix(), requiresProviderSession(r)).
+			Scan(&u.id, &u.name, &u.password, &u.staff, &u.superuser, &active, &saved, &u.employee, &u.employeeOrg)
+	} else {
+		// Keep the old-schema query available for rollback and historical
+		// migrations. The unusable managed marker rejects existing employee
+		// credentials without querying the newer table.
+		query := `SELECT u.id,u.username,u.password,u.staff,u.superuser,u.active,s.password_digest
+   FROM sessions s JOIN users u ON u.id=s.user_id WHERE s.token_hash=$1 AND s.expires>$2`
+		if requiresProviderSession(r) {
+			query += " AND s.auth_method='provider'"
+		}
+		err = db.QueryRowContext(r.Context(), query, key[:], time.Now().Unix()).
+			Scan(&u.id, &u.name, &u.password, &u.staff, &u.superuser, &active, &saved)
 	}
-	err := db.QueryRowContext(r.Context(), query, key[:], time.Now().Unix()).
-		Scan(&u.id, &u.name, &u.password, &u.staff, &u.superuser, &active, &saved)
+
 	if errors.Is(err, sql.ErrNoRows) {
 		clearCookie()
 		return user{}, nil
@@ -136,6 +153,10 @@ func currentUser(w http.ResponseWriter, r *http.Request, db sessionStore) (user,
 		return user{}, err
 	}
 	if !active {
+		return user{}, nil
+	}
+	if isEmployeeAnchor(u.password) != u.employee {
+		clearCookie()
 		return user{}, nil
 	}
 	digest := sha256.Sum256([]byte(u.password))

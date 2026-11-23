@@ -97,7 +97,7 @@ func (a *app) uploadDocumentImage(w http.ResponseWriter, r *http.Request, u user
 	if err != nil {
 		return err
 	}
-	tx, err := a.db.BeginTx(r.Context(), nil)
+	tx, err := a.beginEmployeeCheckedWrite(r, u)
 	if err != nil {
 		return err
 	}

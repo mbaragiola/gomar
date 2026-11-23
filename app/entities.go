@@ -97,7 +97,7 @@ func (a *app) scopedRequest(capability string, next scopedHandler, readBody bool
 		if readBody {
 			requestBody, bodyErr = readJSONBody(w, r)
 		}
-		tx, err := a.db.BeginTx(r.Context(), nil)
+		tx, err := a.beginEmployeeCheckedWrite(r, u)
 		if err != nil {
 			return err
 		}
@@ -144,8 +144,8 @@ func (a *app) entities(w http.ResponseWriter, r *http.Request, u user) error {
 			JOIN sessions s ON s.token_hash=k.login_hash AND s.user_id=k.actor_id AND s.password_digest=k.password_digest
 			WHERE k.actor_id=m.user_id AND k.entity_id=e.id AND k.expires_at>$3 AND k.revoked_at IS NULL AND s.expires>$4)
 		FROM memberships m JOIN entities e ON e.id=m.entity_id
-		WHERE m.user_id=$1 AND m.active=TRUE AND e.active=TRUE ORDER BY e.id`,
-		u.id, a.posRenameProposalsEnabled() || a.documentReviewProposalsEnabled() || a.stockAdjustmentProposalsEnabled(), a.tokenTime().Unix(), time.Now().Unix())
+		WHERE m.user_id=$1 AND m.active=TRUE AND e.active=TRUE AND ($5=0 OR e.id=$5) ORDER BY e.id`,
+		u.id, a.posRenameProposalsEnabled() || a.documentReviewProposalsEnabled() || a.stockAdjustmentProposalsEnabled(), a.tokenTime().Unix(), time.Now().Unix(), u.employeeOrg)
 	if err != nil {
 		return err
 	}
@@ -158,6 +158,10 @@ func (a *app) entities(w http.ResponseWriter, r *http.Request, u user) error {
 			return err
 		}
 		entry.Capabilities = capabilities[entry.Role]
+		if a.managedEmployeesEnabled() && !u.employee && slices.Contains(entry.Capabilities, "manage_entity_access") {
+			entry.Capabilities = append(slices.Clone(entry.Capabilities), "manage_organization_employees")
+			slices.Sort(entry.Capabilities)
+		}
 		if a.enableMCP && slices.Contains(entry.Capabilities, "read_business_data") {
 			entry.Capabilities = append(slices.Clone(entry.Capabilities), "mcp_read")
 			slices.Sort(entry.Capabilities)
@@ -268,6 +272,9 @@ func (a *app) entities(w http.ResponseWriter, r *http.Request, u user) error {
 		}
 		if len(entry.Capabilities) != 0 {
 			entry.RoleLabel = roleLabel(entry.Role)
+			if u.employee {
+				entry.Capabilities = slices.DeleteFunc(slices.Clone(entry.Capabilities), func(name string) bool { return strings.HasPrefix(name, "mcp_") })
+			}
 			result = append(result, entry)
 		}
 	}
@@ -394,7 +401,8 @@ func managementOutlets(tx *sql.Tx, entityID int64, scope []int64) ([]managedOutl
 
 func managementMembers(tx *sql.Tx, m entityMembership, scope []int64) ([]managedMember, error) {
 	rows, err := tx.Query(`SELECT m.id,u.id,u.username,u.superuser,m.role,m.active FROM memberships m
-		JOIN users u ON u.id=m.user_id WHERE m.entity_id=$1 ORDER BY u.username`, m.ID)
+		JOIN users u ON u.id=m.user_id WHERE m.entity_id=$1
+ AND u.password NOT LIKE '!employee-v1-%' ORDER BY u.username`, m.ID)
 	if err != nil {
 		return nil, err
 	}
@@ -632,7 +640,7 @@ func saveMembership(r *http.Request, tx *sql.Tx, m entityMembership, body []byte
 func targetMember(r *http.Request, tx *sql.Tx, entityID int64, username *string) (managedMember, error) {
 	var item managedMember
 	if r.Method == http.MethodPost {
-		err := tx.QueryRow("SELECT id,username,superuser FROM users WHERE username=$1", *username).
+		err := tx.QueryRow("SELECT id,username,superuser FROM users u WHERE username=$1 AND u.password NOT LIKE '!employee-v1-%'", *username).
 			Scan(&item.userID, &item.Username, &item.super)
 		if errors.Is(err, sql.ErrNoRows) {
 			return item, problem{404, "No se encontró el usuario."}
@@ -644,7 +652,8 @@ func targetMember(r *http.Request, tx *sql.Tx, entityID int64, username *string)
 		return item, err
 	}
 	err = tx.QueryRow(`SELECT m.id,u.id,u.username,u.superuser,m.role,m.active FROM memberships m
-		JOIN users u ON u.id=m.user_id WHERE m.id=$1 AND m.entity_id=$2`, id, entityID).
+		JOIN users u ON u.id=m.user_id WHERE m.id=$1 AND m.entity_id=$2
+  AND u.password NOT LIKE '!employee-v1-%'`, id, entityID).
 		Scan(&item.ID, &item.userID, &item.Username, &item.super, &item.Role, &item.Active)
 	if errors.Is(err, sql.ErrNoRows) {
 		return item, problem{404, "No se encontró la membresía."}

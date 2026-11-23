@@ -76,6 +76,9 @@ func (a *app) registerMCP(add func(string, string, http.HandlerFunc)) {
 
 func (a *app) issueMCPToken(w http.ResponseWriter, r *http.Request, u user) error {
 	w.Header().Set("Cache-Control", "no-store")
+	if u.employee {
+		return forbiddenRole
+	}
 	var input struct {
 		Entity int64  `json:"entity_id"`
 		Outlet *int64 `json:"outlet_id"`
@@ -169,7 +172,7 @@ func loadMCPToken(ctx context.Context, tx *sql.Tx, hash []byte, now time.Time) (
 		return s, err
 	}
 	check := sha256.Sum256([]byte(password))
-	if subtle.ConstantTimeCompare(check[:], digest) != 1 {
+	if !mcpAccountAllowed(ctx, password) || subtle.ConstantTimeCompare(check[:], digest) != 1 {
 		return s, unauthenticated
 	}
 	s.entityMembership, err = scopedMembership(tx, userID, entityID, mcpReadCapability)

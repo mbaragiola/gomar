@@ -59,7 +59,7 @@ func (a *app) listProviderLoginMethods(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
-	jsonResponse(w, http.StatusOK, map[string]any{"providers": public, "local_password_enabled": !a.providerOnly, "admin_recovery_enabled": a.adminRecovery && effectiveHTTPS(r)})
+	jsonResponse(w, http.StatusOK, map[string]any{"providers": public, "local_password_enabled": !a.classicPasswordsDisabled(), "employee_password_enabled": a.managedEmployeesEnabled(), "admin_recovery_enabled": a.adminRecovery && effectiveHTTPS(r)})
 }
 
 func (a *app) providerLoginRoute(next func(http.ResponseWriter, *http.Request) error) http.HandlerFunc {

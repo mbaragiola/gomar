@@ -29,7 +29,7 @@ func (a *app) reviewDraft(w http.ResponseWriter, r *http.Request, u user) error 
 		return problem{422, "El motivo de la revisión es obligatorio."}
 	}
 
-	tx, err := a.db.BeginTx(r.Context(), nil)
+	tx, err := a.beginEmployeeCheckedWrite(r, u)
 	if err != nil {
 		return err
 	}

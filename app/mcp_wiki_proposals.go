@@ -145,7 +145,7 @@ func lockWikiProposalBrowser(r *http.Request, tx *sql.Tx, actor int64) ([]byte, 
 		return nil, err
 	}
 	check := sha256.Sum256([]byte(password))
-	if subtle.ConstantTimeCompare(check[:], digest) != 1 {
+	if !mcpAccountAllowed(r.Context(), password) || subtle.ConstantTimeCompare(check[:], digest) != 1 {
 		return nil, unauthenticated
 	}
 	return check[:], nil
@@ -473,7 +473,7 @@ func (a *app) loadProposalKey(ctx context.Context, tx *sql.Tx, hash []byte, scop
 	}
 	digestPassword := sha256.Sum256([]byte(password))
 	switch {
-	case subtle.ConstantTimeCompare(tokenPassword, digestPassword[:]) != 1:
+	case !mcpAccountAllowed(ctx, password) || subtle.ConstantTimeCompare(tokenPassword, digestPassword[:]) != 1:
 		err = unauthenticated
 	case entity != scope.entity:
 		err = missingEntity

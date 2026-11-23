@@ -33,6 +33,23 @@ one native draft revision and audit entry. It leaves the branch, point of sale,
 issuer, other document data, attached files and financial records unchanged.
 See [printed document number proposals](MCP-DOCUMENT-NUMBER-PROPOSALS.md).
 
+## Managed employee accounts
+
+Employee invitation, temporary password display, first sign-in, password
+replacement, resets and deactivation are native-only. They set or reveal
+credentials and change a person's organization access; do not ask anyone
+to enter a username, password or recovery detail in chat. There is no MCP
+tool that lists managed employees, issues credentials or changes their access.
+
+For the handoff, open Gomar without any credentials or employee IDs in the
+URL. Sign in as an organization administrator, select the intended
+organization, then choose **Administración → Gestionar accesos → Empleados de
+la organización**. The app checks current management permission and permitted
+locations. A clerk, another organization’s administrator or an ungranted
+provider account cannot manage these employees. The employee uses **Ingresar
+como empleado** in Gomar and changes the temporary password there.
+This preview does not issue MCP credentials to managed employees.
+
 ## Verification levels
 
 1. App and database tests cover scope, roles, flags, and relevant lifecycle

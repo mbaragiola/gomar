@@ -426,7 +426,7 @@ func (a *app) loadNamedProposalSession(ctx context.Context, tx *sql.Tx, hash []b
 	}
 	password := sha256.Sum256([]byte(raw))
 	switch {
-	case subtle.ConstantTimeCompare(saved, password[:]) != 1:
+	case !mcpAccountAllowed(ctx, raw) || subtle.ConstantTimeCompare(saved, password[:]) != 1:
 		err = unauthenticated
 	case entity != s.entity:
 		err = missingEntity

@@ -41,7 +41,7 @@ func (a *app) saveSupplier(w http.ResponseWriter, r *http.Request, u user, updat
 	if input.Name == nil || input.CUIT == nil {
 		return badInput
 	}
-	tx, err := a.db.BeginTx(r.Context(), nil)
+	tx, err := a.beginEmployeeCheckedWrite(r, u)
 	if err != nil {
 		return err
 	}

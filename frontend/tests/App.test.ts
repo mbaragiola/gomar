@@ -72,6 +72,7 @@ describe('aplicación', () => {
 
   it('muestra el ingreso en español cuando no hay sesión', async () => {
     vi.stubGlobal('fetch', vi.fn((url: string) => {
+      if (url.endsWith('/auth/providers')) return response({ providers: [], local_password_enabled: true })
       if (url.endsWith('/auth/csrf')) return response({ detalle: 'ok' })
       return response({ detail: 'No autorizado' }, 401)
     }))
@@ -414,6 +415,7 @@ describe('aplicación', () => {
     let currentUser = 'A'
     let failBContext = true
     vi.stubGlobal('fetch', vi.fn((url: string) => {
+      if (url.endsWith('/auth/providers')) return response({ providers: [], local_password_enabled: true })
       if (url.endsWith('/auth/csrf')) return response({ detalle: 'ok' })
       if (url.endsWith('/auth/me')) return response({ usuario: 'usuario-a' })
       if (url.endsWith('/auth/logout')) {
@@ -480,6 +482,7 @@ describe('aplicación', () => {
     const delayedSuppliers = deferred<Response>()
     let currentUser = 'A'
     vi.stubGlobal('fetch', vi.fn((url: string) => {
+      if (url.endsWith('/auth/providers')) return response({ providers: [], local_password_enabled: true })
       if (url.endsWith('/auth/csrf')) return response({ detalle: 'ok' })
       if (url.endsWith('/auth/me')) return response({ usuario: 'usuario-a' })
       if (url.endsWith('/auth/logout')) {

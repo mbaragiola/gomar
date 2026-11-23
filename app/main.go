@@ -33,6 +33,8 @@ func main() {
 	enableProposalSessions := flag.Bool("enable-mcp-proposal-sessions", false, "allow selected chat proposals for browser approval")
 	enableProviderAuth := flag.Bool("enable-provider-auth", false, "allow explicitly configured OpenID Connect login providers")
 	enableAdminRecovery := flag.Bool("enable-admin-recovery-realm", false, "use a separate browser password session for administration")
+	employeeOnboarding := flag.Bool("enable-employee-onboarding", false, "enable organization-managed employee accounts")
+	providerEmployee := flag.Bool("provider-employee-sign-in", false, "allow configured providers and managed employee sign-in, but not ordinary passwords")
 	providerOnly := flag.Bool("provider-only-sign-in", false, "allow only configured providers for normal application sign-in")
 	enableStock := flag.Bool("enable-stock", false, "enable optional finished-item stock for the prototype POS")
 	enableSupplierNameProposals := flag.Bool("enable-mcp-supplier-legal-name-proposals", false, "allow proposing a business-wide supplier legal name for browser approval")
@@ -100,7 +102,7 @@ func main() {
 			modes++
 		}
 	}
-	if *state == "" || flag.NArg() != 0 || modes > 1 || modes != 0 && (explicitTCP || unixMode || *publicReservations || *reservationContacts || *enableReservationConfirmProposals || *enableReservationTableAddProposals || *enableReservationSlotAddProposals || *enableReservationPolicyNoticeProposals || *enableOutletDisplayLabelProposals || *enableReservationCancelProposals || *enablePOSCreateProposals || *enableStockMinimumProposals || *enableStockTrackingProposals || *enableStockProductSetupProposals || *enableSupplierNameProposals || *enablePOS || *enableDelivery || *enableMCP || *enableWikiProposals || *enableDocumentProposals || *enableWikiEditProposals || *enableStockReceiptProposals || *enableProposalSessions || *enableDocumentReviewProposals || *enableDocumentEditProposals || *enableDocumentNumberProposals || *enableDocumentPointOfSaleProposals || *enableStockAdjustmentProposals || *enablePOSCatalogProposals || *enableReconciliationDraftProposals || *enableProviderAuth || *enableAdminRecovery || *providerOnly) {
+	if *state == "" || flag.NArg() != 0 || modes > 1 || modes != 0 && (explicitTCP || unixMode || *publicReservations || *reservationContacts || *enableReservationConfirmProposals || *enableReservationTableAddProposals || *enableReservationSlotAddProposals || *enableReservationPolicyNoticeProposals || *enableOutletDisplayLabelProposals || *enableReservationCancelProposals || *enablePOSCreateProposals || *enableStockMinimumProposals || *enableStockTrackingProposals || *enableStockProductSetupProposals || *enableSupplierNameProposals || *enablePOS || *enableDelivery || *enableMCP || *enableWikiProposals || *enableDocumentProposals || *enableWikiEditProposals || *enableStockReceiptProposals || *enableProposalSessions || *enableDocumentReviewProposals || *enableDocumentEditProposals || *enableDocumentNumberProposals || *enableDocumentPointOfSaleProposals || *enableStockAdjustmentProposals || *enablePOSCatalogProposals || *enableReconciliationDraftProposals || *enableProviderAuth || *enableAdminRecovery || *providerOnly || *providerEmployee || *employeeOnboarding) {
 		log.Fatal("provide -state; choose at most one of -init, -check and -create-admin without server flags")
 	}
 	var addr netip.AddrPort
@@ -115,8 +117,8 @@ func main() {
 			log.Fatal("-listen must use a numeric loopback IP and port")
 		}
 	}
-	if *providerOnly && (!*enableProviderAuth || !*enableAdminRecovery) {
-		log.Fatal(errProviderOnlyUnsafe)
+	if err := employeeSignInFlags(*employeeOnboarding, *providerOnly, *providerEmployee, *enableProviderAuth, *enableAdminRecovery); err != nil {
+		log.Fatal(err)
 	}
 	if err := validateSignInMode(*enableAdminRecovery, false, unixMode, postgresMigrationNames, nil); err != nil {
 		log.Fatal(err)
@@ -128,7 +130,7 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	if err = validateSignInMode(*enableAdminRecovery, *providerOnly, unixMode, postgresMigrationNames, providerAuth); err != nil {
+	if err = validateSignInMode(*enableAdminRecovery, *providerOnly || *providerEmployee, unixMode, postgresMigrationNames, providerAuth); err != nil {
 		log.Fatal(err)
 	}
 	// Resolve and reserve the exact protected listener before opening (or
@@ -194,7 +196,7 @@ func main() {
 		WriteTimeout:      20 * time.Second,
 		IdleTimeout:       60 * time.Second,
 	}
-	application := &app{db: db, reservationContacts: *reservationContacts, providerAuth: providerAuth, adminRecovery: *enableAdminRecovery, providerOnly: *providerOnly, privateRoot: privateRoot, publicReservations: *publicReservations, enableMCPReservationConfirmProposals: *enableReservationConfirmProposals, enableMCPReservationTableAddProposals: *enableReservationTableAddProposals, enableMCPReservationSlotAddProposals: *enableReservationSlotAddProposals, enableMCPReservationPolicyNoticeProposals: *enableReservationPolicyNoticeProposals, enableMCPOutletDisplayLabelProposals: *enableOutletDisplayLabelProposals, enableMCPReservationCancelProposals: *enableReservationCancelProposals, enableMCPPOSCreateProposals: *enablePOSCreateProposals, enableMCPStockMinimumProposals: *enableStockMinimumProposals, enableMCPStockTrackingProposals: *enableStockTrackingProposals, enableMCPStockProductSetupProposals: *enableStockProductSetupProposals, enableMCPSupplierNameProposals: *enableSupplierNameProposals, enablePOS: *enablePOS,
+	application := &app{db: db, reservationContacts: *reservationContacts, employeeOnboarding: *employeeOnboarding, providerEmployee: *providerEmployee, providerAuth: providerAuth, adminRecovery: *enableAdminRecovery, providerOnly: *providerOnly, privateRoot: privateRoot, publicReservations: *publicReservations, enableMCPReservationConfirmProposals: *enableReservationConfirmProposals, enableMCPReservationTableAddProposals: *enableReservationTableAddProposals, enableMCPReservationSlotAddProposals: *enableReservationSlotAddProposals, enableMCPReservationPolicyNoticeProposals: *enableReservationPolicyNoticeProposals, enableMCPOutletDisplayLabelProposals: *enableOutletDisplayLabelProposals, enableMCPReservationCancelProposals: *enableReservationCancelProposals, enableMCPPOSCreateProposals: *enablePOSCreateProposals, enableMCPStockMinimumProposals: *enableStockMinimumProposals, enableMCPStockTrackingProposals: *enableStockTrackingProposals, enableMCPStockProductSetupProposals: *enableStockProductSetupProposals, enableMCPSupplierNameProposals: *enableSupplierNameProposals, enablePOS: *enablePOS,
 		enableDelivery: *enableDelivery, enableStock: *enableStock, enableMCP: *enableMCP, enableMCPWikiProposals: *enableWikiProposals, enableMCPDocumentProposals: *enableDocumentProposals, enableMCPWikiEditProposals: *enableWikiEditProposals, enableMCPStockReceiptProposals: *enableStockReceiptProposals, enableMCPProposalSessions: *enableProposalSessions, enableMCPDocumentReviewProposals: *enableDocumentReviewProposals, enableMCPDocumentEditProposals: *enableDocumentEditProposals, enableMCPDocumentNumberProposals: *enableDocumentNumberProposals, enableMCPDocumentPointOfSaleProposals: *enableDocumentPointOfSaleProposals, enableMCPPOSCatalogProposals: *enablePOSCatalogProposals, enableMCPStockAdjustmentProposals: *enableStockAdjustmentProposals, enableMCPReconciliationDraftProposals: *enableReconciliationDraftProposals}
 	if ingress != nil {
 		listener = ingress.listener

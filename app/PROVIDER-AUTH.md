@@ -125,6 +125,13 @@ Neither flag is enabled by default:
   default compatible mode does not invalidate them on migration alone.
   Client-provided identity claims still cannot supply Gomar permissions.
 
+A distinct `-provider-employee-sign-in` mode requires the same protected
+ingress, provider configuration and separate recovery realm. It disables
+general password sign-in and additionally allows only organization-managed
+employee passwords through their own sign-in and first-use password change.
+See [employee onboarding](EMPLOYEE-ONBOARDING.md). Do not combine the
+employee settings with `-provider-only-sign-in`.
+
 The admin password path accepts only existing active local staff
 superusers. It uses separate admin-only Secure, HttpOnly, SameSite=Strict
 session and CSRF cookies under `/admin/`. Recovery does not issue an app

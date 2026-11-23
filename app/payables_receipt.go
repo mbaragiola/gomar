@@ -161,7 +161,7 @@ func (a *app) attachReceipt(w http.ResponseWriter, r *http.Request, u user) erro
 		return err
 	}
 	// Neither reading a request body nor parsing a file holds the writer lock.
-	tx, err := a.db.BeginTx(r.Context(), nil)
+	tx, err := a.beginEmployeeCheckedWrite(r, u)
 	if err != nil {
 		return err
 	}
