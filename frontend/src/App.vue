@@ -1,7 +1,9 @@
 <script setup lang="ts">
-import { computed, nextTick, onMounted, reactive, ref } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
 import { lockOfflinePOS } from './pos/storage'
 import { ApiError, download, request } from './api'
+import { draftAttachmentHandoffHref, draftHandoffPrefix, parseDraftAttachmentHandoff } from './document-attachment-handoff'
+import type { AttachmentHandoffDetail, DraftAttachmentHandoff } from './document-attachment-handoff'
 import ThemeSelect from './components/ThemeSelect.vue'
 import McpDocumentProposals from './components/McpDocumentProposals.vue'
 import McpProposalSessions from './components/McpProposalSessions.vue'
@@ -40,6 +42,9 @@ const total = ref<{ cantidad: number; totales: { moneda: string; cantidad: numbe
 const selectedEntityId = ref<number | null>(null)
 const selectedOutletId = ref<number | null>(null)
 const selectedDocument = ref<Document | null>(null)
+const shownHandoff = ref<AttachmentHandoffDetail | null>(null)
+const attachmentHeading = ref<HTMLHeadingElement | null>(null)
+let handoffGeneration = 0
 const payables = ref<Payable[]>([])
 const payments = ref<Payment[]>([])
 const paymentDraft = ref<Payment | null>(null)
@@ -136,7 +141,7 @@ const canManageAccess = computed(() => hasCapability('manage_entity_access'))
 const canRecordPayments = computed(() => hasCapability('record_supplier_payments'))
 const canReversePayments = computed(() => hasCapability('reverse_supplier_payments'))
 const canReconcile = computed(() => hasCapability('reconcile_financial_data'))
-const showDocumentDetail = computed(() => mobileDetail.value && !!selectedDocument.value)
+const showDocumentDetail = computed(() => mobileDetail.value && !!(selectedDocument.value || shownHandoff.value))
 const hasOutlet = computed(() => !!selectedOutletId.value && outlets.value.some(item => item.id === selectedOutletId.value))
 const canUseChat = computed(() => hasOutlet.value && (canConnectMCP.value || canReviewWikiProposals.value ||
   canReviewWikiEditProposals.value || canReviewDocumentProposals.value || canReviewStockReceiptProposals.value || canManageMcpProposalSessions.value))
@@ -148,9 +153,11 @@ const viewNames: Record<StaffView, string> = {
 function focusStaffHeading() {
   void nextTick(() => staffHeading.value?.focus())
 }
-function selectStaffView(view: StaffView) {
+function selectStaffView(view: StaffView, preserveHandoff = false) {
+  const wasShowingDetail = showDocumentDetail.value
+  if (!preserveHandoff) clearHandoffLocation()
   if (staffView.value === view) {
-    if (view === 'documents' && showDocumentDetail.value) returnToDocuments()
+    if (!preserveHandoff && view === 'documents' && wasShowingDetail) returnToDocuments()
     return
   }
   staffView.value = view
@@ -168,19 +175,32 @@ function selectStaffView(view: StaffView) {
   focusStaffHeading()
 }
 function showMobileDocument() {
-  if (staffView.value !== 'documents' || !selectedDocument.value) return
+  if (staffView.value !== 'documents' || (!selectedDocument.value && !shownHandoff.value)) return
   mobileDetail.value = true
-  if (window.matchMedia?.('(max-width: 850px)').matches) {
+  if (!shownHandoff.value && window.matchMedia?.('(max-width: 850px)').matches) {
     void nextTick(() => documentHeading.value?.focus())
   }
 }
 function returnToDocuments() {
+  clearHandoffLocation()
   mobileDetail.value = false
   focusStaffHeading()
 }
 const canManageSelectedDocument = computed(() => selectedDocument.value?.estado === 'reviewed'
   ? hasCapability('manage_reviewed_documents')
   : canManageDrafts.value)
+const attachmentHandoffHref = computed(() => {
+  const doc = selectedDocument.value
+  const entity = selectedEntityId.value
+  const outlet = selectedOutletId.value
+  if (!doc || !entity || !outlet || doc.estado !== 'draft' || doc.outlet.id !== outlet || doc.payable_id ||
+      (!canManageDrafts.value && !canDownload.value)) return undefined
+  return draftAttachmentHandoffHref({ entity, outlet, document: doc.id })
+})
+const attachmentDocumentID = computed(() => shownHandoff.value?.document_id ?? selectedDocument.value?.id)
+const visibleAttachments = computed(() => shownHandoff.value?.adjuntos ?? selectedDocument.value?.adjuntos ?? [])
+const canDownloadVisibleAttachment = computed(() => shownHandoff.value?.can_download ?? canDownload.value)
+const canUploadVisibleAttachment = computed(() => shownHandoff.value?.can_upload ?? canManageSelectedDocument.value)
 const paymentForm = reactive({ supplier_id: 0, moneda: 'ARS', total: '', metodo: 'bank_transfer', referencia: '' })
 const allocationAmounts = reactive<Record<number, string>>({})
 const eligiblePayables = computed(() => payables.value.filter((item) => (
@@ -230,6 +250,7 @@ function clearDocumentState(resetBusy = true) {
   documents.value = []
   total.value = { cantidad: 0, totales: [] }
   selectedDocument.value = null
+  shownHandoff.value = null
   showCreate.value = false
   showSupplier.value = false
   showSupplierManagement.value = false
@@ -304,11 +325,17 @@ async function initialize() {
     if (!sessionIsCurrent(sessionToken)) return
     username.value = me.usuario
     await loadEntities(sessionToken)
-    if (sessionIsCurrent(sessionToken)) authenticated.value = true
+    if (sessionIsCurrent(sessionToken)) {
+      authenticated.value = true
+      await syncAttachmentHandoff()
+    }
   } catch (value) {
     if (sessionIsCurrent(sessionToken) && (!(value instanceof ApiError) || value.status !== 401)) showError(value)
   } finally {
-    if (sessionIsCurrent(sessionToken)) loading.value = false
+    if (sessionIsCurrent(sessionToken)) {
+      loading.value = false
+      if (shownHandoff.value) void nextTick(() => { if (shownHandoff.value) attachmentHeading.value?.focus() })
+    }
   }
 }
 
@@ -323,7 +350,10 @@ async function signIn() {
     lockOfflinePOS()
     username.value = result.usuario
     await loadEntities(sessionToken)
-    if (sessionIsCurrent(sessionToken)) authenticated.value = true
+    if (sessionIsCurrent(sessionToken)) {
+      authenticated.value = true
+      await syncAttachmentHandoff()
+    }
   } catch (value) {
     if (sessionIsCurrent(sessionToken)) {
       resetUserState()
@@ -335,6 +365,7 @@ async function signIn() {
 }
 
 async function signOut() {
+  clearHandoffLocation()
   signInOptions.value = null
   lockOfflinePOS()
   const sessionToken = resetUserState()
@@ -353,13 +384,15 @@ async function loadEntities(sessionToken: number) {
   if (selectedEntityId.value) await loadContext(sessionToken, false)
 }
 
-async function loadContext(sessionToken = sessionGeneration, resetBusy = true) {
+async function loadContext(sessionToken = sessionGeneration, resetBusy = true, preferredOutlet?: number) {
   const contextToken = ++contextGeneration
   clearContextState(resetBusy)
   error.value = ''
   const entityId = selectedEntityId.value
   if (!entityId) return
   const nextOutlets = await request<Outlet[]>(`/entities/${entityId}/outlets`)
+  if (!contextIsCurrent(sessionToken, contextToken, entityId)) return
+  if (preferredOutlet !== undefined && !nextOutlets.some(outlet => outlet.id === preferredOutlet)) return
   const nextSuppliers = nextOutlets.length
     ? await request<Supplier[]>(`/entities/${entityId}/suppliers`)
     : []
@@ -383,7 +416,7 @@ async function loadContext(sessionToken = sessionGeneration, resetBusy = true) {
     ocrDisclosureAcceptedVersion.value = null
   }
   ocrConfig.value = nextOcrConfig
-  selectedOutletId.value = outlets.value[0]?.id ?? null
+  selectedOutletId.value = preferredOutlet ?? outlets.value[0]?.id ?? null
   documentForm.supplier_id = suppliers.value[0]?.id ?? 0
   documentForm.issuer_cuit = suppliers.value[0]?.cuit ?? ''
   await loadDocuments(sessionToken, contextToken)
@@ -539,6 +572,7 @@ async function loadDocuments(sessionToken = sessionGeneration, contextToken = co
 }
 
 async function changeEntity() {
+  clearHandoffLocation()
   const sessionToken = sessionGeneration
   try {
     await loadContext(sessionToken)
@@ -562,6 +596,7 @@ async function changeOutlet() {
 }
 
 async function openDocument(id: number) {
+  clearHandoffLocation()
   if (!selectedEntityId.value) return
   const sessionToken = sessionGeneration
   const contextToken = contextGeneration
@@ -577,6 +612,89 @@ async function openDocument(id: number) {
     }
   } catch (value) {
     if (contextIsCurrent(sessionToken, contextToken, entityId) && detailToken === detailGeneration) showError(value)
+  }
+}
+
+const unavailableHandoff = 'No se pudo abrir el borrador desde este enlace. Verificá el local y tus permisos.'
+const hasHandoffLocation = () => window.location.pathname === '/' && window.location.hash.startsWith(draftHandoffPrefix)
+function closeShownHandoff() {
+  if (!shownHandoff.value) return
+  shownHandoff.value = null
+  selectedDocument.value = null
+  uploadFile.value = null
+  mobileDetail.value = false
+  detailGeneration += 1
+}
+
+function clearHandoffLocation() {
+  handoffGeneration += 1
+  closeShownHandoff()
+  if (hasHandoffLocation()) window.history.replaceState(window.history.state, '', window.location.pathname + window.location.search)
+}
+
+async function readAttachmentHandoff(target: DraftAttachmentHandoff) {
+  const detail = await request<AttachmentHandoffDetail>(`/entities/${target.entity}/outlets/${target.outlet}/documents/${target.document}/attachment-handoff`, {
+    cache: 'no-store', referrerPolicy: 'no-referrer',
+  })
+  if (detail.document_id !== target.document || detail.outlet_id !== target.outlet || detail.entity_id !== target.entity ||
+      typeof detail.can_upload !== 'boolean' || typeof detail.can_download !== 'boolean' ||
+      (!detail.can_upload && !detail.can_download) || !Array.isArray(detail.adjuntos)) throw new Error(unavailableHandoff)
+  return detail
+}
+
+async function syncAttachmentHandoff() {
+  const run = ++handoffGeneration
+  if (!authenticated.value || window.location.pathname !== '/') return
+  closeShownHandoff()
+  if (!hasHandoffLocation()) return
+  const hash = window.location.hash
+  const target = window.location.search === '' ? parseDraftAttachmentHandoff(hash) : null
+  if (!target) {
+    error.value = 'El enlace al borrador no es válido.'
+    return
+  }
+  const session = sessionGeneration
+  let context = contextGeneration
+  const current = () => handoffGeneration === run && sessionIsCurrent(session) &&
+    context === contextGeneration && window.location.hash === hash
+  error.value = ''
+  try {
+    let detail = await readAttachmentHandoff(target)
+    if (!current()) return
+    if (selectedEntityId.value !== target.entity || selectedOutletId.value !== target.outlet) {
+      // Only change the selector after the server verified the requested scope.
+      selectedEntityId.value = target.entity
+      const loadingContext = loadContext(session, true, target.outlet)
+      context = contextGeneration
+      await loadingContext
+      if (!current()) return
+      if (selectedOutletId.value !== target.outlet) throw new Error(unavailableHandoff)
+      detail = await readAttachmentHandoff(target)
+      if (!current()) return
+    }
+    selectStaffView('documents', true)
+    detailGeneration += 1
+    uploadFile.value = null
+    selectedDocument.value = null
+    shownHandoff.value = detail
+    showMobileDocument()
+    void nextTick(() => { if (current()) attachmentHeading.value?.focus() })
+  } catch {
+    if (current()) error.value = unavailableHandoff
+  }
+}
+
+async function checkShownHandoff(target: AttachmentHandoffDetail, capability: 'can_upload' | 'can_download') {
+  try {
+    const current = await readAttachmentHandoff({ entity: target.entity_id, outlet: target.outlet_id, document: target.document_id })
+    if (!current[capability]) throw new Error(unavailableHandoff)
+    return shownHandoff.value === target
+  } catch {
+    if (shownHandoff.value === target) {
+      closeShownHandoff()
+      error.value = unavailableHandoff
+    }
+    return false
   }
 }
 
@@ -793,22 +911,26 @@ async function createDocument() {
 }
 
 async function uploadAttachment() {
-  if (!selectedEntityId.value || !selectedDocument.value || !uploadFile.value) return
+  if (!selectedEntityId.value || !attachmentDocumentID.value || !uploadFile.value) return
   const sessionToken = sessionGeneration
   const contextToken = contextGeneration
   const entityId = selectedEntityId.value
-  const documentId = selectedDocument.value.id
+  const documentId = attachmentDocumentID.value
+  const target = shownHandoff.value
   const busyToken = startBusy()
   error.value = ''
   try {
+    if (target && !(await checkShownHandoff(target, 'can_upload'))) return
+    if (!contextIsCurrent(sessionToken, contextToken, entityId) || attachmentDocumentID.value !== documentId || !uploadFile.value) return
     const data = new FormData()
     data.append('archivo', uploadFile.value)
     await request(`/entities/${entityId}/documents/${documentId}/attachments`, {
       method: 'POST', body: data,
     })
-    if (!contextIsCurrent(sessionToken, contextToken, entityId) || selectedDocument.value?.id !== documentId) return
+    if (!contextIsCurrent(sessionToken, contextToken, entityId) || attachmentDocumentID.value !== documentId) return
     uploadFile.value = null
-    await openDocument(documentId)
+    if (target) await syncAttachmentHandoff()
+    else await openDocument(documentId)
   } catch (value) {
     if (contextIsCurrent(sessionToken, contextToken, entityId)) showError(value)
   } finally {
@@ -862,13 +984,15 @@ async function deleteDocument() {
 }
 
 async function downloadAttachment(id: number, name: string) {
-  if (!selectedEntityId.value || !selectedDocument.value) return
+  if (!selectedEntityId.value || !attachmentDocumentID.value) return
   const sessionToken = sessionGeneration
   const contextToken = contextGeneration
   const entityId = selectedEntityId.value
-  const documentId = selectedDocument.value.id
-  const isCurrent = () => contextIsCurrent(sessionToken, contextToken, entityId) && selectedDocument.value?.id === documentId
+  const documentId = attachmentDocumentID.value
+  const isCurrent = () => contextIsCurrent(sessionToken, contextToken, entityId) && attachmentDocumentID.value === documentId
   try {
+    const target = shownHandoff.value
+    if (target && !(await checkShownHandoff(target, 'can_download'))) return
     await download(`/entities/${entityId}/documents/${documentId}/attachments/${id}`, name, isCurrent)
   } catch (value) {
     if (isCurrent()) showError(value)
@@ -1073,7 +1197,12 @@ async function downloadPaymentReceipt(payment: Payment) {
   }
 }
 
-onMounted(() => { if (!publicVenue) return initialize() })
+onMounted(() => {
+  if (publicVenue) return
+  window.addEventListener('hashchange', syncAttachmentHandoff)
+  return initialize()
+})
+onBeforeUnmount(() => window.removeEventListener('hashchange', syncAttachmentHandoff))
 </script>
 
 <template>
@@ -1417,7 +1546,7 @@ onMounted(() => { if (!publicVenue) return initialize() })
           <section class="card list-card">
             <div class="section-heading"><div><p class="eyebrow">REGISTRO</p><h2>Comprobantes</h2></div><span>{{ outlets.find((o) => o.id === selectedOutletId)?.nombre }}</span></div>
             <div v-if="documents.length" class="document-list">
-              <button v-for="item in documents" :key="item.id" class="document-row" :class="{ active: selectedDocument?.id === item.id }" @click="openDocument(item.id)">
+              <button v-for="item in documents" :key="item.id" class="document-row" :class="{ active: attachmentDocumentID === item.id }" @click="openDocument(item.id)">
                 <span><strong>{{ item.supplier.razon_social }}</strong><small>{{ item.referencia }}</small></span>
                 <span class="row-end"><strong>{{ money(item.total, item.moneda) }}</strong><small>{{ localDate(item.fecha_emision) }}</small></span>
                 <span class="status" :class="item.estado">{{ item.estado_nombre }}</span>
@@ -1427,29 +1556,39 @@ onMounted(() => { if (!publicVenue) return initialize() })
           </section>
 
           <aside class="card detail-card">
-            <template v-if="selectedDocument">
+            <template v-if="shownHandoff || selectedDocument">
               <button type="button" class="text-button staff-back" @click="returnToDocuments">Volver a comprobantes</button>
-              <div class="section-heading"><div><p class="eyebrow">DETALLE</p><h2 ref="documentHeading" tabindex="-1">{{ selectedDocument.tipo_nombre }}</h2></div><span class="status" :class="selectedDocument.estado">{{ selectedDocument.estado_nombre }}</span></div>
-              <dl class="details">
-                <div><dt>Proveedor</dt><dd>{{ selectedDocument.supplier.razon_social }}</dd></div>
-                <div><dt>CUIT</dt><dd>{{ selectedDocument.supplier.cuit }}</dd></div>
-                <div><dt>Referencia</dt><dd>{{ selectedDocument.referencia }}</dd></div>
-                <div><dt>Emisión</dt><dd>{{ localDate(selectedDocument.fecha_emision) }}</dd></div>
-                <div><dt>Neto</dt><dd>{{ money(selectedDocument.neto, selectedDocument.moneda) }}</dd></div>
-                <div><dt>IVA</dt><dd>{{ money(selectedDocument.iva, selectedDocument.moneda) }}</dd></div>
-                <div class="total"><dt>Total {{ selectedDocument.moneda }}</dt><dd>{{ money(selectedDocument.total, selectedDocument.moneda) }}</dd></div>
-              </dl>
-              <p v-if="selectedDocument.descripcion" class="description">{{ selectedDocument.descripcion }}</p>
+              <div v-if="shownHandoff" class="section-heading">
+                <div><p class="eyebrow">BORRADOR</p><h2>Comprobante {{ shownHandoff.document_id }}</h2></div>
+                <button type="button" class="secondary" @click="openDocument(shownHandoff.document_id)">Ver detalle completo</button>
+              </div>
+              <template v-else-if="selectedDocument">
+                <div class="section-heading"><div><p class="eyebrow">DETALLE</p><h2 ref="documentHeading" tabindex="-1">{{ selectedDocument.tipo_nombre }}</h2></div><span class="status" :class="selectedDocument.estado">{{ selectedDocument.estado_nombre }}</span></div>
+                <dl class="details">
+                  <div><dt>Proveedor</dt><dd>{{ selectedDocument.supplier.razon_social }}</dd></div>
+                  <div><dt>CUIT</dt><dd>{{ selectedDocument.supplier.cuit }}</dd></div>
+                  <div><dt>Referencia</dt><dd>{{ selectedDocument.referencia }}</dd></div>
+                  <div><dt>Emisión</dt><dd>{{ localDate(selectedDocument.fecha_emision) }}</dd></div>
+                  <div><dt>Neto</dt><dd>{{ money(selectedDocument.neto, selectedDocument.moneda) }}</dd></div>
+                  <div><dt>IVA</dt><dd>{{ money(selectedDocument.iva, selectedDocument.moneda) }}</dd></div>
+                  <div class="total"><dt>Total {{ selectedDocument.moneda }}</dt><dd>{{ money(selectedDocument.total, selectedDocument.moneda) }}</dd></div>
+                </dl>
+                <p v-if="selectedDocument.descripcion" class="description">{{ selectedDocument.descripcion }}</p>
+              </template>
 
-              <div class="subsection"><h3>Adjuntos privados</h3>
-                <ul v-if="selectedDocument.adjuntos?.length" class="attachment-list">
-                  <li v-for="attachment in selectedDocument.adjuntos" :key="attachment.id">
+              <div class="subsection">
+                <h3 ref="attachmentHeading" tabindex="-1">Adjuntos privados</h3>
+                <p v-if="attachmentHandoffHref && !shownHandoff">
+                  <a :href="attachmentHandoffHref">Enlace interno a los adjuntos del borrador</a>
+                </p>
+                <ul v-if="visibleAttachments.length" class="attachment-list">
+                  <li v-for="attachment in visibleAttachments" :key="attachment.id">
                     <span>{{ attachment.nombre }}<small>{{ Math.ceil(attachment.tamano / 1024) }} KB</small></span>
-                    <button v-if="canDownload" class="secondary" @click="downloadAttachment(attachment.id, attachment.nombre)">Descargar</button>
+                    <button v-if="canDownloadVisibleAttachment" class="secondary" @click="downloadAttachment(attachment.id, attachment.nombre)">Descargar</button>
                   </li>
                 </ul>
                 <p v-else class="muted">Sin archivos adjuntos.</p>
-                <form v-if="canManageSelectedDocument" class="upload" @submit.prevent="uploadAttachment">
+                <form v-if="canUploadVisibleAttachment" class="upload" @submit.prevent="uploadAttachment">
                   <label class="file-picker">{{ uploadFile?.name ?? 'Elegir archivo' }}
                     <input aria-label="Archivo adjunto" type="file" accept=".pdf,.png,.jpg,.jpeg" required @change="uploadFile = ($event.target as HTMLInputElement).files?.[0] ?? null" />
                   </label>
@@ -1458,10 +1597,10 @@ onMounted(() => { if (!publicVenue) return initialize() })
                 </form>
               </div>
 
-              <div v-if="selectedDocument.auditoria?.length" class="subsection"><h3>Auditoría</h3>
+              <div v-if="selectedDocument?.auditoria?.length" class="subsection"><h3>Auditoría</h3>
                 <ol class="audit-list"><li v-for="(event, index) in selectedDocument.auditoria" :key="index"><strong>{{ event.accion_nombre }}</strong> · {{ event.motivo }}<small>{{ event.actor }} · {{ localDateTime(event.fecha) }}</small></li></ol>
               </div>
-              <div v-if="canReview || canManageSelectedDocument || canRecordPayments" class="detail-actions"><button v-if="canReview && selectedDocument.estado !== 'reviewed'" class="secondary" @click="reviewDocument">Marcar revisado</button><button v-if="canRecordPayments && selectedDocument.estado === 'reviewed' && !selectedDocument.payable_id && selectedDocument.tipo === 'invoice'" class="primary" @click="postSelectedDocumentToPayable">Registrar en cuentas a pagar</button><button v-if="canManageSelectedDocument && !selectedDocument.payable_id" class="danger" @click="deleteDocument">Dar de baja</button></div>
+              <div v-if="selectedDocument && (canReview || canManageSelectedDocument || canRecordPayments)" class="detail-actions"><button v-if="canReview && selectedDocument.estado !== 'reviewed'" class="secondary" @click="reviewDocument">Marcar revisado</button><button v-if="canRecordPayments && selectedDocument.estado === 'reviewed' && !selectedDocument.payable_id && selectedDocument.tipo === 'invoice'" class="primary" @click="postSelectedDocumentToPayable">Registrar en cuentas a pagar</button><button v-if="canManageSelectedDocument && !selectedDocument.payable_id" class="danger" @click="deleteDocument">Dar de baja</button></div>
             </template>
             <div v-else class="detail-empty"><span>↗</span><p>Elegí un comprobante para ver el detalle y sus adjuntos.</p></div>
           </aside>
