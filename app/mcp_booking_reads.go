@@ -20,6 +20,7 @@ func (a *app) registerMCPBookingReads(add func(string, string, http.HandlerFunc)
 	add(mcpWorkspaceBase+"/published-menu", http.MethodGet, a.mcpRead(a.mcpPublishedMenu))
 	if a.enablePOS {
 		add(mcpWorkspaceBase+"/pos-catalog", http.MethodGet, a.mcpRead(mcpPOSCatalog))
+		add(mcpWorkspaceBase+"/pos-catalog/{product}", http.MethodGet, a.mcpRead(mcpPOSCatalogProduct))
 		if a.enableStock {
 			add(mcpWorkspaceBase+"/stock/products/{product}/movements-summary", http.MethodGet, a.mcpRead(mcpStockMovements))
 		}
@@ -220,9 +221,7 @@ func mcpPOSCatalog(r *http.Request, tx *sql.Tx, s mcpTokenScope) (any, error) {
 			return nil, badInput
 		}
 	}
-	rows, err := tx.QueryContext(r.Context(), `SELECT p.id,v.name,v.price_minor,v.revision,v.active
- FROM pos_products p JOIN pos_product_versions v ON v.product_id=p.id AND v.outlet_id=p.outlet_id
- AND v.revision=p.current_revision WHERE p.outlet_id=$1 AND p.id>$2 ORDER BY p.id LIMIT $3`, outlet, after, mcpPageSize+1)
+	rows, err := tx.QueryContext(r.Context(), currentOutletPOSProducts+` AND p.id>$2 ORDER BY p.id LIMIT $3`, outlet, after, mcpPageSize+1)
 	if err != nil {
 		return nil, err
 	}

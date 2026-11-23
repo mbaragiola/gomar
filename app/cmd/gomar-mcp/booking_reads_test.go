@@ -60,6 +60,8 @@ func TestBookingReadToolsSendOnlyFixedTypedRequests(t *testing.T) {
 				t.Error(r.URL.RawQuery)
 			}
 			_, _ = io.WriteString(w, `{"currency":"ARS","products":[{"id":2,"name":"Sandwich","price_minor":350,"revision":1,"active":true}],"actor":"not-for-chat"}`)
+		case base + "/pos-catalog/2":
+			_, _ = io.WriteString(w, `{"id":2,"name":"Sandwich","price_minor":350,"revision":2,"active":false,"currency":"ARS","cost":"not-for-chat"}`)
 		case base + "/stock/products/2/movements-summary":
 			if r.URL.RawQuery != "days=2&start_date=2030-11-20" {
 				t.Error(r.URL.RawQuery)
@@ -90,7 +92,7 @@ func TestBookingReadToolsSendOnlyFixedTypedRequests(t *testing.T) {
 	}
 	defer session.Close()
 	list, err := session.ListTools(t.Context(), &mcp.ListToolsParams{})
-	if err != nil || len(list.Tools) != 7 {
+	if err != nil || len(list.Tools) != 8 {
 		t.Fatal(list, err)
 	}
 	for _, tool := range list.Tools {
@@ -118,6 +120,8 @@ func TestBookingReadToolsSendOnlyFixedTypedRequests(t *testing.T) {
 		{"gomar_read_reservation_table_setup", "", nil, true},
 		{"gomar_published_menu", `"filename":"menu.pdf"`, nil, false},
 		{"gomar_pos_catalog", `"price_minor":350`, map[string]any{"after_product_id": 1}, false},
+		{"gomar_read_pos_product", `"active":false`, map[string]any{"product_id": 2}, false},
+		{"gomar_read_pos_product", "permisos", map[string]any{"product_id": 2, "outlet_id": 9}, true},
 		{"gomar_stock_movements", `"net_units":-1`, map[string]any{"product_id": 2, "start_date": "2030-11-20", "days": 2}, false},
 		{"gomar_stock_movements", "31", map[string]any{"product_id": 2, "start_date": "2030-11-20", "days": 32}, true},
 		{"gomar_published_menu", "permisos", map[string]any{"outlet_id": 9}, true},
@@ -140,7 +144,7 @@ func TestBookingReadToolsSendOnlyFixedTypedRequests(t *testing.T) {
 			t.Fatalf("%s: incorrect or excessive result: %s", tc.name, raw)
 		}
 	}
-	if requests.Load() != 12 {
-		t.Fatalf("want exactly twelve fixed HTTP requests; got %d", requests.Load())
+	if requests.Load() != 14 {
+		t.Fatalf("want exactly fourteen fixed HTTP requests; got %d", requests.Load())
 	}
 }

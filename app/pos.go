@@ -95,14 +95,16 @@ func posOutlet(r *http.Request, tx *sql.Tx, m entityMembership) (int64, error) {
 	return outlet, requireSelectedDocumentOutlet(tx, m, outlet)
 }
 
+const currentOutletPOSProducts = `SELECT p.id,v.name,v.price_minor,v.revision,v.active
+ FROM pos_products p JOIN pos_product_versions v ON v.product_id=p.id AND v.outlet_id=p.outlet_id
+ AND v.revision=p.current_revision WHERE p.outlet_id=$1`
+
 func listPOSCatalog(r *http.Request, tx *sql.Tx, m entityMembership, _ []byte) (int, any, error) {
 	outlet, err := posOutlet(r, tx, m)
 	if err != nil {
 		return 0, nil, err
 	}
-	rows, err := tx.QueryContext(r.Context(), `SELECT p.id,v.name,v.price_minor,v.revision,v.active
-		FROM pos_products p JOIN pos_product_versions v ON v.product_id=p.id AND v.outlet_id=p.outlet_id
-		AND v.revision=p.current_revision WHERE p.outlet_id=$1 ORDER BY p.id LIMIT $2`, outlet, posCatalogMax)
+	rows, err := tx.QueryContext(r.Context(), currentOutletPOSProducts+` ORDER BY p.id LIMIT $2`, outlet, posCatalogMax)
 	if err != nil {
 		return 0, nil, err
 	}

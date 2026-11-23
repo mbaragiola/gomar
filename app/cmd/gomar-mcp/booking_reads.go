@@ -22,6 +22,11 @@ type reservationTableSetupArgs struct {
 	TableNumber int `json:"table_number" jsonschema:"Número de una mesa Mesa N; entero de 1 a 9999."`
 }
 
+type posCatalogProductArgs struct {
+	outletArgs
+	ProductID int64 `json:"product_id" jsonschema:"ID exacto devuelto por gomar_pos_catalog de esta sucursal."`
+}
+
 type movementArgs struct {
 	outletArgs
 	ProductID int64  `json:"product_id" jsonschema:"ID exacto devuelto por gomar_list_stock"`
@@ -47,6 +52,9 @@ func addBookingReadTools(server *mcp.Server, client *mcpclient.Client) {
 	})
 	readTool(server, "gomar_pos_catalog", "Consultá nombres, precios en centavos de ARS y estado de los productos del catálogo de caja. Devuelve hasta 30 por página; usá next_product_id para seguir.", func(ctx context.Context, in stockArgs) (mcpclient.POSCatalog, error) {
 		return client.POSCatalog(ctx, in.EntityID, in.OutletID, in.AfterProductID)
+	})
+	readTool(server, "gomar_read_pos_product", "Consultá un producto por su ID exacto en el catálogo de caja de esta sucursal. Devuelve nombre, precio en centavos de ARS, revisión actual y estado, incluso si está inactivo. No busca productos ni devuelve stock, costos o ventas.", func(ctx context.Context, in posCatalogProductArgs) (mcpclient.POSProductDetails, error) {
+		return client.ReadPOSCatalogProduct(ctx, in.EntityID, in.OutletID, in.ProductID)
 	})
 	readTool(server, "gomar_stock_movements", "Resumí los movimientos registrados de un producto de stock por tipo y variación neta de unidades, para hasta 31 días de Buenos Aires. No devuelve actores ni referencias a ventas.", func(ctx context.Context, in movementArgs) (mcpclient.StockMovements, error) {
 		return client.StockMovements(ctx, in.EntityID, in.OutletID, in.ProductID, in.StartDate, in.Days)
