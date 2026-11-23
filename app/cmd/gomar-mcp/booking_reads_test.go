@@ -92,7 +92,7 @@ func TestBookingReadToolsSendOnlyFixedTypedRequests(t *testing.T) {
 	}
 	defer session.Close()
 	list, err := session.ListTools(t.Context(), &mcp.ListToolsParams{})
-	if err != nil || len(list.Tools) != 8 {
+	if err != nil || len(list.Tools) != 9 {
 		t.Fatal(list, err)
 	}
 	for _, tool := range list.Tools {

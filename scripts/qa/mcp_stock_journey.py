@@ -29,6 +29,9 @@ if with_bookings_wiki:
 with_pos_prebill = len(sys.argv) > 7 and sys.argv[7] == "true"
 if with_pos_prebill:
     from pos_prebill_checks import check_prebill
+with_pos_table_checks = len(sys.argv) > 9 and sys.argv[9] == "true"
+if with_pos_table_checks:
+    from pos_table_checks import check_saved_table
 
 scope = {"entity_id": 1, "outlet_id": 1}
 base = "/api/v1/entities/1/outlets/1"
@@ -91,7 +94,7 @@ COMMIT;
         purchase_seed(psql)
     if with_bookings_wiki:
         booking_seed(psql)
-    if with_pos_prebill:
+    if with_pos_prebill or with_pos_table_checks:
         run([*app, "-create-admin", "qa-pos-limited"], input=password + "\n", capture_output=True)
         psql("""
 BEGIN;
@@ -464,6 +467,8 @@ def main():
         app_flags.extend(["-public-reservations", "-enable-mcp-reservation-confirm-proposals"])
     if with_barcode:
         app_flags.append("-enable-mcp-pos-catalog-proposals")
+    if with_pos_table_checks:
+        app_flags.append("-enable-pos-table-checks")
     with (root / "native.log").open("w") as log:
         server = subprocess.Popen([root / "gomar", "-state", root / "state", "-listen", address, *app_flags],
                                   env=env, stdout=log, stderr=subprocess.STDOUT)
@@ -488,6 +493,8 @@ def main():
                         before = snapshot()
                         check_prebill(browser, login, origin)
                         assert snapshot() == before
+                    if with_pos_table_checks:
+                        check_saved_table(browser, login, origin, psql, issue, connection)
                     journey(browser)
                     if with_barcode:
                         barcode_journey(browser)
@@ -507,6 +514,8 @@ def main():
         print("PASS: scoped reservation proposal, native approval, wiki reads, and role/branch/action denials")
     if with_pos_prebill:
         print("PASS: native POS table checks on desktop and mobile, 80 mm and 58 mm PDF, handoff denials, no sale or payment writes")
+    if with_pos_table_checks:
+        print("PASS: saved untendered table check, desktop and mobile handoff, packaged MCP scope denials, no sales/stock/payment writes")
 
 
 
