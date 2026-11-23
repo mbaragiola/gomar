@@ -9,7 +9,7 @@ For everyday examples, see the [Spanish prompt guide](MCP-GUIA-DE-CONSULTAS.md).
 | Workflow | Shipped MCP reads and opt-in proposals | Intentionally stays in Gomar or is not built |
 | --- | --- | --- |
 | Identity and business scope | Current user, businesses, and outlets; propose a display-name change for one active outlet | Native only: business and outlet administration beyond that rename, membership and grant management, credentials and provider sign-in. |
-| POS | Recorded sales totals, product catalog; propose product creation and separate name, price or availability changes | Native only: preview/print a table check from the local cart, register sales, checkout and offline sales sync. Not built: shared table tabs and shift management. |
+| POS | Recorded sales totals, product catalog with exact barcode lookup; propose product creation and separate name, price, availability or barcode changes | Native only: scan into the local cart, preview/print a table check, register sales, checkout and offline sales sync. Not built: shared table tabs and shift management. |
 | Inventory | Tracked balances and thresholds, including an exact configured item by ID, movement history, filtered alert pages and stock alert counts; propose receipts, waste, physical counts, initial disabled product setup, and changes to a product’s minimum or tracking | Native only: branch-wide settings. Not built: bills of materials. |
 | Wiki | Search and read by ID; propose new pages and versioned edits | Not built: deletion. |
 | Delivery | Recent order status with limited fields; status counts for the latest 100 inbox records | No native staff write workflow. Provider calls and credentials are not part of MCP. |
