@@ -349,3 +349,20 @@ a { color: var(--accent); }
 }
 
 .draft-queue-control { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; padding: 12px 20px; border-bottom: 1px solid var(--line); }
+
+.pos-prebill-lines { display: grid; gap: .3rem; padding: 0; list-style: none; }
+.pos-prebill-lines li { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: .6rem; }
+.pos-prebill-lines li > :first-child { overflow-wrap: anywhere; }
+.pos-prebill-lines li > :last-child { white-space: nowrap; }
+.pos-prebill-legend { overflow-wrap: anywhere; }
+
+@media print {
+  .pos-workspace { width: auto; margin: 0; padding: 0; color: #000; background: #fff; }
+  .pos-workspace > :not(.pos-prebill-preview),
+  .pos-workspace .pos-prebill-controls,
+  .pos-workspace .pos-prebill-paper:not([data-print-prebill-ready]) { display: none !important; }
+  .pos-workspace .pos-prebill-preview { margin: 0; padding: 0; border: 0; box-shadow: none; color: #000; background: #fff; }
+  .pos-workspace .pos-prebill-paper { font: 10pt system-ui, sans-serif; }
+  .pos-workspace .pos-prebill-paper h2 { margin: 0 0 .3rem; font-size: 13pt; }
+  .pos-workspace .pos-prebill-lines li { break-inside: avoid; }
+}

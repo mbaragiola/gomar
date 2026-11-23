@@ -1,9 +1,9 @@
 <script setup lang="ts">
 import ThemeSelect from '../components/ThemeSelect.vue'
-import { computed, onMounted, onUnmounted, ref } from 'vue'
+import { computed, nextTick, onMounted, onUnmounted, ref } from 'vue'
 import { ApiError, request } from '../api'
 import { localDateTime, money } from '../format'
-import { maxLines, maxQuantity, normalizedProducts, positive, sameContext, saleRequest, grantLifetime,
+import { maxLines, maxQuantity, normalizedProducts, positive, sameContext, saleRequest, grantLifetime, quoteCart,
   isPaymentMethod, matchesPaymentMethod, paymentLabels,
   type Context, type Grant, type PaymentMethod, type Product, type Sale } from './model'
 import { arm, broadcastPOSLock, disarm, enqueue, forgetLease, localLease, lockOfflinePOS, posLockEvent, readGrant, recordOutcome, rememberLease, salesFor } from './storage'
@@ -33,6 +33,10 @@ const payment = ref<PaymentMethod | ''>('')
 const notice = ref('')
 const error = ref('')
 const needsConfirm = ref(false)
+const prebillOpen = ref(false)
+const prebillPaper = ref<HTMLElement | null>(null)
+const prebillToggle = ref<HTMLButtonElement | null>(null)
+const prebillHeading = ref<HTMLHeadingElement | null>(null)
 let epoch = 0
 let refreshTimer: ReturnType<typeof setInterval> | undefined
 
@@ -44,6 +48,11 @@ const basketLines = computed(() => [...basket.value.entries()].flatMap(([id, qua
 const total = computed(() => basketLines.value.reduce((sum, { row, quantity }) => sum + row.precio_centavos * quantity, 0))
 const pending = computed(() => recorded.value.filter((sale) => sale.status === 'pending').length)
 const fmt = (amount: number) => money(`${Math.trunc(amount / 100)}.${String(amount % 100).padStart(2, '0')}`, 'ARS')
+const prebill = computed(() => {
+  if (!grant.value || !basket.value.size) return null
+  try { return quoteCart(grant.value, basket.value, Date.now()) }
+  catch { return null }
+})
 const endpoint = (s: Pick<Context, 'entity' | 'outlet'>) => `/entities/${s.entity}/outlets/${s.outlet}/pos`
 
 class ConnectionUnavailable extends Error {}
@@ -68,6 +77,7 @@ function clearView() {
   basket.value = new Map()
   payment.value = ''
   needsConfirm.value = false
+  prebillOpen.value = false
   notice.value = ''
 }
 
@@ -221,8 +231,36 @@ function quantity(id: number, step: number) {
   if (!grant.value || saving.value || needsConfirm.value) return
   const next = (basket.value.get(id) ?? 0) + step
   if (next > maxQuantity || (next > 0 && !basket.value.has(id) && basket.value.size >= maxLines)) return
+  prebillOpen.value = false
   if (next <= 0) basket.value.delete(id)
   else basket.value.set(id, next)
+}
+
+function canPrintPrebill() {
+  const current = grant.value
+  return !!(prebillOpen.value && prebill.value && current && !saving.value && !verifying.value && !needsConfirm.value
+    && localLease() === current.lease && Date.now() < current.expires)
+}
+
+function beforePrint() {
+  // Guard the browser print shortcut if the shift is no longer authorized.
+  prebillPaper.value?.toggleAttribute('data-print-prebill-ready', canPrintPrebill())
+}
+
+async function togglePrebill() {
+  prebillOpen.value = !prebillOpen.value
+  await nextTick()
+  if (prebillOpen.value) prebillHeading.value?.focus()
+  else prebillToggle.value?.focus()
+}
+
+function printPrebill() {
+  if (canPrintPrebill()) window.print()
+}
+
+function confirmSale() {
+  prebillOpen.value = false
+  needsConfirm.value = true
 }
 
 async function complete() {
@@ -321,6 +359,7 @@ function otherTab(event: StorageEvent) {
 }
 
 onMounted(async () => {
+  window.addEventListener('beforeprint', beforePrint)
   window.addEventListener('online', connection)
   window.addEventListener('offline', connection)
   window.addEventListener('storage', otherTab)
@@ -341,6 +380,7 @@ onMounted(async () => {
 })
 
 onUnmounted(() => {
+  window.removeEventListener('beforeprint', beforePrint)
   window.removeEventListener('online', connection)
   window.removeEventListener('offline', connection)
   window.removeEventListener('storage', otherTab)
@@ -404,19 +444,42 @@ onUnmounted(() => {
           </li>
         </ul>
         <strong>Total: {{ fmt(total) }}</strong>
+        <button
+          v-if="!needsConfirm" ref="prebillToggle" type="button" :disabled="saving || verifying || !prebill"
+          :aria-expanded="prebillOpen" @click="togglePrebill"
+        >{{ prebillOpen ? 'Cerrar cuenta de mesa' : 'Ver cuenta de mesa' }}</button>
         <label>Medio de pago
           <select v-model="payment" :disabled="saving || verifying || needsConfirm">
             <option value="" disabled>Elegí un medio de pago</option>
             <option v-for="(label, method) in paymentLabels" :key="method" :value="method">{{ label }}</option>
           </select>
         </label>
-        <button v-if="!needsConfirm" class="primary" type="button" :disabled="saving || verifying || !basketLines.length || !payment" @click="needsConfirm = true">Registrar venta</button>
+        <button v-if="!needsConfirm" class="primary" type="button" :disabled="saving || verifying || !basketLines.length || !payment" @click="confirmSale">Registrar venta</button>
         <div v-else class="gomar-feature-actions">
           <span v-if="payment">Medio de pago elegido: {{ paymentLabels[payment] }}.</span>
           <button class="primary" type="button" :disabled="saving || verifying" @click="complete">Confirmar y guardar venta</button>
           <button type="button" :disabled="saving" @click="needsConfirm = false">Volver sin guardar</button>
         </div>
         <small>Cobrá por fuera de Gomar. Este registro no verifica ni procesa pagos ni emite un comprobante fiscal.</small>
+      </section>
+      <section v-if="prebillOpen && prebill" class="card gomar-feature pos-prebill-preview" aria-labelledby="pos-prebill-heading">
+        <div ref="prebillPaper" class="pos-prebill-paper">
+          <h2 id="pos-prebill-heading" ref="prebillHeading" tabindex="-1">Cuenta de mesa</h2>
+          <p>{{ grant.label }}</p>
+          <p class="pos-prebill-legend"><strong>DOCUMENTO NO VÁLIDO COMO FACTURA</strong><br />No acredita pago.</p>
+          <ul class="pos-prebill-lines" aria-label="Detalle de la cuenta">
+            <li v-for="line in prebill.lines" :key="line.producto_id">
+              <span>{{ line.cantidad }} × {{ line.nombre }}</span>
+              <span>{{ fmt(line.cantidad * line.precio_centavos) }}</span>
+            </li>
+          </ul>
+          <p><strong>Total de la cuenta: {{ fmt(prebill.total) }}</strong></p>
+        </div>
+        <div class="pos-prebill-controls">
+          <p>Imprimir esta cuenta no registra una venta ni un pago.</p>
+          <button type="button" :disabled="saving || verifying" @click="printPrebill">Imprimir cuenta de mesa</button>
+          <button type="button" @click="togglePrebill">Volver a la venta</button>
+        </div>
       </section>
       <section class="card gomar-feature">
         <div class="section-heading"><h2>Ventas de esta caja</h2>

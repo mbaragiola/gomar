@@ -71,8 +71,8 @@ export function positive(value: number) {
   return Number.isSafeInteger(value) && value > 0
 }
 
-export function draft(grant: Grant, quantities: ReadonlyMap<number, number>, id: string, now: number, paymentMethod: PaymentMethod): Sale {
-  if (!isPaymentMethod(paymentMethod)) throw new Error('Elegí cómo se pagó la venta.')
+// Quote the in-memory cart without creating a sale or selecting a payment.
+export function quoteCart(grant: Grant, quantities: ReadonlyMap<number, number>, now: number): { lines: Line[]; total: number } {
   if (now >= grant.expires || quantities.size < 1 || quantities.size > maxLines) throw new Error('La venta no se puede guardar.')
   const lines = [...quantities].sort(([a], [b]) => a - b).map(([product, quantity]) => {
     const item = grant.catalog.find((row) => row.id === product)
@@ -81,6 +81,12 @@ export function draft(grant: Grant, quantities: ReadonlyMap<number, number>, id:
   })
   const total = lines.reduce((sum, row) => sum + row.cantidad * row.precio_centavos, 0)
   if (!positive(total) || total > maxTotal) throw new Error('El importe total no es válido.')
+  return { lines, total }
+}
+
+export function draft(grant: Grant, quantities: ReadonlyMap<number, number>, id: string, now: number, paymentMethod: PaymentMethod): Sale {
+  if (!isPaymentMethod(paymentMethod)) throw new Error('Elegí cómo se pagó la venta.')
+  const { lines, total } = quoteCart(grant, quantities, now)
   const { actor, entity, outlet } = grant
   return { id, key: scopeKey(grant), actor, entity, outlet, created: now, lines, total, paymentMethod, status: 'pending' }
 }

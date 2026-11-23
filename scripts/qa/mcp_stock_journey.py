@@ -24,6 +24,9 @@ with_purchases = sys.argv[5] == "true"
 with_bookings_wiki = sys.argv[6] == "true"
 if with_bookings_wiki:
     from mcp_bookings_wiki_checks import booking_checks, booking_seed, booking_tools, confirmation_tool
+with_pos_prebill = len(sys.argv) > 7 and sys.argv[7] == "true"
+if with_pos_prebill:
+    from pos_prebill_checks import check_prebill
 
 scope = {"entity_id": 1, "outlet_id": 1}
 base = "/api/v1/entities/1/outlets/1"
@@ -86,11 +89,22 @@ COMMIT;
         purchase_seed(psql)
     if with_bookings_wiki:
         booking_seed(psql)
+    if with_pos_prebill:
+        run([*app, "-create-admin", "qa-pos-limited"], input=password + "\n", capture_output=True)
+        psql("""
+BEGIN;
+UPDATE gomar.users SET staff=false,superuser=false WHERE username='qa-pos-limited';
+INSERT INTO gomar.memberships(id,user_id,entity_id,role,active)
+ SELECT 3,id,1,'administration',true FROM gomar.users WHERE username='qa-pos-limited';
+INSERT INTO gomar.outlet_grants VALUES(3,1);
+COMMIT;
+""")
 
 
-def login(browser, username, mobile=False):
+def login(browser, username, mobile=False, allow_pos_worker=False):
     context = browser.new_context(viewport={"width": 390 if mobile else 1280, "height": 900},
-                                  is_mobile=mobile, has_touch=mobile, service_workers="block")
+                                  is_mobile=mobile, has_touch=mobile,
+                                  service_workers="allow" if allow_pos_worker else "block")
     context.route("**/*", lambda r: r.continue_() if r.request.url.startswith(origin + "/") else r.abort())
     page = context.new_page()
     page.goto(origin)
@@ -380,6 +394,10 @@ def main():
                     args=["--no-sandbox", "--disable-background-networking", "--no-proxy-server",
                           "--host-resolver-rules=EXCLUDE 127.0.0.1, MAP * ~NOTFOUND"])
                 try:
+                    if with_pos_prebill:
+                        before = snapshot()
+                        check_prebill(browser, login, origin)
+                        assert snapshot() == before
                     journey(browser)
                 finally:
                     browser.close()
@@ -393,6 +411,8 @@ def main():
 
     if with_bookings_wiki:
         print("PASS: scoped reservation proposal, native approval, wiki reads, and role/branch/action denials")
+    if with_pos_prebill:
+        print("PASS: native POS table checks on desktop and mobile, 80 mm and 58 mm PDF, handoff denials, no sale or payment writes")
 
 
 

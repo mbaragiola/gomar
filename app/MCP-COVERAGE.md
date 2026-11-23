@@ -9,7 +9,7 @@ For everyday examples, see the [Spanish prompt guide](MCP-GUIA-DE-CONSULTAS.md).
 | Workflow | Shipped MCP reads and opt-in proposals | Intentionally stays in Gomar or is not built |
 | --- | --- | --- |
 | Identity and business scope | Current user, businesses, and outlets; propose a display-name change for one active outlet | Native only: business and outlet administration beyond that rename, membership and grant management, credentials and provider sign-in. |
-| POS | Recorded sales totals, product catalog; propose product creation and separate name, price or availability changes | Native only: register sales, checkout and offline sales sync. Not built: shift management. |
+| POS | Recorded sales totals, product catalog; propose product creation and separate name, price or availability changes | Native only: preview/print a table check from the local cart, register sales, checkout and offline sales sync. Not built: shared table tabs and shift management. |
 | Inventory | Tracked balances and thresholds, including an exact configured item by ID, movement history, filtered alert pages and stock alert counts; propose receipts, waste, physical counts, initial disabled product setup, and changes to a product’s minimum or tracking | Native only: branch-wide settings. Not built: bills of materials. |
 | Wiki | Search and read by ID; propose new pages and versioned edits | Not built: deletion. |
 | Delivery | Recent order status with limited fields; status counts for the latest 100 inbox records | No native staff write workflow. Provider calls and credentials are not part of MCP. |
@@ -216,6 +216,27 @@ business-read permission for that branch. It returns only the product ID,
 name, price in ARS cents, current catalog revision, and active status.
 Inactive products remain readable, like in the native catalog. It does
 not search, show stock or costs, record a sale, or change the product.
+
+### Paper table check (native only)
+
+Open **Caja** (`/pos`) in Gomar, sign in as staff allowed to use that
+branch's POS, and enable the register in that tab. Add the items, choose
+**Ver cuenta de mesa**, then **Imprimir cuenta de mesa**. The supported
+handoff is the existing POS workspace; there is no link or token that
+opens a cart or restores a draft. A staff user without the selling role
+or branch grant cannot enable that branch's register.
+
+Only that browser tab has the unrecorded cart and can open the device's
+print dialog. A preview doesn't register a sale, record payment, reserve
+a table, contact a fiscal device, or generate a fiscal invoice. The
+printed check is not an invoice or proof of payment. No endpoint or
+MCP tool reads, writes, or prints the cart; catalog reads do not gain
+access to it. The check relies on the current local register grant.
+The operator must use their separate fiscal issuance process where required.
+To check the allowed and denied handoff paths and Chrome's printed layout,
+run `bash scripts/qa-mcp-stock-journey.sh --with-pos-prebill` with
+`pdftotext` installed. The test saves no sales and never talks to a
+physical printer.
 
 ### Find a document by its printed reference
 
