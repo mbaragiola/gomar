@@ -12,11 +12,21 @@ applied change. Features disabled in the app are not available via MCP.
 | Inventory | Tracked balances, thresholds, movements, and branch-wide stock alert counts; propose receipts, waste, physical counts, initial disabled product setup, and changes to an existing configuration’s minimum or tracking for confirmation in Gomar | Branch-wide settings stay in Gomar; bills of materials are not implemented |
 | Wiki | Search and read by ID; propose new pages and versioned edits for confirmation in Gomar | Gomar does not offer deletion |
 | Delivery | Recent order status with limited fields; aggregate status counts for the latest 100 inbox records | No native staff write workflow; provider calls and credentials stay outside the read interface |
-| Documents and intake | Outlet-scoped list, detail, and document totals by currency; propose draft creation, review, or date and amount edits for confirmation in Gomar | Other draft changes and safe handoff for files; app OCR and intake confirmation parity |
+| Documents and intake | Outlet-scoped list, detail, and document totals by currency; propose draft creation, review, date and amount edits, or a printed number correction for confirmation in Gomar | Other draft changes and safe handoff for files; app OCR and intake confirmation parity |
 | Suppliers | Active supplier names and IDs in the business | Guarded create and edit |
 | Payables and payment records | Outstanding and overdue totals, counts by status, outlet-only payable and payment record details, and one payable’s ledger history | Guarded accounting entries and reviews, not movement of money |
 | Reconciliation | Scoped run counts by status, paged run list, metadata by ID, and proposal for an empty draft | Source handling, matches, decisions, and review stay in Gomar |
 | Reservations and menus | Daily reservation totals, staff setup state, scoped staff queue and detail, available public reservation times by day and party size, published menu metadata, separate confirmation and cancellation proposals, and preparing a numbered table or one future time while the venue is disabled | Booking, menu and venue settings stay in Gomar |
+
+The packaged live server registers 34 baseline read tools. Its vocabulary
+also includes 23 opt-in proposal actions across distinct credentials, not 23
+simultaneously enabled writes. A stdio process only accepts one selected
+named proposal action; feature flags and current roles can still deny a call.
+
+A separate draft number proposal changes only the printed number and records
+one native draft revision and audit entry. It leaves the branch, point of sale,
+issuer, other document data, attached files and financial records unchanged.
+See [printed document number proposals](MCP-DOCUMENT-NUMBER-PROPOSALS.md).
 
 ## Verification levels
 

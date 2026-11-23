@@ -789,6 +789,9 @@ func (a *app) pruneWikiProposals(ctx context.Context) error {
 	if err := a.pruneStockAdjustmentProposals(ctx, now); err != nil {
 		return err
 	}
+	if err := a.pruneDocumentNumberProposals(ctx, now); err != nil {
+		return err
+	}
 	if err := a.pruneDocumentEditProposals(ctx, now); err != nil {
 		return err
 	}

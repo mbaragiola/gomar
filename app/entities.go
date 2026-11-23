@@ -190,6 +190,10 @@ func (a *app) entities(w http.ResponseWriter, r *http.Request, u user) error {
 			entry.Capabilities = append(slices.Clone(entry.Capabilities), "mcp_reconciliation_draft_proposals")
 			slices.Sort(entry.Capabilities)
 		}
+		if a.documentNumberProposalsEnabled() && slices.Contains(entry.Capabilities, draftCapability) {
+			entry.Capabilities = append(slices.Clone(entry.Capabilities), "mcp_document_draft_number_proposals")
+			slices.Sort(entry.Capabilities)
+		}
 		if a.documentEditProposalsEnabled() && slices.Contains(entry.Capabilities, draftCapability) {
 			entry.Capabilities = append(slices.Clone(entry.Capabilities), "mcp_document_edit_proposals")
 			slices.Sort(entry.Capabilities)
