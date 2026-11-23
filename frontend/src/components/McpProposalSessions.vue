@@ -14,7 +14,8 @@ type StockTracking = { product_id: number; expected_revision: number; name: stri
 type StockMinimum = { product_id: number; expected_revision: number; name: string; current_minimum: number; minimum: number }
 type SupplierName = { supplier_id: number; expected_revision: number; name: string; current_name: string; business_wide: true }
 type DocumentNumberChange = { document_id: number; expected_revision: number; current_reference: string; reference: string }
-type Proposal = { id: number; status: Status; expires_at: string; product_id?: number; product_revision?: number; rename?: Rename; document_id?: number; document_revision?: number; review?: Review; run_id?: number; draft?: Draft; edit?: DocumentEdit; number_change?: DocumentNumberChange; movement_id?: number; minimum?: number; minimum_change?: StockMinimum; tracking_change?: StockTracking; stock_setup?: StockProductSetup; table_add?: ReservationTableAdd; slot_add?: ReservationSlotAdd; policy_change?: ReservationPolicyNotice; label_change?: OutletDisplayLabel; name?: string; start_at?: string; table_label?: string; capacity?: number; tracking_enabled?: boolean; adjustment?: StockAdjustment; change?: CatalogChange; product?: ProductCreate; supplier_id?: number; supplier_revision?: number; supplier?: SupplierName; reservation_reference?: string; confirmation?: ReservationConfirmation; cancellation?: ReservationCancellation; digest?: string }
+type DocumentPointOfSaleChange = DocumentNumberChange
+type Proposal = { id: number; status: Status; expires_at: string; product_id?: number; product_revision?: number; rename?: Rename; document_id?: number; document_revision?: number; review?: Review; run_id?: number; draft?: Draft; edit?: DocumentEdit; number_change?: DocumentNumberChange; point_of_sale_change?: DocumentPointOfSaleChange; movement_id?: number; minimum?: number; minimum_change?: StockMinimum; tracking_change?: StockTracking; stock_setup?: StockProductSetup; table_add?: ReservationTableAdd; slot_add?: ReservationSlotAdd; policy_change?: ReservationPolicyNotice; label_change?: OutletDisplayLabel; name?: string; start_at?: string; table_label?: string; capacity?: number; tracking_enabled?: boolean; adjustment?: StockAdjustment; change?: CatalogChange; product?: ProductCreate; supplier_id?: number; supplier_revision?: number; supplier?: SupplierName; reservation_reference?: string; confirmation?: ReservationConfirmation; cancellation?: ReservationCancellation; digest?: string }
 type Rename = {
   product_id: number; expected_revision: number; name: string; current_name: string
   unchanged_price_minor: number; unchanged_active: boolean
@@ -43,12 +44,13 @@ type ReservationCancellation = {
   reservation_reference: string; start_utc: string; start_local: string; timezone: string
   party_size: number; status: 'pending' | 'confirmed'; table_label?: string
 }
-type Action = 'pos_product_rename' | 'document_draft_review' | 'reconciliation_draft_create' | 'document_draft_edit' | 'document_draft_number_change' | 'stock_waste_record' | 'stock_physical_count' | 'pos_product_price_change' | 'pos_product_availability_change' | 'reservation_confirm' | 'reservation_table_add' | 'reservation_slot_add' | 'reservation_cancellation_policy_change' | 'outlet_display_label_change' | 'reservation_cancel' | 'pos_product_create' | 'stock_minimum_change' | 'stock_tracking_change' | 'stock_product_setup' | 'supplier_legal_name_change'
+type Action = 'pos_product_rename' | 'document_draft_review' | 'reconciliation_draft_create' | 'document_draft_edit' | 'document_draft_number_change' | 'document_draft_point_of_sale_change' | 'stock_waste_record' | 'stock_physical_count' | 'pos_product_price_change' | 'pos_product_availability_change' | 'reservation_confirm' | 'reservation_table_add' | 'reservation_slot_add' | 'reservation_cancellation_policy_change' | 'outlet_display_label_change' | 'reservation_cancel' | 'pos_product_create' | 'stock_minimum_change' | 'stock_tracking_change' | 'stock_product_setup' | 'supplier_legal_name_change'
 type ScopedProposal = Proposal & { kind: Action }
 type Session = { id: number; expires_at: string; actions: string[] }
 const actionName = 'pos_product_rename'
 const reviewAction = 'document_draft_review'
 const draftAction = 'reconciliation_draft_create'
+const documentPointAction = 'document_draft_point_of_sale_change'
 const documentNumberAction = 'document_draft_number_change'
 const editAction = 'document_draft_edit'
 const wasteAction = 'stock_waste_record'
@@ -67,7 +69,7 @@ const trackingAction = 'stock_tracking_change'
 const stockSetupAction = 'stock_product_setup'
 const supplierAction = 'supplier_legal_name_change'
 const isReservation = (action: Action) => action === reservationAction || action === cancelAction
-const guardDecisionRetry = (action: Action) => isReservation(action) || action === tableAddAction || action === slotAddAction || action === policyNoticeAction || action === outletLabelAction || action === minimumAction || action === trackingAction || action === stockSetupAction || action === supplierAction || action === documentNumberAction
+const guardDecisionRetry = (action: Action) => isReservation(action) || action === tableAddAction || action === slotAddAction || action === policyNoticeAction || action === outletLabelAction || action === minimumAction || action === trackingAction || action === stockSetupAction || action === supplierAction || action === documentNumberAction || action === documentPointAction
 const isCatalog = (action: Action) => action === priceAction || action === availabilityAction
 const isStock = (action: Action) => action === wasteAction || action === countAction
 const actionLabels: Record<Action, string> = {
@@ -85,6 +87,7 @@ const actionLabels: Record<Action, string> = {
   pos_product_rename: 'Cambiar el nombre de un producto de caja',
   document_draft_review: 'Marcar un comprobante como revisado',
   reconciliation_draft_create: 'Crear un borrador vacío de conciliación',
+  document_draft_point_of_sale_change: 'Corregir el punto de venta impreso de un comprobante',
   document_draft_number_change: 'Corregir el número impreso de un comprobante',
   document_draft_edit: 'Editar fechas e importes de un borrador',
   stock_waste_record: 'Registrar una merma de stock',
@@ -215,6 +218,13 @@ const actionUI: Record<Action, {
     stale: 'No se registró el conteo. El stock o la propuesta cambiaron. Prepará otra propuesta.',
     approved: 'Conteo físico registrado.', rejected: 'Propuesta rechazada. El stock no cambió.',
   },
+  document_draft_point_of_sale_change: {
+    path: '/document-point-of-sale-proposals', previewSuffix: ' de punto de venta impreso', proceed: 'Continuar con el punto de venta',
+    approve: 'Guardar punto de venta corregido', confirm: '¿Querés guardar solo el punto de venta impreso que revisaste?',
+    rejectConfirm: '¿Querés rechazar sin modificar el comprobante?',
+    stale: 'No se guardó la corrección. Verificá el borrador y el punto de venta en Gomar antes de preparar otra propuesta.',
+    approved: 'Punto de venta corregido. El comprobante sigue en borrador.', rejected: 'Propuesta rechazada. El comprobante no cambió.',
+  },
   document_draft_number_change: {
     path: '/document-number-proposals', previewSuffix: ' de corrección del número', proceed: 'Continuar con la corrección',
     approve: 'Guardar número corregido', confirm: '¿Querés guardar solo el número impreso que revisaste?',
@@ -328,6 +338,14 @@ function validDocumentNumber(x: DocumentNumberChange | undefined): x is Document
   const after = typeof x.reference === 'string' && pattern.exec(x.reference)
   return !!before && !!after && before[1] === after[1] && Number(before[2]) > 0 && Number(after[2]) > 0 && before[2] !== after[2]
 }
+function validDocumentPointOfSale(x: DocumentPointOfSaleChange | undefined): x is DocumentPointOfSaleChange {
+  if (!x || !positive(x.document_id) || !positive(x.expected_revision) || x.expected_revision >= Number.MAX_SAFE_INTEGER) return false
+  const pattern = /^((?:Factura|Nota de crédito|Nota de débito)(?: [A-Z])?) (\d{5})-(\d{8})$/
+  const before = typeof x.current_reference === 'string' && pattern.exec(x.current_reference)
+  const after = typeof x.reference === 'string' && pattern.exec(x.reference)
+  return !!before && !!after && before[0] === x.current_reference && after[0] === x.reference &&
+    before[1] === after[1] && before[3] === after[3] && Number(before[2]) > 0 && Number(after[2]) > 0 && Number(before[3]) > 0
+}
 const nonnegative = (value: number) => Number.isSafeInteger(value) && value >= 0
 function validStock(kind: Action, x: StockAdjustment | undefined): x is StockAdjustment {
   if (!x || !positive(x.product_id) || typeof x.product_name !== 'string' || !nonnegative(x.revision) ||
@@ -380,7 +398,7 @@ const stateLabel = (active: boolean) => active ? 'Activo' : 'Inactivo'
 const prices = new Intl.NumberFormat('es-AR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
 const amount = (value: number | null) => value === null ? 'No informado' : prices.format(value / 100)
 type Decision = 'approve' | 'reject'
-const props = defineProps<{ entity: number; outlet: number; outletName: string; businessName?: string; canRename: boolean; canReviewDocuments?: boolean; canCreateReconciliationDraft?: boolean; canEditDocuments?: boolean; canCorrectDocumentNumber?: boolean; canAdjustStock?: boolean; canChangeCatalog?: boolean; canConfirmReservations?: boolean; canAddReservationTable?: boolean; canAddReservationSlot?: boolean; canChangeReservationPolicy?: boolean; canChangeOutletDisplayLabel?: boolean; canCancelReservations?: boolean; canCreateProducts?: boolean; canSetStockMinimum?: boolean; canChangeStockTracking?: boolean; canSetupStockProduct?: boolean; canChangeSupplierName?: boolean }>()
+const props = defineProps<{ entity: number; outlet: number; outletName: string; businessName?: string; canRename: boolean; canReviewDocuments?: boolean; canCreateReconciliationDraft?: boolean; canEditDocuments?: boolean; canCorrectDocumentNumber?: boolean; canCorrectDocumentPointOfSale?: boolean; canAdjustStock?: boolean; canChangeCatalog?: boolean; canConfirmReservations?: boolean; canAddReservationTable?: boolean; canAddReservationSlot?: boolean; canChangeReservationPolicy?: boolean; canChangeOutletDisplayLabel?: boolean; canCancelReservations?: boolean; canCreateProducts?: boolean; canSetStockMinimum?: boolean; canChangeStockTracking?: boolean; canSetupStockProduct?: boolean; canChangeSupplierName?: boolean }>()
 const emit = defineEmits<{ outletLabelApplied: [id: number, name: string] }>()
 const scopePath = `/entities/${props.entity}/outlets/${props.outlet}`
 const base = (kind: Action) => scopePath + actionUI[kind].path
@@ -397,11 +415,12 @@ const allowed = (kind: Action) => kind === supplierAction ? !!props.canChangeSup
   : kind === createAction ? !!props.canCreateProducts
   : isCatalog(kind) ? !!props.canChangeCatalog
   : isStock(kind) ? !!props.canAdjustStock
+  : kind === documentPointAction ? !!props.canCorrectDocumentPointOfSale && !!props.outletName.trim()
   : kind === documentNumberAction ? !!props.canCorrectDocumentNumber && !!props.outletName.trim()
   : kind === editAction ? !!props.canEditDocuments
   : kind === draftAction ? !!props.canCreateReconciliationDraft
   : kind === reviewAction ? !!props.canReviewDocuments : props.canRename
-const actionChoices = computed(() => ([actionName, reviewAction, draftAction, editAction, documentNumberAction, wasteAction, countAction, priceAction, availabilityAction, reservationAction, tableAddAction, slotAddAction, policyNoticeAction, outletLabelAction, cancelAction, createAction, minimumAction, trackingAction, stockSetupAction, supplierAction] as const).filter(allowed))
+const actionChoices = computed(() => ([actionName, reviewAction, draftAction, editAction, documentNumberAction, documentPointAction, wasteAction, countAction, priceAction, availabilityAction, reservationAction, tableAddAction, slotAddAction, policyNoticeAction, outletLabelAction, cancelAction, createAction, minimumAction, trackingAction, stockSetupAction, supplierAction] as const).filter(allowed))
 const setSelected = (kind: Action, event: Event) => {
   if (event.target instanceof HTMLInputElement) selected.value = event.target.checked ? kind : null
 }
@@ -420,6 +439,7 @@ const validPreview = (kind: Action, proposal: Proposal) => kind === supplierActi
   : kind === createAction ? validProduct(proposal.product)
   : isCatalog(kind) ? validCatalog(kind, proposal.change)
   : isStock(kind) ? validStock(kind, proposal.adjustment)
+  : kind === documentPointAction ? validDocumentPointOfSale(proposal.point_of_sale_change)
   : kind === documentNumberAction ? validDocumentNumber(proposal.number_change)
   : kind === editAction ? isDocumentEdit(proposal.edit)
   : kind === draftAction
@@ -469,7 +489,9 @@ const canDecide = computed(() => viewed.value?.status === 'pending' && (!guardDe
   /^[a-f0-9]{64}$/.test(viewed.value.digest ?? ''))
 const policyNoticeNoChange = computed(() => viewed.value?.kind === policyNoticeAction &&
   viewed.value.policy_change?.current_policy === viewed.value.policy_change?.policy)
-const canApprove = computed(() => canDecide.value && !policyNoticeNoChange.value)
+const documentPointNoChange = computed(() => viewed.value?.kind === documentPointAction &&
+  viewed.value.point_of_sale_change?.current_reference === viewed.value.point_of_sale_change?.reference)
+const canApprove = computed(() => canDecide.value && !policyNoticeNoChange.value && !documentPointNoChange.value)
 
 function hideKey() {
   disclosure++
@@ -590,14 +612,17 @@ async function decide() {
   const proposed = viewed.value
   if (busy.value || !target || !proposed || !canDecide.value || target.id !== proposed.id ||
     target.digest !== proposed.digest || target.kind !== proposed.kind ||
+    (target.kind === documentPointAction && target.action === 'approve' && !canApprove.value) ||
     (target.kind === cancelAction && target.action === 'approve' && !cancelAcknowledged.value) ||
     (needsTrackingAcknowledgement.value && !trackingAcknowledged.value) ||
     (needsTableAddAcknowledgement.value && !tableAddAcknowledged.value) ||
     (needsSlotAddAcknowledgement.value && !slotAddAcknowledged.value) ||
     (needsPolicyNoticeAcknowledgement.value && (!policyNoticeAcknowledged.value || !canApprove.value))) return
-  if (target.kind === cancelAction || target.kind === tableAddAction || target.kind === slotAddAction || target.kind === policyNoticeAction || target.kind === outletLabelAction || target.kind === minimumAction || target.kind === trackingAction || target.kind === stockSetupAction || target.kind === supplierAction || target.kind === documentNumberAction) closedScopedDecisions.add(decisionKey(target.kind, target.id))
+  if (target.kind === cancelAction || target.kind === tableAddAction || target.kind === slotAddAction || target.kind === policyNoticeAction || target.kind === outletLabelAction || target.kind === minimumAction || target.kind === trackingAction || target.kind === stockSetupAction || target.kind === supplierAction || target.kind === documentNumberAction || target.kind === documentPointAction) closedScopedDecisions.add(decisionKey(target.kind, target.id))
   await perform(target.kind === cancelAction
     ? 'No pude verificar el resultado. Revisá el estado en Reservas antes de hacer otro cambio.'
+    : target.kind === documentPointAction
+      ? 'No pude verificar el resultado. Revisá el punto de venta en Comprobantes antes de preparar otra propuesta.'
     : target.kind === documentNumberAction
       ? 'No pude verificar el resultado. Revisá el número en Comprobantes antes de preparar otra propuesta.'
     : target.kind === outletLabelAction
@@ -656,6 +681,9 @@ async function decide() {
       : isCatalog(target.kind)
       ? result.product_id === proposed.change?.product_id && result.product_revision === (proposed.change?.expected_revision ?? -1) + 1
       : isStock(target.kind) ? positive(result.movement_id ?? 0)
+      : target.kind === documentPointAction
+      ? result.document_id === proposed.point_of_sale_change?.document_id &&
+        result.document_revision === (proposed.point_of_sale_change?.expected_revision ?? -1) + 1 && result.point_of_sale_change === undefined
       : target.kind === documentNumberAction
       ? result.document_id === proposed.number_change?.document_id &&
         result.document_revision === (proposed.number_change?.expected_revision ?? -1) + 1 && result.number_change === undefined
@@ -669,6 +697,8 @@ async function decide() {
       result.id !== target.id || result.status !== (target.action === 'approve' ? 'approved' : 'rejected') ||
       (target.action === 'approve' && !validApproval) ||
       (isReservation(target.kind) && target.action === 'reject' && result.reservation_reference !== undefined) ||
+      (target.kind === documentPointAction && target.action === 'reject' &&
+        (result.document_id !== undefined || result.document_revision !== undefined || result.point_of_sale_change !== undefined)) ||
       (target.kind === documentNumberAction && target.action === 'reject' &&
         (result.document_id !== undefined || result.document_revision !== undefined || result.number_change !== undefined)) ||
       (target.kind === outletLabelAction && target.action === 'reject' &&
@@ -948,6 +978,14 @@ onBeforeUnmount(() => {
           <p>Saldo: <strong>{{ stockUnits.format(viewed.adjustment.before) }} → {{ stockUnits.format(viewed.adjustment.after) }}</strong></p>
           <p>Cambio: <strong>{{ stockDelta.format(viewed.adjustment.delta) }}</strong></p>
           <p>Si hubo otro movimiento desde la propuesta, no se aplica este ajuste. No se cambian precios ni se registra una venta.</p>
+        </div>
+        <div v-else-if="viewed.kind === documentPointAction && viewed.point_of_sale_change">
+          <p>Local: <strong>{{ outletName }}</strong> · Comprobante {{ viewed.point_of_sale_change.document_id }} · Versión {{ viewed.point_of_sale_change.expected_revision }}</p>
+          <p>Referencia actual: <strong>{{ viewed.point_of_sale_change.current_reference }}</strong></p>
+          <p>Referencia propuesta: <strong>{{ viewed.point_of_sale_change.reference }}</strong></p>
+          <p>Solo cambia el punto de venta impreso. No cambian el local, el número, la letra, el proveedor, los importes ni los archivos. El comprobante sigue en borrador, sin registrar deudas ni pagos.</p>
+          <p>Motivo de auditoría: Corrección del punto de venta del comprobante confirmada en Gomar.</p>
+          <p v-if="documentPointNoChange">El punto de venta ya coincide con el borrador. Podés rechazar la propuesta sin cambiar nada.</p>
         </div>
         <div v-else-if="viewed.kind === documentNumberAction && viewed.number_change">
           <p>Local: <strong>{{ outletName }}</strong> · Comprobante {{ viewed.number_change.document_id }} · Versión {{ viewed.number_change.expected_revision }}</p>
