@@ -65,6 +65,9 @@ func (a *app) registerPOS(add func(string, string, http.HandlerFunc)) {
 		add(posPath+"/table-checks/{table}", http.MethodGet, a.scoped("read_business_data", a.readPOSTableCheck))
 		add(posPath+"/table-checks/{table}/retire", http.MethodPost, a.scopedRequest("read_business_data", a.lockOutletForOperation(a.retirePOSTableCheck), true))
 		if a.enablePOSManualTender {
+			if a.enablePOSTableFinalization {
+				add(posPath+"/table-checks/{table}/finalize", http.MethodPost, a.scopedRequest("read_business_data", a.lockPOSTenderForWrite(a.finalizePOSTable), true))
+			}
 			add(posPath+"/table-checks/{table}/tender", http.MethodGet, a.scoped("read_business_data", a.readPOSTender))
 			add(posPath+"/table-checks/{table}/tender", http.MethodPost, a.scopedRequest("read_business_data", a.lockPOSTenderForWrite(a.writePOSTender), true))
 		}
@@ -133,7 +136,8 @@ func (a *app) listPOSCatalog(r *http.Request, tx *sql.Tx, m entityMembership, _ 
 		Products     []posProduct `json:"productos"`
 		TableChecks  bool         `json:"cuentas_mesa,omitempty"`
 		ManualTender bool         `json:"registro_medios_pago,omitempty"`
-	}{m.userID, products, a.enablePOSTableChecks && posSellingRole(m.role) && !m.employee, a.enablePOSManualTender && a.enablePOSTableChecks && posSellingRole(m.role) && !m.employee}, rows.Err()
+		Finalization bool         `json:"finalizacion_mesa,omitempty"`
+	}{m.userID, products, a.enablePOSTableChecks && posSellingRole(m.role) && !m.employee, a.enablePOSManualTender && a.enablePOSTableChecks && posSellingRole(m.role) && !m.employee, a.enablePOSTableFinalization && a.enablePOSManualTender && a.enablePOSTableChecks && posSellingRole(m.role) && !m.employee}, rows.Err()
 }
 
 func savePOSProduct(r *http.Request, tx *sql.Tx, m entityMembership, raw []byte) (int, any, error) {
@@ -260,10 +264,11 @@ func postPOSSale(r *http.Request, tx *sql.Tx, m entityMembership, raw []byte, st
 	}
 	sale := posSale{RequestID: input.RequestID, Items: make([]posSaleItem, 0, len(input.Items))}
 	var savedOutlet, savedActor int64
-	err = tx.QueryRowContext(ctx, `SELECT id,outlet_id,actor_id,total_minor,recorded_at,payment_method FROM pos_sales WHERE request_id=$1`, input.RequestID).
-		Scan(&sale.ID, &savedOutlet, &savedActor, &sale.Total, &sale.Recorded, &sale.PaymentMethod)
+	var finalized bool
+	err = tx.QueryRowContext(ctx, `SELECT id,outlet_id,actor_id,total_minor,recorded_at,payment_method,EXISTS(SELECT 1 FROM pos_table_finalizations f WHERE f.sale_id=s.id) FROM pos_sales s WHERE request_id=$1`, input.RequestID).
+		Scan(&sale.ID, &savedOutlet, &savedActor, &sale.Total, &sale.Recorded, &sale.PaymentMethod, &finalized)
 	if err == nil {
-		if savedOutlet != outlet || savedActor != m.userID || sale.PaymentMethod != method {
+		if finalized || savedOutlet != outlet || savedActor != m.userID || sale.PaymentMethod != method {
 			return 0, nil, posConflict
 		}
 		rows, err := tx.QueryContext(ctx, `SELECT i.product_id,i.revision,i.quantity,v.name,v.price_minor

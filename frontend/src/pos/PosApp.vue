@@ -12,7 +12,7 @@ import { arm, broadcastPOSLock, disarm, enqueue, forgetLease, localLease, lockOf
 
 interface Entity { id: number; nombre: string; rol: string; capacidades: string[] }
 interface Outlet { id: number; nombre: string }
-interface Catalog { actor_id: number; productos: Product[]; cuentas_mesa?: boolean; registro_medios_pago?: boolean }
+interface Catalog { actor_id: number; productos: Product[]; cuentas_mesa?: boolean; registro_medios_pago?: boolean; finalizacion_mesa?: boolean }
 interface Acknowledgment { id: number; id_solicitud: string; total_centavos: number; metodo_pago?: PaymentMethod }
 const statusLabel = { pending: 'Pendiente de sincronizar', synced: 'Sincronizada', attention: 'Necesita revisión' }
 const sellingRoles = new Set(['administration', 'purchasing', 'accounting'])
@@ -176,7 +176,7 @@ async function refresh() {
       }
       const sales = await salesFor(current)
       if (token !== epoch || localLease() !== current.lease) return
-      grant.value = { ...current, tableChecks: catalog.cuentas_mesa === true, manualTender: catalog.registro_medios_pago === true }
+      grant.value = { ...current, tableChecks: catalog.cuentas_mesa === true, manualTender: catalog.registro_medios_pago === true, tableFinalization: catalog.finalizacion_mesa === true }
       recorded.value = sales
     } else {
       entity.value = authorized.find((row) => sellingRoles.has(row.rol))?.id ?? authorized[0]?.id ?? 0
@@ -213,7 +213,7 @@ async function enable() {
     const catalog = await scopedCatalog(selection)
     if (token !== epoch || !navigator.onLine) return
     const next: Grant = { ...selection, actor: catalog.actor_id, label, lease: crypto.randomUUID(),
-      catalog: normalizedProducts(catalog.productos), tableChecks: catalog.cuentas_mesa === true, manualTender: catalog.registro_medios_pago === true, expires: Date.now() + grantLifetime }
+      catalog: normalizedProducts(catalog.productos), tableChecks: catalog.cuentas_mesa === true, manualTender: catalog.registro_medios_pago === true, tableFinalization: catalog.finalizacion_mesa === true, expires: Date.now() + grantLifetime }
     await arm(next)
     if (token !== epoch) {
       await disarm(next.lease)
@@ -527,7 +527,7 @@ onUnmounted(() => {
       </section>
       <SavedTableCheck
         v-if="grant.tableChecks && !needsConfirm && !saving" :key="grant.lease" :scope="grant" :cart="prebill?.lines ?? []"
-        :online="online" :allowed="currentRegisterOnline" :format-money="fmt" :allow-tender="grant.manualTender === true"
+        :online="online" :allowed="currentRegisterOnline" :format-money="fmt" :allow-tender="grant.manualTender === true" :allow-finalization="grant.tableFinalization === true"
       />
       <section class="card gomar-feature">
         <div class="section-heading"><h2>Ventas de esta caja</h2>

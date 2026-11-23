@@ -259,6 +259,14 @@ func (a *app) writePOSTender(r *http.Request, tx *sql.Tx, m entityMembership, ra
 	if !errors.Is(err, sql.ErrNoRows) {
 		return 0, nil, err
 	}
+	var used bool
+	if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM pos_table_finalizations f
+ JOIN pos_sales s ON s.id=f.sale_id AND s.outlet_id=f.outlet_id WHERE f.outlet_id=$1 AND s.request_id=$2)`, t.scope.OutletID, c.ID).Scan(&used); err != nil {
+		return 0, nil, err
+	}
+	if used {
+		return 0, nil, posTableTenderConflict
+	}
 	j, _, requestByEvent, err := loadPOSTenderHistory(ctx, tx, t)
 	if err != nil {
 		return 0, nil, err

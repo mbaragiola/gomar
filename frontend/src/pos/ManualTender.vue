@@ -9,9 +9,11 @@ const props = defineProps<{
   check: string
   total: number
   allowed: () => boolean
+  allowFinalization: boolean
+  cartEmpty: boolean
   formatMoney: (amount: number) => string
 }>()
-const emit = defineEmits<{ hasHistory: [] }>()
+const emit = defineEmits<{ hasHistory: []; finalized: [] }>()
 const reasons = { entrada_incorrecta: 'Registro por error', medio_incorrecto: 'Medio incorrecto', importe_incorrecto: 'Importe incorrecto' } as const
 type Reason = keyof typeof reasons
 interface Entry {
@@ -36,6 +38,9 @@ const status = ref<Status>()
 const error = ref('')
 const busy = ref(false)
 const uncertain = ref(false)
+const confirming = ref(false)
+const finalRetry = ref<string>()
+const candidateRevision = computed(() => status.value?.registros.at(-1)?.id_registro)
 let retry: { data: string; id: string } | undefined
 const controller = new AbortController()
 const path = `/entities/${props.scope.entity}/outlets/${props.scope.outlet}/pos/table-checks/${props.table}/tender`
@@ -129,6 +134,38 @@ async function save(kind: 'record' | 'void') {
   }
 }
 
+async function finalize() {
+  if (!props.allowFinalization || !props.cartEmpty || !confirming.value || busy.value
+    || !status.value || status.value.saldo_centavos !== 0 || !candidateRevision.value || !permitted()) return
+  const command = { id_cuenta: props.check, revision_pagos: candidateRevision.value,
+    id_solicitud: finalRetry.value ?? crypto.randomUUID() }
+  finalRetry.value = command.id_solicitud
+  busy.value = true
+  error.value = ''
+  try {
+    const receipt = await request<{ id_cuenta: string; id_venta: string; total_centavos: number }>(
+      path.replace(/tender$/, 'finalize'), { method: 'POST', body: JSON.stringify(command), cache: 'no-store', signal: signal() },
+    )
+    if (!permitted()) return
+    if (receipt.id_cuenta !== props.check || !validID(receipt.id_venta) || receipt.total_centavos !== props.total) {
+      throw new Error('unexpected sale receipt')
+    }
+    emit('finalized')
+  } catch (cause) {
+    if (!permitted()) return
+    if (cause instanceof ApiError && cause.status >= 400 && cause.status < 500) {
+      confirming.value = false
+      finalRetry.value = undefined
+      uncertain.value = true
+      error.value = cause.message
+    } else {
+      error.value = 'No se pudo verificar la venta. Reintentá la misma confirmación antes de volver a cargarla.'
+    }
+  } finally {
+    busy.value = false
+  }
+}
+
 onMounted(refresh)
 onUnmounted(() => controller.abort())
 </script>
@@ -137,7 +174,7 @@ onUnmounted(() => controller.abort())
   <section class="card gomar-feature" aria-label="Registro de medios de pago">
     <h4>Registro de medios de pago</h4>
     <p>Anotá solo importes gestionados por fuera de Gomar. Esto no cobra, reintegra, registra una venta ni emite una factura.</p>
-    <button type="button" :disabled="busy" @click="refresh">Actualizar registros de pago</button>
+    <button type="button" :disabled="busy || confirming" @click="refresh">Actualizar registros de pago</button>
     <p v-if="error" class="error" role="alert">{{ error }}</p>
     <template v-if="status">
       <p role="status">Registrado: {{ formatMoney(status.registrado_centavos) }} · Saldo por registrar: {{ formatMoney(status.saldo_centavos) }}</p>
@@ -146,7 +183,7 @@ onUnmounted(() => controller.abort())
           <template v-if="entry.tipo === 'record' && entry.medio && entry.importe_centavos">
             {{ paymentLabels[entry.medio] }} · {{ formatMoney(entry.importe_centavos) }}
             <span v-if="corrected.has(entry.id_registro)"> · Corregido</span>
-            <button v-else type="button" :disabled="busy || uncertain" @click="correcting = entry.id_registro; reason = ''">Corregir registro</button>
+            <button v-else type="button" :disabled="busy || uncertain || confirming" @click="correcting = entry.id_registro; reason = ''">Corregir registro</button>
           </template>
           <span v-else-if="entry.motivo">Corrección: {{ reasons[entry.motivo] }}</span>
         </li>
@@ -162,6 +199,16 @@ onUnmounted(() => controller.abort())
         <button type="submit" :disabled="!reason || busy || uncertain">Confirmar corrección</button>
         <button type="button" :disabled="busy" @click="correcting = ''; reason = ''">Volver sin corregir</button>
       </form>
+      <div v-if="allowFinalization && status.saldo_centavos === 0 && !correcting">
+        <p v-if="!cartEmpty">Vaciá el carrito local antes de registrar esta cuenta para no cargar la venta dos veces.</p>
+        <button v-if="!confirming" type="button" :disabled="busy || uncertain || !cartEmpty" @click="confirming = true">Revisar y registrar venta</button>
+        <fieldset v-else>
+          <legend>Confirmá la venta de la mesa {{ table }}</legend>
+          <p>Revisá los medios de pago y el total de {{ formatMoney(total) }}. Se registra una venta y se libera la mesa. No se cobra ni se emite una factura.</p>
+          <button type="button" :disabled="busy || !cartEmpty" @click="finalize">{{ finalRetry ? 'Reintentar confirmación' : 'Confirmar venta' }}</button>
+          <button v-if="!finalRetry" type="button" :disabled="busy" @click="confirming = false">Volver sin registrar</button>
+        </fieldset>
+      </div>
       <form v-if="status.saldo_centavos > 0 && !correcting" class="gomar-feature-actions" @submit.prevent="save('record')">
         <label>Importe ingresado
           <input v-model="amount" inputmode="decimal" placeholder="0,00" :disabled="busy || uncertain" />
