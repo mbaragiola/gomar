@@ -90,3 +90,30 @@ handoff. Verify the correct outlet and role, denied attempts, and unchanged
 document and payment records. Neither tool calls nor the browser check
 download attachments, record payments, or run a model. Omit the installed
 client flag to verify packaged stdio protocol behavior only.
+
+
+### Staff MVP release checklist
+
+On the same release checkout, run the feature-off control, the isolated
+PostgreSQL gate, and the representative installed-client journey:
+
+```sh
+bash scripts/qa-mcp-stock-journey.sh
+bash scripts/qa-postgres.sh
+bash scripts/qa-mcp-stock-journey.sh --with-local-checks --with-purchases --with-bookings-wiki --with-installed-codex
+```
+
+Check that stock proposals change state only after native review, purchases
+find exact references and drafts and stop at the native finance handoff,
+one reservation stays pending until the issuing browser approves it,
+and wiki reads stay within the outlet. The bookings option needs the local
+IANA time-zone data for Buenos Aires (usually provided by tzdata).
+Check disabled features and wrong
+roles, businesses and outlets. The reservation uses a separate named
+proposal session; the two stock lanes are unchanged.
+
+Codex CLI is the first installed client covered here, through direct tool
+calls without a model. Omitting its flag checks packaged stdio only.
+Claude Code is not covered by this test. Require independent review of the
+same release. Payments, reconciliation closure, attachments, guest contact
+and notifications, and wiki approval or publication are outside this test.
