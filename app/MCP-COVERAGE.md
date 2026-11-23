@@ -4,6 +4,7 @@ Coverage means a staff member can complete the workflow from a supported
 client, subject to the same permissions as the app. A list or summary is
 not full coverage of the underlying workflow. A proposed change is not an
 applied change. Features disabled in the app are not available via MCP.
+For everyday examples, see the [Spanish prompt guide](MCP-GUIA-DE-CONSULTAS.md).
 
 | Workflow | Shipped MCP reads and opt-in proposals | Intentionally stays in Gomar or is not built |
 | --- | --- | --- |
