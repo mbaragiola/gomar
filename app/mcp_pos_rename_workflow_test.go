@@ -165,7 +165,33 @@ func TestPostgresMCPPOSRenameSessionBoundaries(t *testing.T) {
 	}
 	expect(do(router, "POST", "/api/v1/auth/mcp-wiki-edit-proposal-token", legacyBody, "", origin, maker), 429, nil)
 	expect(do(router, "POST", auth, keyBody, "", origin, maker), 429, nil)
-	issue("/api/v1/auth/mcp-token", legacyBody, maker)
+	read := issue("/api/v1/auth/mcp-token", `{"entity_id":1,"outlet_id":1}`, maker)
+	const direct = "/api/v1/mcp/entities/1/outlets/1/pos-catalog/"
+	checkExact := func(name string, price, revision int64) {
+		t.Helper()
+		w := do(router, "GET", direct+"1", "", read.Token, "", nil)
+		expect(w, 200, nil)
+		want := fmt.Sprintf(`{"id":1,"name":%q,"price_minor":%d,"revision":%d,"active":false,"currency":"ARS"}`, name, price, revision)
+		if strings.TrimSpace(w.Body.String()) != want {
+			t.Fatalf("wrong exact read: %s", w.Body.String())
+		}
+	}
+	checkExact("Original", 750, 1)
+	unknown := do(router, "GET", direct+"999", "", read.Token, "", nil)
+	expect(unknown, 404, nil)
+	for _, path := range []string{direct + "2", direct + "0", direct + "-1"} {
+		w := do(router, "GET", path, "", read.Token, "", nil)
+		expect(w, 404, nil)
+		if w.Body.String() != unknown.Body.String() {
+			t.Fatal("product existence disclosed")
+		}
+	}
+	expect(do(router, "GET", strings.Replace(direct, "outlets/1", "outlets/2", 1)+"2", "", read.Token, "", nil), 404, nil)
+	expect(do(router, "GET", strings.Replace(direct, "entities/1", "entities/2", 1)+"1", "", read.Token, "", nil), 404, nil)
+	expect(do(router, "GET", direct+"1?q=name", "", read.Token, "", nil), 422, nil)
+	expect(do(router, "GET", direct+"1", "", "", "", nil), 401, nil)
+	expect(do((&app{db: db, host: "example.com", enableMCP: true}).routes(), "GET", direct+"1", "", read.Token, "", nil), 404, nil)
+	expect(do((&app{db: db, host: "example.com", enablePOS: true}).routes(), "GET", direct+"1", "", read.Token, "", nil), 404, nil)
 	for _, wrong := range []key{wiki, docs} {
 		submit(wrong.Token, payload(1, 1, 1, "Renamed"), 401)
 	}
@@ -245,6 +271,12 @@ func TestPostgresMCPPOSRenameSessionBoundaries(t *testing.T) {
 		t.Fatal(counts)
 	}
 	check(3, 950, "Renamed")
+	checkExact("Renamed", 950, 3)
+	exec("UPDATE memberships SET role='read_only' WHERE id=1")
+	checkExact("Renamed", 950, 3)
+	exec("UPDATE memberships SET role='unassigned' WHERE id=1")
+	expect(do(router, "GET", direct+"1", "", read.Token, "", nil), 403, nil)
+	exec("UPDATE memberships SET role='administration' WHERE id=1")
 	receipt := detail(p.ID)
 	if receipt.Status != "approved" || receipt.Rename != nil || receipt.Digest != "" || receipt.ProductID == nil || *receipt.ProductID != 1 ||
 		receipt.ProductRevision == nil || *receipt.ProductRevision != 3 {

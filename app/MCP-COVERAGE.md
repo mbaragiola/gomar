@@ -19,7 +19,7 @@ For everyday examples, see the [Spanish prompt guide](MCP-GUIA-DE-CONSULTAS.md).
 | Reconciliation | Scoped counts, paged run list, metadata and setup by ID and a read-only close eligibility check; propose one empty single-outlet draft | Native only: private files, source rows, preparing matches, decisions and closing review. Setup metadata does not prove readiness. |
 | Reservations and menus | Daily counts, setup flags, one exact configured future start and one numbered table check, staff queue and detail, public candidate times, published menu metadata; propose confirmation or cancellation of an existing request and prepare a table, future slot, or fixed informational cancellation notice for an existing disabled venue | Native only: public booking, guest and contact details, custom venue settings and enablement, actual menu files and publication. Preparation never enables or books anything. |
 
-The packaged live server registers 38 baseline read tools. Discovery does not
+The packaged live server registers 39 baseline read tools. Discovery does not
 guarantee access: app flags and current permissions determine which queries
 can run. There are also 25 distinct opt-in proposal actions, not 25
 simultaneous writes. Of those, 21 are named actions and four use distinct older
@@ -171,3 +171,12 @@ access to all participating branches. It returns `eligible: true` or
 The read does not return counts, rows, balances, account data, or files.
 It does not close or reserve the run and does not check a future revision
 or operation key.
+
+### Exact POS catalog product
+
+`gomar_read_pos_product` reads one known product ID in the selected
+business and branch, when POS is enabled and the caller has current
+business-read permission for that branch. It returns only the product ID,
+name, price in ARS cents, current catalog revision, and active status.
+Inactive products remain readable, like in the native catalog. It does
+not search, show stock or costs, record a sale, or change the product.
