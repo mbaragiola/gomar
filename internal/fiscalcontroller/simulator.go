@@ -2,6 +2,7 @@ package fiscalcontroller
 
 import (
 	"context"
+	"crypto/rand"
 	"errors"
 	"sync"
 )
@@ -21,6 +22,8 @@ var errSimulatedConnectionLoss = errors.New("simulated loss of connection to fis
 type Simulator struct {
 	mu          sync.Mutex
 	pointOfSale int
+	identity    string
+	journalPath string
 	documents   map[string]Document
 	lastNumber  int64
 	nextIssue   NextIssue
@@ -28,7 +31,7 @@ type Simulator struct {
 }
 
 func NewSimulator(pointOfSale int) *Simulator {
-	return &Simulator{pointOfSale: pointOfSale, documents: make(map[string]Document)}
+	return &Simulator{pointOfSale: pointOfSale, identity: rand.Text(), documents: make(map[string]Document)}
 }
 
 func (s *Simulator) FailNextIssue(how NextIssue) {

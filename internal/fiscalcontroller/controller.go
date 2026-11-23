@@ -1,5 +1,5 @@
 // Package fiscalcontroller models explicit issuance on one fiscal controller.
-// It is simulator-only until a durable journal and a validated adapter exist.
+// It is simulator-only; no real device adapter is provided.
 package fiscalcontroller
 
 import (
@@ -101,6 +101,7 @@ var (
 	ErrUnsupported         = errors.New("fiscal document kind not supported")
 	ErrConflict            = errors.New("fiscal request differs from the recorded sale")
 	ErrNeedsReconciliation = errors.New("fiscal controller has an unresolved issue")
+	ErrJournal             = errors.New("fiscal simulator journal unavailable")
 	ErrNoAttempt           = errors.New("no fiscal issue attempt for this sale")
 )
 
@@ -115,8 +116,8 @@ type record struct {
 }
 
 // Controller serializes submissions and lookups for one device. Create only
-// one Controller per device. Its in-memory state survives neither a process
-// restart nor use by multiple workers; do not use this with real hardware.
+// one Controller per device. New uses in-memory state; the file journal is
+// only a local restart simulation. Do not use this with real hardware.
 type Controller struct {
 	device        Device
 	config        Config
@@ -124,6 +125,9 @@ type Controller struct {
 	records       map[string]record
 	pending       string
 	issuedNumbers map[documentNumber]string
+	journal       *fileJournal
+	storageFailed bool
+	closed        bool
 }
 
 func New(device Device, cfg Config) (*Controller, error) {
@@ -141,6 +145,10 @@ func (c *Controller) lock(ctx context.Context) error {
 	case <-ctx.Done():
 		return ctx.Err()
 	case c.gate <- struct{}{}:
+		if c.closed || c.storageFailed {
+			c.unlock()
+			return ErrJournal
+		}
 		if err := ctx.Err(); err != nil {
 			c.unlock()
 			return err
@@ -182,6 +190,9 @@ func (c *Controller) Issue(ctx context.Context, req Request) (Result, error) {
 	unknown := Result{State: OutcomeUnknown}
 	c.pending = req.SaleID
 	c.records[req.SaleID] = record{req, unknown}
+	if err := c.persist(); err != nil {
+		return unknown, err
+	}
 
 	doc, err := c.device.Issue(ctx, req)
 	if err != nil {
@@ -190,7 +201,7 @@ func (c *Controller) Issue(ctx context.Context, req Request) (Result, error) {
 	if !c.valid(req, doc) {
 		return unknown, fmt.Errorf("%w: device returned an unmatched document", ErrNeedsReconciliation)
 	}
-	return c.finish(req, Result{State: Issued, Document: doc}), nil
+	return c.finish(req, Result{State: Issued, Document: doc})
 }
 
 // Reconcile asks the device about a prior attempt. It never retries issuance.
@@ -215,19 +226,36 @@ func (c *Controller) Reconcile(ctx context.Context, saleID string) (Result, erro
 	}
 	switch {
 	case observed.State == Found && c.valid(rec.request, observed.Document):
-		return c.finish(rec.request, Result{State: Issued, Document: observed.Document}), nil
+		return c.finish(rec.request, Result{State: Issued, Document: observed.Document})
 	case observed.State == NotIssued && observed.Document == (Document{}):
-		return c.finish(rec.request, Result{State: ConfirmedNotIssued}), nil
+		return c.finish(rec.request, Result{State: ConfirmedNotIssued})
 	default:
 		return rec.result, ErrNeedsReconciliation
 	}
 }
 
-func (c *Controller) finish(req Request, result Result) Result {
+func (c *Controller) finish(req Request, result Result) (Result, error) {
 	c.records[req.SaleID] = record{req, result}
 	if result.State == Issued {
 		c.issuedNumbers[documentNumber{result.Document.Kind, result.Document.Number}] = req.SaleID
 	}
 	c.pending = ""
-	return result
+	if err := c.persist(); err != nil {
+		return Result{State: OutcomeUnknown}, err
+	}
+	return result, nil
+}
+
+// persist is called only with the controller gate held.
+func (c *Controller) persist() error {
+	if c.journal == nil {
+		return nil
+	}
+	if err := c.journal.save(c.snapshot(), false); err != nil {
+		// The previous snapshot may or may not have been replaced. No further
+		// action can use this controller until storage is restored and re-opened.
+		c.storageFailed = true
+		return fmt.Errorf("%w: save: %w", ErrJournal, err)
+	}
+	return nil
 }
