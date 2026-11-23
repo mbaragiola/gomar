@@ -23,8 +23,8 @@ INSERT INTO memberships(id,user_id,entity_id,role,active) VALUES
 INSERT INTO outlet_grants VALUES (85,85),(86,85),(87,85);
 WITH checks AS (
  INSERT INTO pos_table_checks(outlet_id,table_number,actor_id,request_id,request_fingerprint,total_minor)
- SELECT x.outlet,x.table,85,'00112233-4455-4677-8899-aabbccdde00' || x.table::text,decode(repeat('00',32),'hex'),1250
- FROM (VALUES (85,1),(85,2),(85,3),(85,4),(86,1),(87,1)) x(outlet,table)
+ SELECT x.outlet,x.table_no,85,'00112233-4455-4677-8899-aabbccdde00' || x.table_no::text,decode(repeat('00',32),'hex'),1250
+ FROM (VALUES (85,1),(85,2),(85,3),(85,4),(86,1),(87,1)) x(outlet,table_no)
  RETURNING id,outlet_id,table_number)
 INSERT INTO pos_table_check_slots(check_id,outlet_id,table_number) SELECT id,outlet_id,table_number FROM checks;`); err != nil {
 		t.Fatal(err)
