@@ -16,10 +16,10 @@ For everyday examples, see the [Spanish prompt guide](MCP-GUIA-DE-CONSULTAS.md).
 | Documents and intake | Scoped list, detail and totals by currency; propose draft creation, review, date and amount edits, or separate printed-number and printed point-of-sale corrections | Native only: other document edits, deletion and private file handling. Provider OCR is disabled; staged OCR confirmation is not a shipped workflow. |
 | Suppliers | Active supplier names and IDs; propose a legal-name correction that applies across the business | Native only: supplier creation, tax identity and superuser catalog status changes. |
 | Payables and payment records | Outstanding and overdue totals, status counts, outlet-only payable and payment record details, one payable’s ledger history, and one document’s eligibility for posting | Native only: creating payables, recording and reversing internal payments, and receipt handling. MCP reads do not verify bank activity or move money. |
-| Reconciliation | Scoped counts, paged run list, metadata and setup by ID; propose one empty single-outlet draft | Native only: private files, source rows, preparing matches, decisions and closing review. Setup metadata does not prove readiness. |
+| Reconciliation | Scoped counts, paged run list, metadata and setup by ID and a read-only close eligibility check; propose one empty single-outlet draft | Native only: private files, source rows, preparing matches, decisions and closing review. Setup metadata does not prove readiness. |
 | Reservations and menus | Daily counts, setup flags, one exact configured future start and one numbered table check, staff queue and detail, public candidate times, published menu metadata; propose confirmation or cancellation of an existing request and prepare a table, future slot, or fixed informational cancellation notice for an existing disabled venue | Native only: public booking, guest and contact details, custom venue settings and enablement, actual menu files and publication. Preparation never enables or books anything. |
 
-The packaged live server registers 37 baseline read tools. Discovery does not
+The packaged live server registers 38 baseline read tools. Discovery does not
 guarantee access: app flags and current permissions determine which queries
 can run. There are also 25 distinct opt-in proposal actions, not 25
 simultaneous writes. Of those, 21 are named actions and four use distinct older
@@ -160,3 +160,14 @@ successful check returns `eligible: true`. A blocked check returns
 receipt data. The read is not a lock, reservation, approval, posting, or
 payment. The native request still needs a reason and fresh checks before
 any account payable can be created.
+
+### Reconciliation close eligibility
+
+`gomar_check_reconciliation_close_eligibility` checks one `run_id` at the
+selected entity and branch with the current reconciliation permission and
+access to all participating branches. It returns `eligible: true` or
+`eligible: false` with one reason: `not_in_review` or
+`unsupported_review_data`. Pending unresolved entries are allowed.
+The read does not return counts, rows, balances, account data, or files.
+It does not close or reserve the run and does not check a future revision
+or operation key.

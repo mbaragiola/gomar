@@ -34,8 +34,8 @@ func TestReservationPolicyNoticeToolAcceptsOnlyTypedHours(t *testing.T) {
 			found = true
 		}
 	}
-	if len(list.Tools) != 38 || !found {
-		t.Fatal("expected 37 read tools and one named proposal")
+	if len(list.Tools) != 39 || !found {
+		t.Fatal("expected 38 read tools and one named proposal")
 	}
 	for _, change := range []map[string]any{
 		{}, {"notice_hours": nil}, {"notice_hours": 0}, {"notice_hours": 73}, {"notice_hours": 1.5},
