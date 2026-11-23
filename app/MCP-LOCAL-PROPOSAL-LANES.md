@@ -33,3 +33,21 @@ its tool might still be visible until the client restarts. The other action
 and the read connection remain independent. Local file checks do not
 protect against a separate process running as the same operating-system
 user; protect the files and their directories.
+
+## Repeat the synthetic operator check
+
+From the repository root, run:
+
+```sh
+bash scripts/qa-mcp-stock-journey.sh
+```
+
+Use Linux with Bubblewrap, Chrome or Chromium, PostgreSQL tools, Python
+with Playwright in your QA environment, and the usual local Go and pinned
+frontend dependencies. Set `QA_CHROME`, `QA_PG_BIN`, or `QA_PYTHON` if these
+are not on their usual paths. Nothing is added to the app's dependencies.
+
+The check uses a fresh disposable database, actual browser decisions, and
+one persistent packaged MCP connection. It covers both proposal lanes,
+readback, branch and login isolation, and revoking one key without losing
+the other lane. It does not connect to production or invoke a model.
