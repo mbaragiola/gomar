@@ -1197,7 +1197,6 @@ onMounted(() => { if (!publicVenue) return initialize() })
             :can-add-reservation-table="canAddReservationTableViaMcp"
             :can-add-reservation-slot="canAddReservationSlotViaMcp"
             :can-change-outlet-display-label="canChangeOutletDisplayLabelViaMcp"
-            @outlet-label-applied="applyCurrentOutletLabel"
             :can-cancel-reservations="canCancelReservationsViaMcp"
             :can-create-products="canCreateProductsViaMcp"
             :can-set-stock-minimum="canSetStockMinimumViaMcp"
@@ -1208,6 +1207,7 @@ onMounted(() => { if (!publicVenue) return initialize() })
             :entity="selectedEntityId"
             :outlet="selectedOutletId"
             :outlet-name="outlets.find((item) => item.id === selectedOutletId)?.nombre ?? 'este local'"
+            @outlet-label-applied="applyCurrentOutletLabel"
           />
         </section>
         <StockPanel
