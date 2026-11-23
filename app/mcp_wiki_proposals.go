@@ -774,6 +774,9 @@ func (a *app) pruneWikiProposals(ctx context.Context) error {
 	if err := a.pruneOutletDisplayLabelProposals(ctx, now); err != nil {
 		return err
 	}
+	if err := a.pruneReservationPolicyNoticeProposals(ctx, now); err != nil {
+		return err
+	}
 	if err := a.pruneReservationSlotAddProposals(ctx, now); err != nil {
 		return err
 	}

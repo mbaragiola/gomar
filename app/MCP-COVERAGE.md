@@ -16,12 +16,12 @@ applied change. Features disabled in the app are not available via MCP.
 | Suppliers | Active supplier names and IDs; propose a legal-name correction that applies across the business | Native only: supplier creation, tax identity and superuser catalog status changes. |
 | Payables and payment records | Outstanding and overdue totals, status counts, outlet-only payable and payment record details, and one payable’s ledger history | Native only: creating payables, recording and reversing internal payments, and receipt handling. MCP reads do not verify bank activity or move money. |
 | Reconciliation | Scoped counts, paged run list, metadata and setup by ID; propose one empty single-outlet draft | Native only: private files, source rows, preparing matches, decisions and closing review. Setup metadata does not prove readiness. |
-| Reservations and menus | Daily counts, setup flags, staff queue and detail, public candidate times, published menu metadata; propose confirmation or cancellation of an existing request and prepare a table or future slot for an existing disabled venue | Native only: public booking, guest and contact details, venue settings and enablement, actual menu files and publication. Table/slot preparation never enables or books anything. |
+| Reservations and menus | Daily counts, setup flags, staff queue and detail, public candidate times, published menu metadata; propose confirmation or cancellation of an existing request and prepare a table, future slot, or fixed informational cancellation notice for an existing disabled venue | Native only: public booking, guest and contact details, custom venue settings and enablement, actual menu files and publication. Preparation never enables or books anything. |
 
 The packaged live server registers 34 baseline read tools. Discovery does not
 guarantee access: app flags and current permissions determine which queries
-can run. There are also 23 distinct opt-in proposal actions, not 23
-simultaneous writes. Of those, 19 are named actions and four use distinct older
+can run. There are also 24 distinct opt-in proposal actions, not 24
+simultaneous writes. Of those, 20 are named actions and four use distinct older
 credential options. The stdio process accepts at most one selected named
 action. All proposals require approval in Gomar before changing business data.
 
@@ -134,3 +134,8 @@ An optional outlet display label proposal changes only a currently active
 branch's name. Access, IDs and connected settings do not change. Some
 reports join the current name and can display a prior record under the new
 label. See [outlet display label proposals](MCP-OUTLET-DISPLAY-LABEL-PROPOSALS.md).
+
+A cancellation notice proposal prepares fixed informational wording for one
+existing disabled venue. It applies only to future requests after staff
+separately enable the venue in Gomar. Historical requests keep the wording
+the server captured at submission. See [cancellation notice proposals](MCP-RESERVATION-POLICY-NOTICE-PROPOSALS.md).

@@ -1673,3 +1673,107 @@ describe('Número impreso de un comprobante', () => {
     panel.unmount()
   })
 })
+
+describe('Aviso previo de cancelación para un local desactivado', () => {
+  const path = base + '/reservation-policy-notice-proposals'
+  const current = '<a href="https://example.test">Texto actual privado</a>'
+  const policy = 'Por favor, avisá al local con al menos 24 horas de anticipación si no podés asistir.'
+  const change = { current_policy: current, policy, notice_hours: 24, venue_enabled: false }
+
+  function fakeFetch(reply: Response, preview: unknown = change) {
+    return vi.fn((url: string) => {
+      if (url.endsWith('/proposal-sessions')) return Promise.resolve(result({ sessions: [] }))
+      if (url === path) return Promise.resolve(result({ proposals: [pending()] }))
+      if (url === path + '/8') return Promise.resolve(result({ ...pending(), digest, policy_change: preview }))
+      if (url === path + '/8/decision') return Promise.resolve(reply)
+      throw Error('unexpected test request')
+    })
+  }
+  async function show(fetch: unknown, canChangeReservationPolicy = true) {
+    vi.stubGlobal('fetch', fetch)
+    const panel = mount(McpProposalSessions, {
+      props: { entity: 2, outlet: 7, outletName: 'Centro de prueba', canRename: false, canChangeReservationPolicy },
+    })
+    await button(panel, 'Sesiones de propuestas').trigger('click')
+    await flushPromises()
+    return panel
+  }
+  async function read(panel: ReturnType<typeof mount>) {
+    await button(panel, 'Ver propuesta 8 de política de cancelación').trigger('click')
+    await flushPromises()
+  }
+  it('reviews literal old and fixed new text and requires the separate approval acknowledgement', async () => {
+    const fetch = fakeFetch(result({ ...pending(), status: 'approved' }))
+    const panel = await show(fetch)
+    const choice = panel.get('input[type=checkbox]')
+    expect((choice.element as HTMLInputElement).checked).toBe(false)
+    expect(button(panel, 'Crear sesión de propuestas').attributes()).toHaveProperty('disabled')
+    await choice.setValue(true)
+    expect(panel.text()).toContain('--proposal-session-action=reservation_cancellation_policy_change')
+    await read(panel)
+    expect(panel.get('[aria-label="Política actual"]').text()).toBe(current)
+    expect(panel.get('[aria-label="Aviso propuesto"]').text()).toBe(policy)
+    expect(panel.find('pre a').exists()).toBe(false)
+    expect(panel.text()).toContain('Centro de prueba · Reservas desactivadas')
+    expect(panel.text()).toContain('No cambia solicitudes anteriores, no cancela reservas ni envía avisos.')
+    await button(panel, 'Continuar con el aviso').trigger('click')
+    const apply = button(panel, 'Guardar aviso sin habilitar reservas')
+    expect(apply.attributes()).toHaveProperty('disabled')
+    expect(fetch.mock.calls.some(([url]) => url.endsWith('/decision'))).toBe(false)
+    const ack = panel.get('[role=group][aria-label="Confirmar decisión"] input')
+    expect((ack.element as HTMLInputElement).checked).toBe(false)
+    await ack.setValue(true)
+    await apply.trigger('click')
+    await flushPromises()
+    expect(fetch).toHaveBeenLastCalledWith(path + '/8/decision', expect.objectContaining({
+      method: 'POST', body: JSON.stringify({ decision: 'approve', digest, confirm: true, acknowledge_future_requests_only: true }),
+    }))
+    expect(panel.text()).toContain('Aviso guardado. Las reservas del local siguen desactivadas.')
+    panel.unmount()
+  })
+  it('lets the browser reject an identical notice but not approve it', async () => {
+    const fetch = fakeFetch(result({ ...pending(), status: 'rejected' }), { ...change, current_policy: policy })
+    const panel = await show(fetch)
+    await read(panel)
+    expect(panel.text()).toContain('El aviso ya coincide con la política actual')
+    expect(button(panel, 'Continuar con el aviso').attributes()).toHaveProperty('disabled')
+    await button(panel, 'Rechazar propuesta').trigger('click')
+    await button(panel, 'Sí, rechazar').trigger('click')
+    await flushPromises()
+    expect(fetch).toHaveBeenLastCalledWith(path + '/8/decision', expect.objectContaining({
+      method: 'POST', body: JSON.stringify({ decision: 'reject', digest, confirm: true }),
+    }))
+    expect(panel.text()).toContain('No se cambió la política.')
+    panel.unmount()
+  })
+  it.each([{ venue_enabled: true }, { notice_hours: 0 }, { notice_hours: 25 }, { policy: '<a>texto no permitido</a>' }])(
+    'does not review mismatched or untyped values %s', async patch => {
+      const panel = await show(fakeFetch(result({}), { ...change, ...patch }))
+      await read(panel)
+      expect(panel.get('[role=alert]').text()).toContain('No pude abrir la propuesta.')
+      expect(button(panel, 'Continuar con el aviso')).toBeUndefined()
+      panel.unmount()
+    },
+  )
+  it.each([409, 200])('blocks retry after a stale or nonminimal received decision: %s', async status => {
+    const fetch = fakeFetch(result({ ...pending(), status: 'approved', policy_change: change }, status))
+    const panel = await show(fetch)
+    await read(panel)
+    await button(panel, 'Continuar con el aviso').trigger('click')
+    await panel.get('[role=group][aria-label="Confirmar decisión"] input').setValue(true)
+    await button(panel, 'Guardar aviso sin habilitar reservas').trigger('click')
+    await flushPromises()
+    expect(panel.get('[role=alert]').text()).toMatch(/No se guardó|No pude verificar/)
+    await read(panel)
+    expect(button(panel, 'Continuar con el aviso').attributes()).toHaveProperty('disabled')
+    expect(fetch.mock.calls.filter(([url]) => url.endsWith('/decision'))).toHaveLength(1)
+    panel.unmount()
+  })
+  it('does not query this action without the current capability', async () => {
+    const fetch = fakeFetch(result({}))
+    const panel = await show(fetch, false)
+    expect(fetch.mock.calls.some(([url]) => url === path)).toBe(false)
+    expect(panel.text()).not.toContain('Preparar aviso previo de cancelación')
+    panel.unmount()
+  })
+})
