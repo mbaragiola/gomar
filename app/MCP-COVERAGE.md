@@ -9,7 +9,7 @@ applied change. Features disabled in the app are not available via MCP.
 | --- | --- | --- |
 | Identity and business scope | Current user, businesses, and outlets | Management views; changes to access stay in Gomar |
 | POS | Recorded sales totals, product catalog, and separate create, name, price, and availability proposals for confirmation in Gomar | Register sales stay in the native POS; Gomar does not expose shift management |
-| Inventory | Tracked balances, thresholds, movements, and branch-wide stock alert counts; propose receipts, waste, and physical counts for confirmation in Gomar | Catalog and tracking settings; bills of materials are not implemented |
+| Inventory | Tracked balances, thresholds, movements, and branch-wide stock alert counts; propose receipts, waste, physical counts, and changes to an existing product’s minimum or tracking for confirmation in Gomar | New product tracking setup and branch-wide settings stay in Gomar; bills of materials are not implemented |
 | Wiki | Search and read by ID; propose new pages and versioned edits for confirmation in Gomar | Gomar does not offer deletion |
 | Delivery | Recent order status with limited fields; aggregate status counts for the latest 100 inbox records | No native staff write workflow; provider calls and credentials stay outside the read interface |
 | Documents and intake | Outlet-scoped list, detail, and document totals by currency; propose draft creation, review, or date and amount edits for confirmation in Gomar | Other draft changes and safe handoff for files; app OCR and intake confirmation parity |
@@ -91,3 +91,10 @@ The read-only reconciliation setup view shows whether nonempty source
 metadata exists on each side, whether the reference rule is enabled, and
 whether known setup limits apply. It does not open files, read source rows,
 or verify that native preparation will succeed.
+
+A stock tracking proposal changes only one existing configuration in one
+branch. It never changes the minimum, estimated balance or movement history.
+Sales recorded while tracking is off, including offline sales synced during
+that time, do not deduct stock. Turning tracking back on continues from the
+previous estimate; it does not backfill missing deductions. See
+[stock tracking proposals](MCP-STOCK-TRACKING-PROPOSALS.md).

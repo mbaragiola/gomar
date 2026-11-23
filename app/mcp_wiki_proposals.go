@@ -756,6 +756,9 @@ func (a *app) pruneWikiProposals(ctx context.Context) error {
 	if err := a.pruneSupplierNameProposals(ctx, now); err != nil {
 		return err
 	}
+	if err := a.pruneStockTrackingProposals(ctx, now); err != nil {
+		return err
+	}
 	if err := a.pruneStockMinimumProposals(ctx, now); err != nil {
 		return err
 	}

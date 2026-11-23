@@ -30,6 +30,7 @@ type app struct {
 	privateRoot                           *os.Root
 	enableMCPSupplierNameProposals        bool
 	enableMCPStockMinimumProposals        bool
+	enableMCPStockTrackingProposals       bool
 	enableMCPPOSCreateProposals           bool
 	enableMCPReservationCancelProposals   bool
 	enableMCPReservationConfirmProposals  bool
@@ -236,6 +237,7 @@ func (a *app) routes() http.Handler {
 	a.registerMCPReservationCancelProposals(addAPI)
 	a.registerMCPPOSCreateProposals(addAPI)
 	a.registerMCPStockMinimumProposals(addAPI)
+	a.registerMCPStockTrackingProposals(addAPI)
 	a.registerMCPSupplierNameProposals(addAPI)
 	a.registerReservationMenus(addAPI, a.publicReservations)
 	unavailableOperation := func(_ *http.Request, _ *sql.Tx, _ entityMembership, _ []byte) (int, any, error) {
