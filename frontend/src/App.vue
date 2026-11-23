@@ -115,6 +115,7 @@ const canCreateReconciliationViaMcp = computed(() => hasCapability('mcp_reconcil
 const canEditDocViaMcp = computed(() => hasCapability('mcp_document_edit_proposals'))
 const canAdjustStockViaMcp = computed(() => hasCapability('mcp_stock_adjustment_proposals'))
 const canChangeCatalogViaMcp = computed(() => hasCapability('mcp_pos_catalog_proposals'))
+const canChangeOutletDisplayLabelViaMcp = computed(() => hasCapability('mcp_outlet_display_label_proposals'))
 const canAddReservationSlotViaMcp = computed(() => hasCapability('mcp_reservation_slot_add_proposals'))
 const canAddReservationTableViaMcp = computed(() => hasCapability('mcp_reservation_table_add_proposals'))
 const canConfirmReservationsViaMcp = computed(() => hasCapability('mcp_reservation_confirm_proposals'))
@@ -124,7 +125,7 @@ const canSetupStockProductViaMcp = computed(() => hasCapability('mcp_stock_produ
 const canChangeStockTrackingViaMcp = computed(() => hasCapability('mcp_stock_tracking_proposals'))
 const canSetStockMinimumViaMcp = computed(() => hasCapability('mcp_stock_minimum_proposals'))
 const canChangeSupplierNameViaMcp = computed(() => hasCapability('mcp_supplier_legal_name_proposals'))
-const canManageMcpProposalSessions = computed(() => hasCapability('mcp_proposal_session_management') || canRenameViaMcp.value || canReviewDocViaMcp.value || canCreateReconciliationViaMcp.value || canEditDocViaMcp.value || canAdjustStockViaMcp.value || canChangeCatalogViaMcp.value || canConfirmReservationsViaMcp.value || canAddReservationTableViaMcp.value || canAddReservationSlotViaMcp.value || canCancelReservationsViaMcp.value || canCreateProductsViaMcp.value || canSetStockMinimumViaMcp.value || canChangeStockTrackingViaMcp.value || canSetupStockProductViaMcp.value || canChangeSupplierNameViaMcp.value)
+const canManageMcpProposalSessions = computed(() => hasCapability('mcp_proposal_session_management') || canRenameViaMcp.value || canReviewDocViaMcp.value || canCreateReconciliationViaMcp.value || canEditDocViaMcp.value || canAdjustStockViaMcp.value || canChangeCatalogViaMcp.value || canConfirmReservationsViaMcp.value || canAddReservationTableViaMcp.value || canAddReservationSlotViaMcp.value || canChangeOutletDisplayLabelViaMcp.value || canCancelReservationsViaMcp.value || canCreateProductsViaMcp.value || canSetStockMinimumViaMcp.value || canChangeStockTrackingViaMcp.value || canSetupStockProductViaMcp.value || canChangeSupplierNameViaMcp.value)
 const canReviewStockReceiptProposals = computed(() => hasCapability('mcp_stock_receipt_proposals'))
 const canReviewWikiEditProposals = computed(() => hasCapability('mcp_wiki_edit_proposals'))
 const canReviewWikiProposals = computed(() => hasCapability('mcp_wiki_proposals'))
@@ -455,6 +456,12 @@ async function saveOutlet(outlet: EntityManagement['locales'][number]) {
   } catch (value) {
     if (contextIsCurrent(sessionToken, reloadContextToken, entityId)) showError(value)
   }
+}
+
+function applyCurrentOutletLabel(id: number, name: string) {
+  if (selectedOutletId.value !== id) return
+  const current = outlets.value.find(item => item.id === id)
+  if (current) current.nombre = name
 }
 
 async function createMembership() {
@@ -1189,6 +1196,8 @@ onMounted(() => { if (!publicVenue) return initialize() })
             :can-confirm-reservations="canConfirmReservationsViaMcp"
             :can-add-reservation-table="canAddReservationTableViaMcp"
             :can-add-reservation-slot="canAddReservationSlotViaMcp"
+            :can-change-outlet-display-label="canChangeOutletDisplayLabelViaMcp"
+            @outlet-label-applied="applyCurrentOutletLabel"
             :can-cancel-reservations="canCancelReservationsViaMcp"
             :can-create-products="canCreateProductsViaMcp"
             :can-set-stock-minimum="canSetStockMinimumViaMcp"

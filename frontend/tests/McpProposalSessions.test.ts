@@ -1492,3 +1492,96 @@ describe('Turno para un local de reservas desactivado', () => {
     panel.unmount()
   })
 })
+
+describe('Nombre para mostrar de un local', () => {
+  const path = base + '/outlet-display-label-proposals'
+  const change = { outlet_id: 7, current_name: 'Centro de prueba', name: 'Centro renovado', active: true }
+  function fakeFetch(reply: Response, preview: unknown = change) {
+    return vi.fn((url: string) => {
+      if (url.endsWith('/proposal-sessions')) return Promise.resolve(result({ sessions: [] }))
+      if (url === path) return Promise.resolve(result({ proposals: [pending()] }))
+      if (url === path + '/8') return Promise.resolve(result({ ...pending(), digest, label_change: preview }))
+      if (url === path + '/8/decision') return Promise.resolve(reply)
+      throw Error('unexpected test request')
+    })
+  }
+  async function show(fetch: unknown, canChangeOutletDisplayLabel = true) {
+    vi.stubGlobal('fetch', fetch)
+    const panel = mount(McpProposalSessions, {
+      props: { entity: 2, outlet: 7, outletName: 'Centro de prueba', businessName: 'Entidad de prueba', canRename: false, canChangeOutletDisplayLabel },
+    })
+    await button(panel, 'Sesiones de propuestas').trigger('click')
+    await flushPromises()
+    return panel
+  }
+  async function read(panel: ReturnType<typeof mount>) {
+    await button(panel, 'Ver propuesta 8 de nombre del local').trigger('click')
+    await flushPromises()
+  }
+  it('requires separate scoped confirmation and emits only an exact matching approved label', async () => {
+    const fetch = fakeFetch(result({ ...pending(), status: 'approved', name: change.name }))
+    const panel = await show(fetch)
+    const choice = panel.get('input[type=checkbox]')
+    expect((choice.element as HTMLInputElement).checked).toBe(false)
+    expect(button(panel, 'Crear sesión de propuestas').attributes()).toHaveProperty('disabled')
+    await choice.setValue(true)
+    expect(panel.text()).toContain('--proposal-session-action=outlet_display_label_change')
+    await read(panel)
+    expect(panel.get('[aria-label="Nombre actual del local"]').text()).toBe(change.current_name)
+    expect(panel.get('[aria-label="Nombre propuesto del local"]').text()).toBe(change.name)
+    for (const phrase of ['Entidad de prueba', 'Local #7', 'Activo, sin cambios', 'la app y los reportes',
+      'Los registros históricos conservan su ID de local', 'No cambian el acceso, el estado del local']) expect(panel.text()).toContain(phrase)
+    await button(panel, 'Continuar con el nombre del local').trigger('click')
+    expect(fetch.mock.calls.some(([url]) => url.endsWith('/decision'))).toBe(false)
+    await button(panel, 'Confirmar nombre para mostrar').trigger('click')
+    await flushPromises()
+    expect(fetch).toHaveBeenLastCalledWith(path + '/8/decision', expect.objectContaining({
+      method: 'POST', body: JSON.stringify({ decision: 'approve', digest, confirm: true }),
+    }))
+    expect(panel.text()).toContain('Nombre para mostrar actualizado.')
+    expect(panel.emitted('outletLabelApplied')).toEqual([[7, change.name]])
+    panel.unmount()
+  })
+  it.each([{ outlet_id: 8 }, { active: false }, { name: 'Centro de prueba' }, { name: ' Nombre sin recortar' }, { name: 'Nuevo\u202e' }])(
+    'will not present a mismatched or invalid rename preview %s', async patch => {
+      const fetch = fakeFetch(result({}), { ...change, ...patch })
+      const panel = await show(fetch)
+      await read(panel)
+      expect(panel.get('[role=alert]').text()).toContain('No pude abrir la propuesta.')
+      expect(button(panel, 'Continuar con el nombre del local')).toBeUndefined()
+      panel.unmount()
+    },
+  )
+  it.each([409, 200])('never retries stale state or an inexact receipt: %s', async code => {
+    const fetch = fakeFetch(result({ ...pending(), status: 'approved', name: 'A different result' }, code))
+    const panel = await show(fetch)
+    await read(panel)
+    await button(panel, 'Continuar con el nombre del local').trigger('click')
+    await button(panel, 'Confirmar nombre para mostrar').trigger('click')
+    await flushPromises()
+    expect(panel.get('[role=alert]').text()).toMatch(/No se cambió|No pude verificar/)
+    expect(panel.emitted('outletLabelApplied')).toBeUndefined()
+    await read(panel)
+    expect(button(panel, 'Continuar con el nombre del local').attributes()).toHaveProperty('disabled')
+    expect(fetch.mock.calls.filter(([url]) => url.endsWith('/decision'))).toHaveLength(1)
+    panel.unmount()
+  })
+  it('rejects without a name in the receipt', async () => {
+    const fetch = fakeFetch(result({ ...pending(), status: 'rejected' }))
+    const panel = await show(fetch)
+    await read(panel)
+    await button(panel, 'Rechazar propuesta').trigger('click')
+    await button(panel, 'Sí, rechazar').trigger('click')
+    await flushPromises()
+    expect(panel.text()).toContain('El nombre del local no cambió.')
+    expect(panel.emitted('outletLabelApplied')).toBeUndefined()
+    panel.unmount()
+  })
+  it('does not query this action without the current capability', async () => {
+    const fetch = fakeFetch(result({}))
+    const panel = await show(fetch, false)
+    expect(fetch.mock.calls.some(([url]) => url === path)).toBe(false)
+    expect(panel.text()).not.toContain('Cambiar el nombre para mostrar de un local')
+    panel.unmount()
+  })
+})
