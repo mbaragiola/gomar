@@ -31,6 +31,7 @@ type posProduct struct {
 	Price    int64  `json:"precio_centavos"`
 	Revision int64  `json:"revision"`
 	Active   bool   `json:"activo"`
+	Barcode  string `json:"codigo_barras,omitempty"`
 }
 
 type posLine struct {
@@ -61,6 +62,7 @@ func (a *app) registerPOS(add func(string, string, http.HandlerFunc)) {
 	add(posPath+"/catalog", "GET", a.scoped("read_business_data", listPOSCatalog))
 	add(posPath+"/catalog", "POST", a.scopedRequest("manage_entity_access", a.lockOutletForOperation(savePOSProduct), true))
 	add(posPath+"/catalog/{product}", "PUT", a.scopedRequest("manage_entity_access", a.lockOutletForOperation(savePOSProduct), true))
+	add(posPath+"/catalog/{product}/barcode", "PUT", a.scopedRequest("manage_entity_access", a.lockOutletForOperation(savePOSBarcode), true))
 	add(posPath+"/sales", "POST", a.scopedRequest("read_business_data", a.lockOutletForOperation(func(r *http.Request, tx *sql.Tx, m entityMembership, raw []byte) (int, any, error) {
 		return postPOSSale(r, tx, m, raw, a.enableStock)
 	}), true))
@@ -95,7 +97,7 @@ func posOutlet(r *http.Request, tx *sql.Tx, m entityMembership) (int64, error) {
 	return outlet, requireSelectedDocumentOutlet(tx, m, outlet)
 }
 
-const currentOutletPOSProducts = `SELECT p.id,v.name,v.price_minor,v.revision,v.active
+const currentOutletPOSProducts = `SELECT p.id,v.name,v.price_minor,v.revision,v.active,COALESCE(p.barcode,'')
  FROM pos_products p JOIN pos_product_versions v ON v.product_id=p.id AND v.outlet_id=p.outlet_id
  AND v.revision=p.current_revision WHERE p.outlet_id=$1`
 
@@ -112,7 +114,7 @@ func listPOSCatalog(r *http.Request, tx *sql.Tx, m entityMembership, _ []byte) (
 	products := []posProduct{}
 	for rows.Next() {
 		var p posProduct
-		if err := rows.Scan(&p.ID, &p.Name, &p.Price, &p.Revision, &p.Active); err != nil {
+		if err := rows.Scan(&p.ID, &p.Name, &p.Price, &p.Revision, &p.Active, &p.Barcode); err != nil {
 			return 0, nil, err
 		}
 		products = append(products, p)
@@ -171,7 +173,7 @@ func savePOSProduct(r *http.Request, tx *sql.Tx, m entityMembership, raw []byte)
 			return 0, nil, badInput
 		}
 		var current int64
-		err = tx.QueryRowContext(ctx, `SELECT current_revision FROM pos_products WHERE outlet_id=$1 AND id=$2`, outlet, p.ID).Scan(&current)
+		err = tx.QueryRowContext(ctx, `SELECT current_revision,COALESCE(barcode,'') FROM pos_products WHERE outlet_id=$1 AND id=$2`, outlet, p.ID).Scan(&current, &p.Barcode)
 		if errors.Is(err, sql.ErrNoRows) {
 			return 0, nil, posMissingProduct
 		}

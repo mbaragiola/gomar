@@ -139,7 +139,7 @@ func (a *app) issueNamedProposalSession(w http.ResponseWriter, r *http.Request, 
 			return badInput
 		}
 		err = a.lockStockReceiptScope(ctx, tx, stockReceiptScope{u.id, input.Entity, input.Outlet})
-	case posPriceSessionAction, posAvailabilitySessionAction:
+	case posPriceSessionAction, posAvailabilitySessionAction, posBarcodeSessionAction:
 		if !a.posCatalogProposalsEnabled() {
 			return badInput
 		}

@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"errors"
 	"math"
+
+	"github.com/mbaragiola/gomar/app/internal/posbarcode"
 )
 
 type POSPriceChange struct {
@@ -17,6 +19,12 @@ type POSAvailabilityChange struct {
 	ProductID        int64 `json:"product_id"`
 	ExpectedRevision int64 `json:"expected_revision" jsonschema:"Revisión exacta devuelta por gomar_pos_catalog."`
 	Active           *bool `json:"active" jsonschema:"Disponibilidad: true o false de forma explícita."`
+}
+
+type POSBarcodeChange struct {
+	ProductID        int64   `json:"product_id"`
+	ExpectedRevision int64   `json:"expected_revision" jsonschema:"Revisión exacta del producto."`
+	Barcode          *string `json:"barcode" jsonschema:"Código exacto como texto; cadena vacía para quitarlo."`
 }
 
 func validPOSCatalogProposal(entity, outlet, product, revision int64, requestID string) bool {
@@ -39,7 +47,15 @@ func (c *ProposalClient) ProposePOSAvailability(ctx context.Context, entity, out
 	return postPOSCatalogProposal(ctx, c, entity, outlet, requestID, "/pos-availability-proposals", change)
 }
 
-func postPOSCatalogProposal[C POSPriceChange | POSAvailabilityChange](ctx context.Context, c *ProposalClient, entity, outlet int64, requestID, path string, change C) (ProposalReceipt, error) {
+func (c *ProposalClient) ProposePOSBarcode(ctx context.Context, entity, outlet int64, requestID string, change POSBarcodeChange) (ProposalReceipt, error) {
+	if !validPOSCatalogProposal(entity, outlet, change.ProductID, change.ExpectedRevision, requestID) ||
+		change.Barcode == nil || *change.Barcode != "" && !posbarcode.Valid(*change.Barcode) {
+		return ProposalReceipt{}, errors.New("indicá empresa, sucursal, producto, revisión, código exacto como texto y request_id UUIDv4")
+	}
+	return postPOSCatalogProposal(ctx, c, entity, outlet, requestID, "/pos-barcode-proposals", change)
+}
+
+func postPOSCatalogProposal[C POSPriceChange | POSAvailabilityChange | POSBarcodeChange](ctx context.Context, c *ProposalClient, entity, outlet int64, requestID, path string, change C) (ProposalReceipt, error) {
 	payload, err := json.Marshal(struct {
 		RequestID string `json:"request_id"`
 		Change    C      `json:"change"`

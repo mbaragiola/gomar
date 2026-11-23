@@ -33,3 +33,8 @@ func addPOSAvailabilityProposalTool(server *mcp.Server, client *mcpclient.Propos
 	addPOSCatalogProposal(server, "gomar_propose_pos_availability",
 		"Proponé activar o desactivar un producto para ventas futuras. Requiere aprobación en Gomar desde la misma sesión. No cambia precio, nombre, stock ni ventas anteriores.", client.ProposePOSAvailability)
 }
+
+func addPOSBarcodeProposalTool(server *mcp.Server, client *mcpclient.ProposalClient) {
+	addPOSCatalogProposal(server, "gomar_propose_pos_barcode",
+		"Proponé asignar o quitar el código de barras exacto de un producto de caja de este local. Conservá los ceros iniciales. Requiere revisión y aprobación de la misma sesión en Gomar. No agrega artículos a la caja ni cambia precios, stock o ventas.", client.ProposePOSBarcode)
+}

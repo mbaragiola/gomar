@@ -14,12 +14,14 @@ import (
 
 const posPriceSessionAction = "pos_product_price_change"
 const posAvailabilitySessionAction = "pos_product_availability_change"
+const posBarcodeSessionAction = "pos_product_barcode_change"
 
 type posCatalogOperation uint8
 
 const (
 	posCatalogPrice posCatalogOperation = iota + 1
 	posCatalogAvailability
+	posCatalogBarcode
 )
 
 func (op posCatalogOperation) action() string {
@@ -28,6 +30,9 @@ func (op posCatalogOperation) action() string {
 	}
 	if op == posCatalogAvailability {
 		return posAvailabilitySessionAction
+	}
+	if op == posCatalogBarcode {
+		return posBarcodeSessionAction
 	}
 	return ""
 }
@@ -86,16 +91,19 @@ func (a *app) registerMCPPOSCatalogProposals(add func(string, string, http.Handl
 	}
 	bind("pos-price-proposals", posCatalogPrice)
 	bind("pos-availability-proposals", posCatalogAvailability)
+	bind("pos-barcode-proposals", posCatalogBarcode)
 }
 
 type posCatalogPreview struct {
-	Product       int64  `json:"product_id"`
-	Revision      int64  `json:"expected_revision"`
-	Name          string `json:"name"`
-	Price         int64  `json:"price_minor"`
-	CurrentPrice  int64  `json:"current_price_minor"`
-	Active        bool   `json:"active"`
-	CurrentActive bool   `json:"current_active"`
+	Product        int64   `json:"product_id"`
+	Revision       int64   `json:"expected_revision"`
+	Name           string  `json:"name"`
+	Price          int64   `json:"price_minor"`
+	CurrentPrice   int64   `json:"current_price_minor"`
+	Active         bool    `json:"active"`
+	CurrentActive  bool    `json:"current_active"`
+	Barcode        *string `json:"barcode,omitempty"`
+	CurrentBarcode *string `json:"current_barcode,omitempty"`
 }
 
 func (p posCatalogPreview) priceProposal(s posRenameScope) posPriceProposal {
@@ -154,10 +162,18 @@ func (a *app) acceptPOSCatalogProposal(w http.ResponseWriter, r *http.Request, o
 	}
 	var price posPriceInput
 	var availability posAvailabilityInput
-	if op == posCatalogPrice {
+	var barcode *posBarcodeInput
+	switch op {
+	case posCatalogPrice:
 		price, err = decodePOSPrice(body.Change)
-	} else {
+	case posCatalogAvailability:
 		availability, err = decodePOSAvailability(body.Change)
+	case posCatalogBarcode:
+		var input posBarcodeInput
+		input, err = decodePOSBarcode(body.Change)
+		barcode = &input
+	default:
+		return badInput
 	}
 	if err != nil {
 		return err
@@ -181,7 +197,8 @@ func (a *app) acceptPOSCatalogProposal(w http.ResponseWriter, r *http.Request, o
 		Scope        posRenameScope
 		Price        posPriceInput
 		Availability posAvailabilityInput
-	}{s, price, availability})
+		Barcode      *posBarcodeInput `json:",omitempty"`
+	}{s, price, availability, barcode})
 	p, err := scanPOSCatalogProposal(tx.QueryRowContext(ctx, `SELECT `+posCatalogWireColumns+` FROM mcp_pos_catalog_proposals p
 		WHERE p.actor_id=$1 AND p.entity_id=$2 AND p.outlet_id=$3 AND p.request_id=$4 AND p.action=$5 FOR UPDATE OF p`,
 		scope.actor, scope.entity, scope.outlet, body.RequestID, op.action()))
@@ -221,18 +238,28 @@ func (a *app) acceptPOSCatalogProposal(w http.ResponseWriter, r *http.Request, o
 			return wikiProposalLimit
 		}
 		var prepared posCatalogPreview
-		if op == posCatalogPrice {
+		switch op {
+		case posCatalogPrice:
 			p, err := readPOSPricePreview(ctx, tx, s, price)
 			if err != nil {
 				return err
 			}
-			prepared = posCatalogPreview{price.Product, price.Revision, p.Name, price.Price, p.PreviousPrice, p.Active, p.Active}
-		} else {
+			prepared = posCatalogPreview{Product: price.Product, Revision: price.Revision, Name: p.Name,
+				Price: price.Price, CurrentPrice: p.PreviousPrice, Active: p.Active, CurrentActive: p.Active}
+		case posCatalogAvailability:
 			p, err := readPOSAvailabilityPreview(ctx, tx, s, availability)
 			if err != nil {
 				return err
 			}
-			prepared = posCatalogPreview{availability.Product, availability.Revision, p.Name, p.Price, p.Price, availability.Active, p.PreviousActive}
+			prepared = posCatalogPreview{Product: availability.Product, Revision: availability.Revision, Name: p.Name,
+				Price: p.Price, CurrentPrice: p.Price, Active: availability.Active, CurrentActive: p.PreviousActive}
+		case posCatalogBarcode:
+			p, err := readPOSBarcodeChange(ctx, tx, s.Outlet, *barcode)
+			if err != nil {
+				return err
+			}
+			prepared = posCatalogPreview{Product: p.ID, Revision: p.Revision, Name: p.Name, Price: p.Price,
+				CurrentPrice: p.Price, Active: p.Active, CurrentActive: p.Active, Barcode: &barcode.Barcode, CurrentBarcode: &p.Barcode}
 		}
 		changeDigest := prepared.digest(op, s)
 		preview, err := json.Marshal(prepared)
@@ -428,12 +455,29 @@ func (a *app) decidePOSCatalogProposal(w http.ResponseWriter, r *http.Request, u
 	if input.Decision == "approve" {
 		scope := posRenameScopeFrom(s)
 		var product posProduct
-		if op == posCatalogPrice {
+		switch op {
+		case posCatalogPrice:
 			proposal := draft.priceProposal(scope)
 			product, err = a.applyPOSPrice(r, tx, u, scope, proposal, proposal.digest())
-		} else {
+		case posCatalogAvailability:
 			proposal := draft.availabilityProposal(scope)
 			product, err = a.applyPOSAvailability(r, tx, u, scope, proposal, proposal.digest())
+		case posCatalogBarcode:
+			if draft.Barcode == nil || draft.CurrentBarcode == nil {
+				return posChangedCatalog
+			}
+			current, changeErr := readPOSBarcodeChange(ctx, tx, s.outlet, posBarcodeInput{draft.Product, draft.Revision, *draft.Barcode})
+			if changeErr != nil {
+				return changeErr
+			}
+			if current.Barcode != *draft.CurrentBarcode || current.Name != draft.Name ||
+				current.Price != draft.CurrentPrice || draft.Price != draft.CurrentPrice ||
+				current.Active != draft.CurrentActive || draft.Active != draft.CurrentActive {
+				return posChangedCatalog
+			}
+			product, err = applyPOSBarcodeChange(ctx, tx, s.outlet, current, *draft.Barcode)
+		default:
+			return badInput
 		}
 		if err != nil {
 			return err

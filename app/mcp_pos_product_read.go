@@ -22,7 +22,7 @@ func mcpPOSCatalogProduct(r *http.Request, tx *sql.Tx, s mcpTokenScope) (any, er
 	}
 	out := mcpclient.POSProductDetails{Currency: "ARS"}
 	err = tx.QueryRowContext(r.Context(), currentOutletPOSProducts+` AND p.id=$2`, outlet, id).
-		Scan(&out.ID, &out.Name, &out.PriceMinor, &out.Revision, &out.Active)
+		Scan(&out.ID, &out.Name, &out.PriceMinor, &out.Revision, &out.Active, &out.Barcode)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, posMissingProduct
 	}
