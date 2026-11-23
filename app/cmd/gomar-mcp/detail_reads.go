@@ -18,7 +18,7 @@ type reconciliationRunArgs struct {
 }
 
 func addDetailReadTools(server *mcp.Server, client *mcpclient.Client) {
-	readTool(server, "gomar_check_reconciliation_close_eligibility", "Consultá si una conciliación cumple hoy las condiciones de estado y revisión para cerrarse. Pendientes sin resolver no impiden el cierre. Requiere acceso a todos los locales participantes. No devuelve filas ni cuentas, no cierra, reserva ni aprueba nada y no garantiza un cierre posterior.", func(ctx context.Context, in reconciliationRunArgs) (mcpclient.ReconciliationCloseEligibility, error) {
+	readTool(server, "gomar_check_reconciliation_close_eligibility", "Consultá si una conciliación cumple hoy las condiciones de estado y revisión para cerrarse. Pendientes sin resolver no impiden el cierre. Requiere acceso a todos los locales participantes. Si hay un solo local en revisión, puede incluir un enlace interno para un operador autorizado en Gomar. No devuelve filas ni cuentas, no cierra, reserva ni aprueba nada y no garantiza un cierre posterior.", func(ctx context.Context, in reconciliationRunArgs) (mcpclient.ReconciliationCloseEligibility, error) {
 		return client.ReadReconciliationCloseEligibility(ctx, in.EntityID, in.OutletID, in.RunID)
 	})
 	readTool(server, "gomar_read_document", "Leé un comprobante de una sucursal autorizada: estado, revisión, referencia, fechas y valores en centavos. No devuelve proveedor, datos fiscales del proveedor, notas, adjuntos ni auditoría. No revisa el documento.", func(ctx context.Context, in documentDetailArgs) (mcpclient.DocumentDetails, error) {
