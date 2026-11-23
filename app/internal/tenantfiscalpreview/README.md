@@ -58,3 +58,17 @@ There is no worker or transport here. A future dispatcher must use a claim
 only once, and must handle an uncertain provider outcome with lookup rather
 than calling submit a second time. The package does not send a reply, perform
 retries, take custody of credentials or decide a production recovery policy.
+
+## Follow-up history fixture
+
+The separate in-memory model uses the stable business, outlet and check IDs.
+It never looks up a reusable table number. An explicit synthetic completion
+or tender witness marks review pending. A recorded correction preserves that
+status and the original witness. A later sale link, even if delivered before
+a witness, neither creates a review nor dismisses one.
+
+No witness means the fixture saw no evidence, not that a document is optional
+or not due. There is no policy decision, approval path, app caller, fiscal
+dispatch or connection to the PostgreSQL outbox. A real integration still
+needs an authorized source of occurrence evidence, durable scoping and issuer
+rules reviewed for that branch.
