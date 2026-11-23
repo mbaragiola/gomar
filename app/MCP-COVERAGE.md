@@ -17,9 +17,9 @@ For everyday examples, see the [Spanish prompt guide](MCP-GUIA-DE-CONSULTAS.md).
 | Suppliers | Active supplier names and IDs; propose a legal-name correction that applies across the business | Native only: supplier creation, tax identity and superuser catalog status changes. |
 | Payables and payment records | Outstanding and overdue totals, status counts, outlet-only payable and payment record details, and one payable’s ledger history | Native only: creating payables, recording and reversing internal payments, and receipt handling. MCP reads do not verify bank activity or move money. |
 | Reconciliation | Scoped counts, paged run list, metadata and setup by ID; propose one empty single-outlet draft | Native only: private files, source rows, preparing matches, decisions and closing review. Setup metadata does not prove readiness. |
-| Reservations and menus | Daily counts, setup flags and one exact configured future start, staff queue and detail, public candidate times, published menu metadata; propose confirmation or cancellation of an existing request and prepare a table, future slot, or fixed informational cancellation notice for an existing disabled venue | Native only: public booking, guest and contact details, custom venue settings and enablement, actual menu files and publication. Preparation never enables or books anything. |
+| Reservations and menus | Daily counts, setup flags, one exact configured future start and one numbered table check, staff queue and detail, public candidate times, published menu metadata; propose confirmation or cancellation of an existing request and prepare a table, future slot, or fixed informational cancellation notice for an existing disabled venue | Native only: public booking, guest and contact details, custom venue settings and enablement, actual menu files and publication. Preparation never enables or books anything. |
 
-The packaged live server registers 35 baseline read tools. Discovery does not
+The packaged live server registers 36 baseline read tools. Discovery does not
 guarantee access: app flags and current permissions determine which queries
 can run. There are also 25 distinct opt-in proposal actions, not 25
 simultaneous writes. Of those, 21 are named actions and four use distinct older

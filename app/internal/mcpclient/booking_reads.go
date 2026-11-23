@@ -111,6 +111,28 @@ func (c *Client) ReservationStartSetup(ctx context.Context, entity, outlet int64
 	return ReservationStartSetup{StartConfigured: *w.StartConfigured}, nil
 }
 
+type ReservationTableSetup struct {
+	TableConfigured bool `json:"table_configured"`
+	Capacity        *int `json:"capacity,omitempty"`
+}
+
+func (c *Client) ReservationTableSetup(ctx context.Context, entity, outlet int64, number int) (ReservationTableSetup, error) {
+	if number < 1 || number > 9999 {
+		return ReservationTableSetup{}, errors.New("indicá table_number como un entero de 1 a 9999")
+	}
+	var w struct {
+		TableConfigured *bool `json:"table_configured"`
+		Capacity        *int  `json:"capacity,omitempty"`
+	}
+	if err := c.getWorkspace(ctx, entity, outlet, "/reservation-table-setup", url.Values{"table_number": {strconv.Itoa(number)}}, &w); err != nil {
+		return ReservationTableSetup{}, err
+	}
+	if w.TableConfigured == nil || w.Capacity != nil && (!*w.TableConfigured || *w.Capacity < 1 || *w.Capacity > 12) {
+		return ReservationTableSetup{}, invalidResponse
+	}
+	return ReservationTableSetup{TableConfigured: *w.TableConfigured, Capacity: w.Capacity}, nil
+}
+
 func (c *Client) ReservationStatus(ctx context.Context, entity, outlet int64, date string) (ReservationStatus, error) {
 	var result ReservationStatus
 	if _, err := parseReportDate(date); err != nil {

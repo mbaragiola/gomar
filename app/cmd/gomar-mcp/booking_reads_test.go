@@ -40,6 +40,19 @@ func TestBookingReadToolsSendOnlyFixedTypedRequests(t *testing.T) {
 			default:
 				t.Error("unexpected start setup query")
 			}
+		case base + "/reservation-table-setup":
+			switch r.URL.RawQuery {
+			case "table_number=7":
+				_, _ = io.WriteString(w, `{"table_configured":false,"label":"not-for-chat"}`)
+			case "table_number=8":
+				_, _ = io.WriteString(w, `{"table_configured":true,"capacity":12}`)
+			case "table_number=9":
+				_, _ = io.WriteString(w, `{"table_configured":true}`)
+			case "table_number=10":
+				_, _ = io.WriteString(w, `{"table_configured":false,"capacity":4}`)
+			default:
+				t.Error("unexpected table setup query")
+			}
 		case base + "/published-menu":
 			_, _ = io.WriteString(w, `{"published":true,"filename":"menu.pdf","size_bytes":100,"updated_at":"2030-11-20T12:00:00Z","url":"not-for-chat"}`)
 		case base + "/pos-catalog":
@@ -77,7 +90,7 @@ func TestBookingReadToolsSendOnlyFixedTypedRequests(t *testing.T) {
 	}
 	defer session.Close()
 	list, err := session.ListTools(t.Context(), &mcp.ListToolsParams{})
-	if err != nil || len(list.Tools) != 6 {
+	if err != nil || len(list.Tools) != 7 {
 		t.Fatal(list, err)
 	}
 	for _, tool := range list.Tools {
@@ -96,6 +109,13 @@ func TestBookingReadToolsSendOnlyFixedTypedRequests(t *testing.T) {
 		{"gomar_read_reservation_start_setup", "inválida", map[string]any{"start_at": "2030-11-21T03:00:00Z"}, true},
 		{"gomar_read_reservation_start_setup", "UTC", map[string]any{"start_at": "2030-11-20T21:00:00-03:00"}, true},
 		{"gomar_read_reservation_start_setup", "", nil, true},
+		{"gomar_read_reservation_table_setup", `"table_configured":false`, map[string]any{"table_number": 7}, false},
+		{"gomar_read_reservation_table_setup", `"capacity":12`, map[string]any{"table_number": 8}, false},
+		{"gomar_read_reservation_table_setup", `"table_configured":true`, map[string]any{"table_number": 9}, false},
+		{"gomar_read_reservation_table_setup", "inválida", map[string]any{"table_number": 10}, true},
+		{"gomar_read_reservation_table_setup", "", map[string]any{"table_number": 0}, true},
+		{"gomar_read_reservation_table_setup", "", map[string]any{"table_number": "07"}, true},
+		{"gomar_read_reservation_table_setup", "", nil, true},
 		{"gomar_published_menu", `"filename":"menu.pdf"`, nil, false},
 		{"gomar_pos_catalog", `"price_minor":350`, map[string]any{"after_product_id": 1}, false},
 		{"gomar_stock_movements", `"net_units":-1`, map[string]any{"product_id": 2, "start_date": "2030-11-20", "days": 2}, false},
@@ -120,7 +140,7 @@ func TestBookingReadToolsSendOnlyFixedTypedRequests(t *testing.T) {
 			t.Fatalf("%s: incorrect or excessive result: %s", tc.name, raw)
 		}
 	}
-	if requests.Load() != 8 {
-		t.Fatalf("want exactly eight fixed HTTP requests; got %d", requests.Load())
+	if requests.Load() != 12 {
+		t.Fatalf("want exactly twelve fixed HTTP requests; got %d", requests.Load())
 	}
 }

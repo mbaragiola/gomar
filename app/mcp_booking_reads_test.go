@@ -236,6 +236,50 @@ func TestPostgresMCPBookingReadsOmitPrivateDataAndRespectFlags(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	const exactTable = "/reservation-table-setup"
+	const number7 = "?table_number=7"
+	tableRead := func(outlet, query, key string, status int, expected string) {
+		t.Helper()
+		got := invoke(routes, "GET", "/api/v1/mcp/entities/1/outlets/"+outlet+exactTable+query, "", key, false, status)
+		if got.Header().Get("Cache-Control") != "no-store" {
+			t.Fatal("stored a scoped table lookup")
+		}
+		if status == 200 && strings.TrimSpace(got.Body.String()) != expected {
+			t.Fatalf("unexpected table configuration: %s", got.Body.String())
+		}
+	}
+	tableRead("2", number7, wide, 200, `{"table_configured":false}`)
+	const addTable = "/api/v1/entities/1/outlets/2/reservations/tables"
+	invoke(routes, "POST", addTable, `{"label":"MESA  0007","capacity":8}`, "", true, 201)
+	tableRead("2", number7, wide, 200, `{"table_configured":true,"capacity":8}`)
+	tableRead("1", number7, token, 200, `{"table_configured":false}`)
+	invoke(routes, "POST", addTable, `{"label":"Mesa 7","capacity":4}`, "", true, 201)
+	tableRead("2", number7, wide, 200, `{"table_configured":true}`)
+	tableRead("2", "?table_number=70", wide, 200, `{"table_configured":false}`)
+	tableRead("2", "?table_number=1", wide, 200, `{"table_configured":false}`)
+	tableRead("2", "?table_number=9999", wide, 200, `{"table_configured":false}`)
+	tableRead("4", number7, wide, 404, "")
+	tableRead("2", number7, token, 404, "")
+	tableRead("5", number7, wide, 404, "")
+	invoke(routes, "GET", "/api/v1/mcp/entities/2/outlets/3"+exactTable+number7, "", wide, false, 404)
+	tableOff := invoke(noFlags, "GET", "/api/v1/mcp/entities/1/outlets/2"+exactTable+number7, "", wide, false, 200)
+	if strings.TrimSpace(tableOff.Body.String()) != `{"table_configured":true}` {
+		t.Fatal("disabled publication changed configured table status")
+	}
+	for _, invalid := range []string{
+		"", "?table_number=", "?table_number=0", "?table_number=0007", "?table_number=%2B7",
+		"?table_number=10000", "?table_number=7.0", number7 + "&table_number=8", number7 + "&capacity=2",
+	} {
+		tableRead("1", invalid, token, 422, "")
+	}
+	if _, err := db.ExecContext(ctx, `UPDATE outlets SET active=FALSE WHERE id=2`); err != nil {
+		t.Fatal(err)
+	}
+	tableRead("2", number7, wide, 404, "")
+	if _, err := db.ExecContext(ctx, `UPDATE outlets SET active=TRUE WHERE id=2`); err != nil {
+		t.Fatal(err)
+	}
+
 	var catalog mcpclient.POSCatalog
 	decode(check("/pos-catalog", 200), &catalog)
 	if catalog.Currency != "ARS" || len(catalog.Products) != 30 || catalog.NextProductID != 30 || catalog.Products[0].PriceMinor != 101 {
@@ -265,6 +309,7 @@ func TestPostgresMCPBookingReadsOmitPrivateDataAndRespectFlags(t *testing.T) {
 	check(day, 403)
 	check(setup, 403)
 	startRead("1", startQuery, token, 403, false)
+	tableRead("1", number7, token, 403, "")
 	check("/published-menu", 403)
 	check("/pos-catalog", 200)
 	check(movements, 403)

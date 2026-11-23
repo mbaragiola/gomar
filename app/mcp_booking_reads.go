@@ -16,6 +16,7 @@ func (a *app) registerMCPBookingReads(add func(string, string, http.HandlerFunc)
 	add(mcpWorkspaceBase+"/reservation-status", http.MethodGet, a.mcpRead(mcpReservationStatus))
 	add(mcpWorkspaceBase+"/reservation-setup", http.MethodGet, a.mcpRead(a.mcpReservationSetup))
 	add(mcpWorkspaceBase+"/reservation-start-setup", http.MethodGet, a.mcpRead(a.mcpReservationStartSetup))
+	add(mcpWorkspaceBase+"/reservation-table-setup", http.MethodGet, a.mcpRead(mcpReservationTableSetup))
 	add(mcpWorkspaceBase+"/published-menu", http.MethodGet, a.mcpRead(a.mcpPublishedMenu))
 	if a.enablePOS {
 		add(mcpWorkspaceBase+"/pos-catalog", http.MethodGet, a.mcpRead(mcpPOSCatalog))
@@ -81,6 +82,40 @@ func (a *app) mcpReservationStartSetup(r *http.Request, tx *sql.Tx, s mcpTokenSc
 	err = tx.QueryRowContext(ctx, `SELECT EXISTS (
 		SELECT 1 FROM reservation_slots s WHERE s.outlet_id=v.outlet_id AND s.start_at=$2
 	) FROM reservation_venues v WHERE v.outlet_id=$1`, outlet, start).Scan(&result.StartConfigured)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, reservationUnavailable
+	}
+	if err != nil {
+		return nil, err
+	}
+	return result, nil
+}
+
+func mcpReservationTableSetup(r *http.Request, tx *sql.Tx, s mcpTokenScope) (any, error) {
+	outlet, err := mcpWorkspaceOutlet(r, tx, s)
+	if err != nil {
+		return nil, err
+	}
+	ctx := r.Context()
+	if err := requireReservationStaff(ctx, tx, s.entityMembership, outlet); err != nil {
+		return nil, err
+	}
+	raw, err := mcpOptionalQuery(r, "table_number")
+	if err != nil {
+		return nil, err
+	}
+	number, err := strconv.Atoi(raw)
+	if err != nil || !validReservationTableNumber(number) || strconv.Itoa(number) != raw {
+		return nil, badInput
+	}
+	// Free-form native table labels can have multiple aliases for this number.
+	// Report existence but never choose a capacity when the match is ambiguous.
+	var result mcpclient.ReservationTableSetup
+	err = tx.QueryRowContext(ctx, `SELECT matched.configured,matched.capacity
+	FROM reservation_venues v CROSS JOIN LATERAL (
+		SELECT count(*)>0 AS configured, CASE WHEN count(*)=1 THEN min(t.capacity) END AS capacity
+		FROM reservation_tables t WHERE t.outlet_id=v.outlet_id AND lower(t.label) ~ $2
+	) matched WHERE v.outlet_id=$1`, outlet, reservationTableNumberPattern(number)).Scan(&result.TableConfigured, &result.Capacity)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, reservationUnavailable
 	}

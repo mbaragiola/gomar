@@ -158,7 +158,7 @@ func TestLiveStdioScopedTools(t *testing.T) {
 	}
 	defer session.Close()
 	metadata, err := session.ListTools(ctx, &mcp.ListToolsParams{})
-	if err != nil || len(metadata.Tools) != 35 {
+	if err != nil || len(metadata.Tools) != 36 {
 		t.Fatal(metadata, err)
 	}
 	for _, tool := range metadata.Tools {
