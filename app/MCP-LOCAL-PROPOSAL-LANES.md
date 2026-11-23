@@ -51,3 +51,12 @@ The check uses a fresh disposable database, actual browser decisions, and
 one persistent packaged MCP connection. It covers both proposal lanes,
 readback, branch and login isolation, and revoking one key without losing
 the other lane. It does not connect to production or invoke a model.
+
+
+Use `bash scripts/qa-mcp-stock-journey.sh --with-local-checks` to run the
+frontend lint and tests, both Go modules' tests and vet, and the browser
+journey with one fresh frontend build. Run it in a worktree that is not
+being built by another process. The Go checks run without a PostgreSQL
+test DSN; run the separate PostgreSQL test suite, installed client checks,
+and independent review when the change calls for them. The browser
+journey itself still starts a fresh database.
