@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { draft, isPaymentMethod, matchesPaymentMethod, normalizedProducts, paymentLabels, quoteCart, saleRequest, type Grant, type PaymentMethod } from '../src/pos/model'
+import { draft, isBarcode, productByBarcode, isPaymentMethod, matchesPaymentMethod, normalizedProducts, paymentLabels, quoteCart, saleRequest, type Grant, type PaymentMethod } from '../src/pos/model'
 
 describe('caja sin conexión', () => {
   const grant: Grant = { actor: 8, entity: 9, outlet: 10, lease: 'turno', label: 'Centro', expires: 1000, catalog: [
@@ -22,6 +22,19 @@ describe('caja sin conexión', () => {
     expect(() => normalizedProducts([...grant.catalog, grant.catalog[0]])).toThrow()
     expect(() => normalizedProducts([{ ...grant.catalog[0], precio_centavos: 1.2 }])).toThrow()
     expect(() => draft(grant, new Map([[2, 1]]), 'id', 10, 'efectivo')).toThrow()
+  })
+
+  it('busca un código exacto con ceros iniciales y nunca elige un código duplicado o inactivo', () => {
+    const rows = grant.catalog.map((p) => ({ ...p, codigo_barras: p.id === 1 ? '000123Ab' : p.id === 2 ? 'INACTIVO' : undefined }))
+    expect(productByBarcode(rows, '000123Ab')?.id).toBe(1)
+    for (const wrong of ['123Ab', '000123ab', ' 000123Ab', 'INACTIVO', '']) {
+      expect(productByBarcode(rows, wrong)).toBeUndefined()
+    }
+    expect(productByBarcode([...rows, { ...rows[0], id: 100 }], '000123Ab')).toBeUndefined()
+    expect(() => normalizedProducts([...rows, { ...rows[0], id: 100, activo: false }])).toThrow()
+    expect(() => normalizedProducts([{ ...rows[0], codigo_barras: '001\n' }])).toThrow()
+    expect(isBarcode('A'.repeat(80))).toBe(true)
+    expect(isBarcode('A'.repeat(81))).toBe(false)
   })
 
   it('rechaza un turno vencido y cantidades fuera de límite', () => {

@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/mbaragiola/gomar/app/internal/mcpclient"
+	"github.com/mbaragiola/gomar/app/internal/posbarcode"
 )
 
 func (a *app) registerMCPBookingReads(add func(string, string, http.HandlerFunc)) {
@@ -210,18 +211,34 @@ func mcpPOSCatalog(r *http.Request, tx *sql.Tx, s mcpTokenScope) (any, error) {
 	if err != nil {
 		return nil, err
 	}
-	cursor, err := mcpOptionalQuery(r, "after_product_id")
-	if err != nil {
-		return nil, err
+	q, err := url.ParseQuery(r.URL.RawQuery)
+	if err != nil || len(q) > 1 {
+		return nil, badInput
 	}
 	var after int64
-	if cursor != "" {
-		after, err = strconv.ParseInt(cursor, 10, 64)
-		if err != nil || after <= 0 {
+	var barcode string
+	if len(q) == 1 {
+		switch {
+		case len(q["after_product_id"]) == 1:
+			cursor := q.Get("after_product_id")
+			if cursor != "" {
+				after, err = strconv.ParseInt(cursor, 10, 64)
+				if err != nil || after <= 0 {
+					return nil, badInput
+				}
+			}
+		case len(q["barcode"]) == 1 && posbarcode.Valid(q.Get("barcode")):
+			barcode = q.Get("barcode")
+		default:
 			return nil, badInput
 		}
 	}
-	rows, err := tx.QueryContext(r.Context(), currentOutletPOSProducts+` AND p.id>$2 ORDER BY p.id LIMIT $3`, outlet, after, mcpPageSize+1)
+	var rows *sql.Rows
+	if barcode != "" {
+		rows, err = tx.QueryContext(r.Context(), currentOutletPOSProducts+` AND p.barcode=$2`, outlet, barcode)
+	} else {
+		rows, err = tx.QueryContext(r.Context(), currentOutletPOSProducts+` AND p.id>$2 ORDER BY p.id LIMIT $3`, outlet, after, mcpPageSize+1)
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -229,7 +246,7 @@ func mcpPOSCatalog(r *http.Request, tx *sql.Tx, s mcpTokenScope) (any, error) {
 	result := mcpclient.POSCatalog{Currency: "ARS", Products: []mcpclient.POSProduct{}}
 	for rows.Next() {
 		var item mcpclient.POSProduct
-		if err := rows.Scan(&item.ID, &item.Name, &item.PriceMinor, &item.Revision, &item.Active); err != nil {
+		if err := rows.Scan(&item.ID, &item.Name, &item.PriceMinor, &item.Revision, &item.Active, &item.Barcode); err != nil {
 			return nil, err
 		}
 		result.Products = append(result.Products, item)

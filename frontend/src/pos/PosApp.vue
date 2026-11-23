@@ -1,10 +1,11 @@
 <script setup lang="ts">
 import ThemeSelect from '../components/ThemeSelect.vue'
+import ManageBarcodes from './ManageBarcodes.vue'
 import { computed, nextTick, onMounted, onUnmounted, ref } from 'vue'
 import { ApiError, request } from '../api'
 import { localDateTime, money } from '../format'
 import { maxLines, maxQuantity, normalizedProducts, positive, sameContext, saleRequest, grantLifetime, quoteCart,
-  isPaymentMethod, matchesPaymentMethod, paymentLabels,
+  isPaymentMethod, matchesPaymentMethod, paymentLabels, productByBarcode,
   type Context, type Grant, type PaymentMethod, type Product, type Sale } from './model'
 import { arm, broadcastPOSLock, disarm, enqueue, forgetLease, localLease, lockOfflinePOS, posLockEvent, readGrant, recordOutcome, rememberLease, salesFor } from './storage'
 
@@ -29,6 +30,8 @@ const outlet = ref(0)
 const grant = ref<Grant | null>(null)
 const recorded = ref<Sale[]>([])
 const basket = ref(new Map<number, number>())
+const barcode = ref('')
+const scanError = ref('')
 const payment = ref<PaymentMethod | ''>('')
 const notice = ref('')
 const error = ref('')
@@ -40,6 +43,7 @@ const prebillHeading = ref<HTMLHeadingElement | null>(null)
 let epoch = 0
 let refreshTimer: ReturnType<typeof setInterval> | undefined
 
+const canManageBarcodes = computed(() => entities.value.find((row) => row.id === entity.value)?.capacidades.includes('manage_entity_access') === true)
 const canSell = computed(() => sellingRoles.has(entities.value.find((row) => row.id === entity.value)?.rol ?? ''))
 const basketLines = computed(() => [...basket.value.entries()].flatMap(([id, quantity]) => {
   const row = grant.value?.catalog.find((item) => item.id === id)
@@ -75,6 +79,8 @@ function clearView() {
   grant.value = null
   recorded.value = []
   basket.value = new Map()
+  barcode.value = ''
+  scanError.value = ''
   payment.value = ''
   needsConfirm.value = false
   prebillOpen.value = false
@@ -263,6 +269,26 @@ function confirmSale() {
   needsConfirm.value = true
 }
 
+function scanBarcode() {
+  const current = grant.value
+  if (!current || saving.value || verifying.value || needsConfirm.value || localLease() !== current.lease) return
+  if (Date.now() >= current.expires) {
+    void locked('Venció el turno local. Las ventas guardadas se conservan.')
+    return
+  }
+  const code = barcode.value
+  barcode.value = ''
+  const product = productByBarcode(current.catalog, code)
+  if (!product) {
+    scanError.value = 'No se encontró un producto activo con ese código en el catálogo de esta caja.'
+    return
+  }
+  const before = basket.value.get(product.id) ?? 0
+  quantity(product.id, 1)
+  scanError.value = (basket.value.get(product.id) ?? 0) === before
+    ? 'No se pudo agregar. Revisá el límite de productos o cantidades.' : ''
+}
+
 async function complete() {
   const current = grant.value
   const method = payment.value
@@ -420,12 +446,23 @@ onUnmounted(() => {
       </template>
       <p v-else-if="!online">Conectate para habilitar una caja. No se abren turnos nuevos sin conexión.</p>
       <a v-else href="/">Ingresá al espacio de trabajo</a>
+      <details v-if="online && auth && !grant && canManageBarcodes && entity && outlet" :key="`${entity}:${outlet}`">
+        <summary>Gestionar códigos de barras</summary>
+        <ManageBarcodes :entity="entity" :outlet="outlet" :outlet-name="outlets.find((item) => item.id === outlet)?.nombre ?? 'Local'" />
+      </details>
     </section>
     <template v-else>
       <section class="card gomar-feature">
         <div class="section-heading"><h2>{{ grant.label }}</h2><button type="button" @click="locked('Caja bloqueada.', true)">Bloquear caja</button></div>
         <p>{{ pending }} ventas pendientes · Catálogo guardado al habilitar la caja.</p>
         <p v-if="verifying" role="status">Verificando la cuenta…</p>
+        <form class="gomar-feature-actions" aria-label="Agregar producto por código" @submit.prevent="scanBarcode">
+          <label>Código de barras
+            <input v-model="barcode" type="text" autocomplete="off" autocapitalize="off" spellcheck="false" :disabled="saving || verifying || needsConfirm" />
+          </label>
+          <button type="submit" :disabled="!barcode || saving || verifying || needsConfirm">Agregar por código</button>
+        </form>
+        <p v-if="scanError" class="error" role="alert">{{ scanError }}</p>
         <ul class="gomar-feature-list" aria-label="Catálogo">
           <li v-for="item in grant.catalog" :key="item.id" class="pos-catalog-row">
             <span>{{ item.nombre }} <small>{{ fmt(item.precio_centavos) }}</small></span>

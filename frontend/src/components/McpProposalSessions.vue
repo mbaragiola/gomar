@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { isBarcode } from '../pos/model'
 import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { ApiError, request } from '../api'
 import { reservationTimes } from '../reservation-format'
@@ -35,6 +36,7 @@ type StockAdjustment = {
 type CatalogChange = {
   product_id: number; expected_revision: number; name: string
   current_price_minor: number; price_minor: number; current_active: boolean; active: boolean
+  barcode?: string; current_barcode?: string
 }
 type ReservationConfirmation = {
   reservation_reference: string; start_utc: string; start_local: string; timezone: string
@@ -44,7 +46,7 @@ type ReservationCancellation = {
   reservation_reference: string; start_utc: string; start_local: string; timezone: string
   party_size: number; status: 'pending' | 'confirmed'; table_label?: string
 }
-type Action = 'pos_product_rename' | 'document_draft_review' | 'reconciliation_draft_create' | 'document_draft_edit' | 'document_draft_number_change' | 'document_draft_point_of_sale_change' | 'stock_waste_record' | 'stock_physical_count' | 'pos_product_price_change' | 'pos_product_availability_change' | 'reservation_confirm' | 'reservation_table_add' | 'reservation_slot_add' | 'reservation_cancellation_policy_change' | 'outlet_display_label_change' | 'reservation_cancel' | 'pos_product_create' | 'stock_minimum_change' | 'stock_tracking_change' | 'stock_product_setup' | 'supplier_legal_name_change'
+type Action = 'pos_product_rename' | 'document_draft_review' | 'reconciliation_draft_create' | 'document_draft_edit' | 'document_draft_number_change' | 'document_draft_point_of_sale_change' | 'stock_waste_record' | 'stock_physical_count' | 'pos_product_price_change' | 'pos_product_availability_change' | 'pos_product_barcode_change' | 'reservation_confirm' | 'reservation_table_add' | 'reservation_slot_add' | 'reservation_cancellation_policy_change' | 'outlet_display_label_change' | 'reservation_cancel' | 'pos_product_create' | 'stock_minimum_change' | 'stock_tracking_change' | 'stock_product_setup' | 'supplier_legal_name_change'
 type ScopedProposal = Proposal & { kind: Action }
 type Session = { id: number; expires_at: string; actions: string[] }
 const actionName = 'pos_product_rename'
@@ -57,6 +59,7 @@ const wasteAction = 'stock_waste_record'
 const countAction = 'stock_physical_count'
 const priceAction = 'pos_product_price_change'
 const availabilityAction = 'pos_product_availability_change'
+const barcodeAction = 'pos_product_barcode_change'
 const reservationAction = 'reservation_confirm'
 const tableAddAction = 'reservation_table_add'
 const policyNoticeAction = 'reservation_cancellation_policy_change'
@@ -69,8 +72,8 @@ const trackingAction = 'stock_tracking_change'
 const stockSetupAction = 'stock_product_setup'
 const supplierAction = 'supplier_legal_name_change'
 const isReservation = (action: Action) => action === reservationAction || action === cancelAction
-const guardDecisionRetry = (action: Action) => isReservation(action) || action === tableAddAction || action === slotAddAction || action === policyNoticeAction || action === outletLabelAction || action === minimumAction || action === trackingAction || action === stockSetupAction || action === supplierAction || action === documentNumberAction || action === documentPointAction
-const isCatalog = (action: Action) => action === priceAction || action === availabilityAction
+const guardDecisionRetry = (action: Action) => isReservation(action) || action === tableAddAction || action === slotAddAction || action === policyNoticeAction || action === outletLabelAction || action === minimumAction || action === trackingAction || action === stockSetupAction || action === supplierAction || action === documentNumberAction || action === documentPointAction || action === barcodeAction
+const isCatalog = (action: Action) => action === priceAction || action === availabilityAction || action === barcodeAction
 const isStock = (action: Action) => action === wasteAction || action === countAction
 const actionLabels: Record<Action, string> = {
   reservation_cancel: 'Cancelar una reserva',
@@ -93,6 +96,7 @@ const actionLabels: Record<Action, string> = {
   stock_waste_record: 'Registrar una merma de stock',
   stock_physical_count: 'Registrar un conteo físico de stock',
   pos_product_price_change: 'Cambiar el precio de un producto de caja',
+  pos_product_barcode_change: 'Cambiar el código de barras de un producto de caja',
   pos_product_availability_change: 'Cambiar la disponibilidad de un producto de caja',
 }
 const actionUI: Record<Action, {
@@ -196,6 +200,13 @@ const actionUI: Record<Action, {
     rejectConfirm: '¿Querés rechazar sin cambiar el precio?',
     stale: 'No se cambió el precio. El producto o la propuesta cambiaron. Prepará otra propuesta.',
     approved: 'Precio actualizado.', rejected: 'Propuesta rechazada. El producto no cambió.',
+  },
+  pos_product_barcode_change: {
+    path: '/pos-barcode-proposals', previewSuffix: ' de código de barras', proceed: 'Continuar con el código de barras',
+    approve: 'Confirmar código de barras', confirm: '¿Querés guardar solo este código para este producto del local?',
+    rejectConfirm: '¿Querés rechazar sin cambiar el código?',
+    stale: 'No se cambió el código. Verificá el producto, el código y la propuesta antes de volver a intentar.',
+    approved: 'Código de barras actualizado.', rejected: 'Propuesta rechazada. El producto no cambió.',
   },
   pos_product_availability_change: {
     path: '/pos-availability-proposals', previewSuffix: ' de disponibilidad', proceed: 'Continuar con la disponibilidad',
@@ -384,6 +395,10 @@ function validCatalog(kind: Action, x: CatalogChange | undefined): x is CatalogC
     !positive(x.current_price_minor) || x.current_price_minor > 100_000_000 ||
     !positive(x.price_minor) || x.price_minor > 100_000_000 ||
     typeof x.current_active !== 'boolean' || typeof x.active !== 'boolean') return false
+  if (kind === barcodeAction) {
+    return (x.current_barcode === '' || isBarcode(x.current_barcode)) && (x.barcode === '' || isBarcode(x.barcode)) &&
+      x.current_barcode !== x.barcode && x.current_price_minor === x.price_minor && x.current_active === x.active
+  }
   return kind === priceAction
     ? x.current_price_minor !== x.price_minor && x.current_active === x.active
     : x.current_price_minor === x.price_minor && x.current_active !== x.active
@@ -420,7 +435,7 @@ const allowed = (kind: Action) => kind === supplierAction ? !!props.canChangeSup
   : kind === editAction ? !!props.canEditDocuments
   : kind === draftAction ? !!props.canCreateReconciliationDraft
   : kind === reviewAction ? !!props.canReviewDocuments : props.canRename
-const actionChoices = computed(() => ([actionName, reviewAction, draftAction, editAction, documentNumberAction, documentPointAction, wasteAction, countAction, priceAction, availabilityAction, reservationAction, tableAddAction, slotAddAction, policyNoticeAction, outletLabelAction, cancelAction, createAction, minimumAction, trackingAction, stockSetupAction, supplierAction] as const).filter(allowed))
+const actionChoices = computed(() => ([actionName, reviewAction, draftAction, editAction, documentNumberAction, documentPointAction, wasteAction, countAction, priceAction, availabilityAction, barcodeAction, reservationAction, tableAddAction, slotAddAction, policyNoticeAction, outletLabelAction, cancelAction, createAction, minimumAction, trackingAction, stockSetupAction, supplierAction] as const).filter(allowed))
 const setSelected = (kind: Action, event: Event) => {
   if (event.target instanceof HTMLInputElement) selected.value = event.target.checked ? kind : null
 }
@@ -928,6 +943,11 @@ onBeforeUnmount(() => {
             <p>Precio actual: <strong>ARS {{ amount(viewed.change.current_price_minor) }}</strong></p>
             <p>Precio propuesto: <strong>ARS {{ amount(viewed.change.price_minor) }}</strong></p>
             <p>Disponibilidad sin cambios: {{ stateLabel(viewed.change.active) }}.</p>
+          </template>
+          <template v-else-if="viewed.kind === barcodeAction">
+            <p>Código actual: <strong>{{ viewed.change.current_barcode || 'Sin código' }}</strong></p>
+            <p>Código propuesto: <strong>{{ viewed.change.barcode || 'Quitar código' }}</strong></p>
+            <p>El precio y la disponibilidad no cambian. Volvé a habilitar la caja para usar el código nuevo.</p>
           </template>
           <template v-else>
             <p>Disponibilidad actual: <strong>{{ stateLabel(viewed.change.current_active) }}</strong></p>

@@ -7,6 +7,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/mbaragiola/gomar/app/internal/posbarcode"
 )
 
 const buenosAires = "America/Argentina/Buenos_Aires"
@@ -32,9 +34,10 @@ type PublishedMenu struct {
 
 type POSProduct struct {
 	Named
-	PriceMinor int64 `json:"price_minor"`
-	Revision   int64 `json:"revision"`
-	Active     bool  `json:"active"`
+	PriceMinor int64  `json:"price_minor"`
+	Revision   int64  `json:"revision"`
+	Active     bool   `json:"active"`
+	Barcode    string `json:"barcode,omitempty"`
 }
 
 type POSCatalog struct {
@@ -179,6 +182,17 @@ func (c *Client) PublishedMenu(ctx context.Context, entity, outlet int64) (Publi
 }
 
 func (c *Client) POSCatalog(ctx context.Context, entity, outlet int64, after *int64) (POSCatalog, error) {
+	return c.posCatalog(ctx, entity, outlet, after, "")
+}
+
+func (c *Client) POSCatalogByBarcode(ctx context.Context, entity, outlet int64, barcode string) (POSCatalog, error) {
+	if !posbarcode.Valid(barcode) {
+		return POSCatalog{}, errors.New("indicá un código de barras exacto, como texto")
+	}
+	return c.posCatalog(ctx, entity, outlet, nil, barcode)
+}
+
+func (c *Client) posCatalog(ctx context.Context, entity, outlet int64, after *int64, barcode string) (POSCatalog, error) {
 	var result POSCatalog
 	query := url.Values{}
 	var last int64
@@ -189,6 +203,9 @@ func (c *Client) POSCatalog(ctx context.Context, entity, outlet int64, after *in
 		last = *after
 		query.Set("after_product_id", strconv.FormatInt(last, 10))
 	}
+	if barcode != "" {
+		query.Set("barcode", barcode)
+	}
 	if err := c.getWorkspace(ctx, entity, outlet, "/pos-catalog", query, &result); err != nil {
 		return result, err
 	}
@@ -196,10 +213,14 @@ func (c *Client) POSCatalog(ctx context.Context, entity, outlet int64, after *in
 		return result, invalidResponse
 	}
 	for _, p := range result.Products {
-		if p.ID <= last || strings.TrimSpace(p.Name) == "" || p.PriceMinor <= 0 || p.Revision <= 0 {
+		if p.ID <= last || strings.TrimSpace(p.Name) == "" || p.PriceMinor <= 0 || p.Revision <= 0 ||
+			p.Barcode != "" && !posbarcode.Valid(p.Barcode) || barcode != "" && p.Barcode != barcode {
 			return result, invalidResponse
 		}
 		last = p.ID
+	}
+	if barcode != "" && (len(result.Products) > 1 || result.NextProductID != 0) {
+		return result, invalidResponse
 	}
 	if result.NextProductID != 0 && (len(result.Products) != workspacePageSize || result.NextProductID != last) {
 		return result, invalidResponse

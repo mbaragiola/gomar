@@ -14,6 +14,7 @@ from playwright.sync_api import expect, sync_playwright
 
 from codex_stock_transport import codex_tools
 from mcp_purchase_checks import purchase_checks, purchase_seed, purchase_snapshot, purchase_tools
+from pos_prebill_checks import sale_count
 
 if not __debug__:
     raise RuntimeError("Run this check without Python optimization so assertions stay enabled")
@@ -22,6 +23,7 @@ root, pg, chrome = map(Path, sys.argv[1:4])
 codex = Path(sys.argv[4]) if sys.argv[4] else None
 with_purchases = sys.argv[5] == "true"
 with_bookings_wiki = sys.argv[6] == "true"
+with_barcode = len(sys.argv) > 8 and sys.argv[8] == "true"
 if with_bookings_wiki:
     from mcp_bookings_wiki_checks import booking_checks, booking_seed, booking_tools, confirmation_tool
 with_pos_prebill = len(sys.argv) > 7 and sys.argv[7] == "true"
@@ -157,7 +159,7 @@ def tool_caller(tools, invoke, expected_writes):
 
 
 @contextlib.contextmanager
-def connection(read, rename=None, minimum=None, booking=None):
+def connection(read, rename=None, minimum=None, booking=None, barcode=None):
     args = [root / "gomar-mcp", "--origin", origin, "--token-file", read]
     writes = set()
     if rename:
@@ -169,6 +171,10 @@ def connection(read, rename=None, minimum=None, booking=None):
         assert not rename and not minimum
         writes = {confirmation_tool}
         args.extend(["--proposal-session-token-file", booking, "--proposal-session-action", "reservation_confirm"])
+    if barcode:
+        assert not rename and not minimum and not booking
+        writes = {"gomar_propose_pos_barcode"}
+        args.extend(["--proposal-session-token-file", barcode, "--proposal-session-action", "pos_product_barcode_change"])
     if codex:
         with codex_tools(codex, args, root) as (tools, invoke):
             yield tool_caller(tools, invoke, writes)
@@ -363,6 +369,88 @@ SELECT
 
 
 
+def barcode_journey(browser):
+    # The fixture has only loopback. Drive the browser's connectivity hint
+    # independently while Playwright also removes actual network access.
+    online_hint = "Object.defineProperty(Navigator.prototype, 'onLine', {get: () => !window.qaOffline})"
+    owner = login(browser, "qa-admin", allow_pos_worker=True)
+    owner.add_init_script(online_hint)
+    owner.goto(origin + "/pos")
+    local = owner.get_by_role("combobox", name="Local", exact=True)
+    expect(local).to_have_value("1")
+    expect(local.locator("option:checked")).to_have_text("QA Centro")
+    owner.get_by_text("Gestionar códigos de barras", exact=True).click()
+    product = owner.get_by_label("Producto para asignar código")
+    product.select_option("1")
+    previous, new = "000719", "000720"
+    owner.get_by_label("Código de barras del producto").fill(previous)
+    owner.get_by_role("button", name="Guardar código de barras").click()
+    expect(owner.get_by_text("Código de barras guardado.", exact=True)).to_be_visible()
+    owner.goto(origin)
+    owner.get_by_label("Entidad", exact=True).select_option("1")
+    owner.get_by_label("Local", exact=True).select_option("1")
+    read, _ = issue(owner, "barcode-read")
+    key, _ = issue(owner, "barcode-proposal", "pos_product_barcode_change")
+    with connection(read, barcode=key) as call:
+        def find(code):
+            return call("gomar_pos_catalog", {**scope, "barcode": code})["products"]
+
+        match = find(previous)
+        assert len(match) == 1 and match[0]["id"] == 1 and match[0]["barcode"] == previous
+        assert not find(previous.lstrip("0"))
+        call("gomar_pos_catalog", {**scope, "outlet_id": 2, "barcode": previous}, denied=True)
+        proposal = pending(call, "gomar_propose_pos_barcode", "change",
+                           {"product_id": 1, "expected_revision": match[0]["revision"], "barcode": new}, 93)
+        assert find(previous) and not find(new)
+        panel = review_panel(owner)
+        preview = show(panel, proposal, " de código de barras")
+        expect(preview).to_contain_text(previous)
+        expect(preview).to_contain_text(new)
+        preview.get_by_role("button", name="Continuar con el código de barras").click()
+        assert find(previous) and not find(new)
+        preview.get_by_role("button", name="Confirmar código de barras").click()
+        expect(panel.get_by_role("status")).to_contain_text("Código de barras")
+        assert not find(previous) and find(new)[0]["id"] == 1
+
+    for mobile in (False, True):
+        register = login(browser, "qa-admin", mobile=mobile, allow_pos_worker=True)
+        register.add_init_script(online_hint)
+        register.goto(origin + "/pos")
+        local = register.get_by_role("combobox", name="Local", exact=True)
+        expect(local).to_have_value("1")
+        expect(local.locator("option:checked")).to_have_text("QA Centro")
+        register.get_by_role("button", name="Habilitar caja en esta pestaña").click()
+        scan = register.get_by_label("Código de barras", exact=True)
+        name = "QA Pan tostado"
+        def scan_code(code):
+            scan.fill("")
+            scan.press_sequentially(code)
+            scan.press("Enter")
+
+        scan_code(new)
+        expect(register.get_by_text(f"{name} × 1", exact=True)).to_be_visible()
+        scan_code(new)
+        expect(register.get_by_text(f"{name} × 2", exact=True)).to_be_visible()
+        register.get_by_role("button", name="Ver cuenta de mesa").click()
+        check = register.get_by_role("region", name="Cuenta de mesa")
+        expect(check.get_by_text(f"2 × {name}", exact=True)).to_be_visible()
+        register.get_by_role("button", name="Volver a la venta").click()
+        scan_code(new.lstrip("0"))
+        expect(register.get_by_role("alert")).to_contain_text("código")
+        expect(register.get_by_text(f"{name} × 2", exact=True)).to_be_visible()
+        register.context.set_offline(True)
+        register.evaluate("window.qaOffline = true; window.dispatchEvent(new Event('offline'))")
+        expect(register.get_by_text("Sin conexión", exact=True)).to_be_visible()
+        scan_code(new)
+        expect(register.get_by_text(f"{name} × 3", exact=True)).to_be_visible()
+        register.get_by_role("button", name="Bloquear caja").click()
+        expect(scan).to_have_count(0)
+        assert sale_count(register) == 0
+        register.context.close()
+    assert psql("SELECT count(*) FROM gomar.pos_sales") == "0"
+    owner.context.close()
+
+
 def main():
     global origin
     seed()
@@ -374,6 +462,8 @@ def main():
                  "-enable-mcp-stock-minimum-proposals"]
     if with_bookings_wiki:
         app_flags.extend(["-public-reservations", "-enable-mcp-reservation-confirm-proposals"])
+    if with_barcode:
+        app_flags.append("-enable-mcp-pos-catalog-proposals")
     with (root / "native.log").open("w") as log:
         server = subprocess.Popen([root / "gomar", "-state", root / "state", "-listen", address, *app_flags],
                                   env=env, stdout=log, stderr=subprocess.STDOUT)
@@ -399,11 +489,15 @@ def main():
                         check_prebill(browser, login, origin)
                         assert snapshot() == before
                     journey(browser)
+                    if with_barcode:
+                        barcode_journey(browser)
                 finally:
                     browser.close()
         finally:
             server.terminate()
             server.wait(timeout=8)
+    if with_barcode:
+        print("PASS: exact barcode lookup and native approval in MCP; desktop/mobile Chrome scans, offline cache, and no sale")
     transport = "one installed Codex dual-lane session" if codex else "one packaged MCP session"
     print(f"PASS: {transport}, Chrome review, denials, revocation, and exact stock readback")
     if with_purchases:

@@ -9,7 +9,7 @@ For everyday examples, see the [Spanish prompt guide](MCP-GUIA-DE-CONSULTAS.md).
 | Workflow | Shipped MCP reads and opt-in proposals | Intentionally stays in Gomar or is not built |
 | --- | --- | --- |
 | Identity and business scope | Current user, businesses, and outlets; propose a display-name change for one active outlet | Native only: business and outlet administration beyond that rename, membership and grant management, credentials and provider sign-in. |
-| POS | Recorded sales totals, product catalog; propose product creation and separate name, price or availability changes | Native only: preview/print a table check from the local cart, register sales, checkout and offline sales sync. Not built: shared table tabs and shift management. |
+| POS | Recorded sales totals, product catalog with exact barcode lookup; propose product creation and separate name, price, availability or barcode changes | Native only: scan into the local cart, preview/print a table check, register sales, checkout and offline sales sync. Not built: shared table tabs and shift management. |
 | Inventory | Tracked balances and thresholds, including an exact configured item by ID, movement history, filtered alert pages and stock alert counts; propose receipts, waste, physical counts, initial disabled product setup, and changes to a product’s minimum or tracking | Native only: branch-wide settings. Not built: bills of materials. |
 | Wiki | Search and read by ID; propose new pages and versioned edits | Not built: deletion. |
 | Delivery | Recent order status with limited fields; status counts for the latest 100 inbox records | No native staff write workflow. Provider calls and credentials are not part of MCP. |
@@ -21,8 +21,8 @@ For everyday examples, see the [Spanish prompt guide](MCP-GUIA-DE-CONSULTAS.md).
 
 The packaged live server registers 40 baseline read tools. Discovery does not
 guarantee access: app flags and current permissions determine which queries
-can run. There are also 25 distinct opt-in proposal actions, not 25
-simultaneous writes. Of those, 21 are named actions and four use distinct older
+can run. There are also 26 distinct opt-in proposal actions, not 26
+simultaneous writes. Of those, 22 are named actions and four use distinct older
 credential options. The standard connection selects at most one named action. As a separate
 opt-in, [two local lanes](MCP-LOCAL-PROPOSAL-LANES.md) allow POS rename and
 stock minimum proposals together for one pinned outlet. Each keeps its own
@@ -79,8 +79,8 @@ the old and new values, currency, and reason to the issuing browser login.
 Approval applies one native draft revision and audit entry. It cannot
 change supplier, branch, currency, files, review status, payables, or payments.
 
-Optional POS catalog proposals let a branch manager approve either a price
-change or an availability change. Each action preserves the other fields
+Optional POS catalog proposals let a branch manager approve a price,
+availability, or exact barcode change. Each action preserves the other fields
 and adds a native catalog revision. A proposal does not make a sale, collect
 a payment, or rewrite prior sale items or stock movements. The opt-in
 new-product proposal creates one catalog item at revision 1 after browser
@@ -213,9 +213,24 @@ and use the existing native review and close workflow with fresh checks.
 `gomar_read_pos_product` reads one known product ID in the selected
 business and branch, when POS is enabled and the caller has current
 business-read permission for that branch. It returns only the product ID,
-name, price in ARS cents, current catalog revision, and active status.
+name, price in ARS cents, current catalog revision, active status, and the
+exact barcode when assigned.
 Inactive products remain readable, like in the native catalog. It does
 not search, show stock or costs, record a sale, or change the product.
+
+Use `gomar_pos_catalog` with `barcode` for an exact branch match. Pass
+the code as text, including leading zeros. A catalog manager can open
+**Gestionar códigos de barras** or propose one assignment or removal
+with `gomar_propose_pos_barcode`. The proposal takes effect only after
+browser approval; it never changes stock or sales.
+
+Scanning and the cart stay in the register browser tab. Open **Punto de
+venta**, select the business and branch, enable the register in that tab,
+then scan or type a code and press Enter. An offline register uses its
+saved catalog while its grant is valid. Enable it again online to get new
+codes. Before moving a code to a different product, refresh every
+register: an offline register can still match the old product until its
+grant expires or the register is re-enabled. A scan adds to the cart; it never checks out or charges a sale.
 
 ### Paper table check (native only)
 

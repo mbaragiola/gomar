@@ -9,6 +9,7 @@ export interface Product {
   precio_centavos: number
   revision: number
   activo: boolean
+  codigo_barras?: string // Absent in older cached catalogs and on uncoded products.
 }
 export interface Grant extends Context {
   lease: string
@@ -54,13 +55,33 @@ export const maxLines = 80
 export const maxQuantity = 999
 export const maxTotal = 10_000_000_000
 
+export const maxBarcodeLength = 80
+
+export function isBarcode(value: unknown): value is string {
+  // Keep the actual text, case and leading zeros. Reject spaces and control
+  // characters instead of silently choosing a different identifier.
+  return typeof value === 'string' && value.length > 0 && value.length <= maxBarcodeLength
+    && !/[^!-~]/.test(value)
+}
+
+export function productByBarcode(catalog: readonly Product[], code: string): Product | undefined {
+  if (!isBarcode(code)) return undefined
+  const matches = catalog.filter((product) => product.codigo_barras === code)
+  return matches.length === 1 && matches[0].activo ? matches[0] : undefined
+}
+
 export function normalizedProducts(rows: Product[]): Product[] {
   if (!Array.isArray(rows) || rows.length > 500) throw new Error('El catálogo no es válido.')
   const ids = new Set<number>()
+  const barcodes = new Set<string>()
   for (const row of rows) {
     if (!positive(row.id) || ids.has(row.id) || !positive(row.revision) || (!positive(row.precio_centavos) || row.precio_centavos > 100_000_000)
       || typeof row.nombre !== 'string' || !row.nombre.trim() || typeof row.activo !== 'boolean') {
       throw new Error('El catálogo no es válido.')
+    }
+    if (row.codigo_barras !== undefined) {
+      if (!isBarcode(row.codigo_barras) || barcodes.has(row.codigo_barras)) throw new Error('El catálogo no es válido.')
+      barcodes.add(row.codigo_barras)
     }
     ids.add(row.id)
   }

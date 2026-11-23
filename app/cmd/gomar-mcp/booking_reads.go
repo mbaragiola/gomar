@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 
 	"github.com/mbaragiola/gomar/app/internal/mcpclient"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -20,6 +21,11 @@ type reservationStartSetupArgs struct {
 type reservationTableSetupArgs struct {
 	outletArgs
 	TableNumber int `json:"table_number" jsonschema:"Número de una mesa Mesa N; entero de 1 a 9999."`
+}
+
+type posCatalogListArgs struct {
+	stockArgs
+	Barcode *string `json:"barcode,omitempty" jsonschema:"Código de barras exacto como texto (conservá ceros iniciales); sin cursor."`
 }
 
 type posCatalogProductArgs struct {
@@ -50,10 +56,16 @@ func addBookingReadTools(server *mcp.Server, client *mcpclient.Client) {
 	readTool(server, "gomar_published_menu", "Consultá si el menú PDF está publicado para la sucursal. Devuelve sólo disponibilidad y datos del archivo publicado; no descarga ni envía el PDF.", func(ctx context.Context, in outletArgs) (mcpclient.PublishedMenu, error) {
 		return client.PublishedMenu(ctx, in.EntityID, in.OutletID)
 	})
-	readTool(server, "gomar_pos_catalog", "Consultá nombres, precios en centavos de ARS y estado de los productos del catálogo de caja. Devuelve hasta 30 por página; usá next_product_id para seguir.", func(ctx context.Context, in stockArgs) (mcpclient.POSCatalog, error) {
+	readTool(server, "gomar_pos_catalog", "Consultá nombres, precios, disponibilidad y códigos de barras del catálogo de caja de la sucursal. Paginá con next_product_id o buscá por código exacto, sin cursor.", func(ctx context.Context, in posCatalogListArgs) (mcpclient.POSCatalog, error) {
+		if in.Barcode != nil {
+			if in.AfterProductID != nil {
+				return mcpclient.POSCatalog{}, errors.New("no combines un código de barras con el cursor")
+			}
+			return client.POSCatalogByBarcode(ctx, in.EntityID, in.OutletID, *in.Barcode)
+		}
 		return client.POSCatalog(ctx, in.EntityID, in.OutletID, in.AfterProductID)
 	})
-	readTool(server, "gomar_read_pos_product", "Consultá un producto por su ID exacto en el catálogo de caja de esta sucursal. Devuelve nombre, precio en centavos de ARS, revisión actual y estado, incluso si está inactivo. No busca productos ni devuelve stock, costos o ventas.", func(ctx context.Context, in posCatalogProductArgs) (mcpclient.POSProductDetails, error) {
+	readTool(server, "gomar_read_pos_product", "Consultá un producto por su ID exacto en el catálogo de caja de esta sucursal. Devuelve nombre, precio en centavos de ARS, revisión, código asignado y estado, incluso si está inactivo. No busca productos ni devuelve stock, costos o ventas.", func(ctx context.Context, in posCatalogProductArgs) (mcpclient.POSProductDetails, error) {
 		return client.ReadPOSCatalogProduct(ctx, in.EntityID, in.OutletID, in.ProductID)
 	})
 	readTool(server, "gomar_stock_movements", "Resumí los movimientos registrados de un producto de stock por tipo y variación neta de unidades, para hasta 31 días de Buenos Aires. No devuelve actores ni referencias a ventas.", func(ctx context.Context, in movementArgs) (mcpclient.StockMovements, error) {
