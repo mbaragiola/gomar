@@ -353,12 +353,12 @@ func postPOSSale(r *http.Request, tx *sql.Tx, m entityMembership, raw []byte, st
 
 // Shell assets are deliberately generic. Authentication belongs to the data APIs;
 // the worker may load this generic shell without cookies when offline.
-func (a *app) registerPOSShell(mux *http.ServeMux, frontend http.Handler) {
+func (a *app) registerPOSShell(handle func(string, http.HandlerFunc), frontend http.Handler) {
 	if !a.enablePOS {
 		return
 	}
 	for path, file := range map[string]string{"/pos": "/static/pos-shell.html", "/pos-sw.js": "/static/pos-sw.js"} {
-		mux.HandleFunc("GET "+path, func(w http.ResponseWriter, r *http.Request) {
+		handle("GET "+path, func(w http.ResponseWriter, r *http.Request) {
 			if r.URL.Path != path {
 				http.NotFound(w, r)
 				return

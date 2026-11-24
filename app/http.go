@@ -208,12 +208,35 @@ func (a *app) apiLogin(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *app) routes() http.Handler {
+	return a.composeRoutes(nil)
+}
+
+// observe reports explicit registrations, not the set of requests ServeMux
+// might dispatch via a subtree, a redirect, or an implicit HEAD match.
+func (a *app) composeRoutes(observe func(method, pattern string)) http.Handler {
 	mux := http.NewServeMux()
+	note := func(method, pattern string) {
+		if observe != nil {
+			observe(method, pattern)
+		}
+	}
+	handle := func(pattern string, handler http.Handler) {
+		method, path, ok := strings.Cut(pattern, " ")
+		if ok {
+			note(method, path)
+		} else {
+			note("", pattern)
+		}
+		mux.Handle(pattern, handler)
+	}
+	handleFunc := func(pattern string, handler http.HandlerFunc) {
+		handle(pattern, handler)
+	}
 	frontend := frontendembed.New()
-	mux.Handle("/", frontend)
-	a.registerPOSShell(mux, frontend)
+	handle("/", frontend)
+	a.registerPOSShell(handleFunc, frontend)
 	if a.publicReservations {
-		mux.HandleFunc("GET /reservas/{venue}", func(w http.ResponseWriter, r *http.Request) {
+		handleFunc("GET /reservas/{venue}", func(w http.ResponseWriter, r *http.Request) {
 			slug := r.PathValue("venue")
 			if !reservationValidSlug(slug) {
 				http.NotFound(w, r)
@@ -227,7 +250,7 @@ func (a *app) routes() http.Handler {
 			frontend.ServeHTTP(w, request)
 		})
 	}
-	mux.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {
+	handleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {
 		var health int
 		if err := a.db.QueryRowContext(r.Context(), "SELECT 1").Scan(&health); err != nil {
 			failure(w, err)
@@ -240,9 +263,10 @@ func (a *app) routes() http.Handler {
 		if apiRoutes[path] == nil {
 			apiRoutes[path] = map[string]http.HandlerFunc{}
 		}
+		note(method, path)
 		apiRoutes[path][method] = handler
 	}
-	a.registerNativeSignup(mux, addAPI, frontend)
+	a.registerNativeSignup(handleFunc, addAPI, frontend)
 	a.registerKnowledge(addAPI)
 	a.registerPOS(addAPI)
 	a.registerDelivery(addAPI)
@@ -362,8 +386,8 @@ func (a *app) routes() http.Handler {
 			w.Write([]byte("Method not allowed"))
 		})
 	}
-	mux.HandleFunc("/admin/", a.admin)
-	mux.HandleFunc("/admin", func(w http.ResponseWriter, r *http.Request) {
+	handleFunc("/admin/", a.admin)
+	handleFunc("/admin", func(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, "/admin/", http.StatusMovedPermanently)
 	})
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
