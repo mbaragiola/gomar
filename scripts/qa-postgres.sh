@@ -2,7 +2,12 @@
 # Opt-in Gomar database checks. Never use a pre-existing database or socket.
 set -euo pipefail
 umask 077
-(( $# == 0 )) || { printf 'Usage: %s\n' "$0" >&2; exit 2; }
+restore=false
+case "$#:${1:-}" in
+  0:) ;;
+  1:--private-restore) restore=true ;;
+  *) printf 'Usage: %s [--private-restore]\n' "$0" >&2; exit 2 ;;
+esac
 repo="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)"
 cd "$repo"
 # Keep relative PATH entries anchored to the worktree, not the scratch parent.
@@ -21,7 +26,9 @@ bwrap="$(command -v bwrap)"
 go="$(command -v go)"
 uid="$(id -u)"
 [[ "$uid" != 0 ]]
-for name in initdb pg_ctl createdb dropdb; do
+pg_tools=(initdb pg_ctl createdb dropdb)
+if "$restore"; then pg_tools+=(psql pg_dump pg_restore); fi
+for name in "${pg_tools[@]}"; do
   [[ -x "$pg/$name" ]]
 done
 [[ -d "$repo/frontend/node_modules" ]] || {
@@ -112,8 +119,12 @@ goroot="$("${build[@]}" "$go" -C "$source/app" env GOROOT)"
 go="$goroot/bin/go"
 [[ -x "$go" ]]
 export GOTOOLCHAIN=local
-"${build[@]}" "$go" -C "$source/app" build -mod=readonly -o "$scratch/test2json" cmd/test2json
-"${build[@]}" "$go" -C "$source/app" test -mod=readonly -c -o "$scratch/app-tests" .
+if "$restore"; then
+  "${build[@]}" "$go" -C "$source/app" build -buildvcs=false -mod=readonly -o "$scratch/gomar" .
+else
+  "${build[@]}" "$go" -C "$source/app" build -mod=readonly -o "$scratch/test2json" cmd/test2json
+  "${build[@]}" "$go" -C "$source/app" test -mod=readonly -c -o "$scratch/app-tests" .
+fi
 
 # A fresh root in the namespace is owned by this user. With the host root
 # bind, unprivileged Bubblewrap maps host root to nobody and Gomar rightly
@@ -128,8 +139,19 @@ fi
 if [[ "$python" != /usr/* ]]; then
   runtime+=(--ro-bind "$(dirname "$(dirname "$python")")" "$(dirname "$(dirname "$python")")")
 fi
-timeout 150s "${runtime[@]}" "$python" -I /fixture/source/scripts/qa/postgres_suite.py \
-  /fixture "$pg" /fixture/test2json "$commit" "$tree"
+if "$restore"; then
+  args=("$python" -I /fixture/source/scripts/qa/private_restore.py)
+  timeout 60s "${runtime[@]}" "${args[@]}" seal "$pg" "$commit" "$tree"
+  # The Go app still expects 0700 directories and 0600 files. Enforce
+  # read-only file access at the mount, not by changing these modes.
+  timeout 60s "${runtime[@]}" \
+    --ro-bind "$scratch/pair" /fixture/pair \
+    --ro-bind "$scratch/restored-state" /fixture/restored-state \
+    "${args[@]}" prove "$pg" "$commit" "$tree"
+else
+  timeout 150s "${runtime[@]}" "$python" -I /fixture/source/scripts/qa/postgres_suite.py \
+    /fixture "$pg" /fixture/test2json "$commit" "$tree"
+fi
 if [[ "$(git -C "$repo" rev-parse HEAD)" != "$commit" || "$(git -C "$repo" rev-parse 'HEAD^{tree}')" != "$tree" ]] || ! clean_source; then
   printf 'Gomar source changed during QA; no pass manifest was emitted.\n' >&2
   exit 1
