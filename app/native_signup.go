@@ -139,12 +139,12 @@ func readNativeSignupAction(w http.ResponseWriter, r *http.Request, confirm bool
 	return result, nil
 }
 
-func (a *app) registerNativeSignup(mux *http.ServeMux, add func(string, string, http.HandlerFunc), frontend http.Handler) {
+func (a *app) registerNativeSignup(handle func(string, http.HandlerFunc), add func(string, string, http.HandlerFunc), frontend http.Handler) {
 	cfg := a.activeNativeSignup()
 	if cfg == nil {
 		return
 	}
-	mux.HandleFunc("GET /alta", func(w http.ResponseWriter, r *http.Request) {
+	handle("GET /alta", func(w http.ResponseWriter, r *http.Request) {
 		nativeSignupPrivateHeaders(w)
 		if !a.nativeSignupLocal(r, "/alta") || !a.canOpenNativeSignup(r, cfg) {
 			http.NotFound(w, r)
