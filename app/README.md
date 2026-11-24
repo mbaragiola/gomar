@@ -37,6 +37,23 @@ if those tools are not on their usual paths. Run it in a clean worktree
 that is not being edited or built by another process. It builds a fresh
 copy of that commit and uses the installed frontend dependencies.
 
+By default the gate uses `/tmp`. If that filesystem runs out of inodes
+(check `df -i /tmp`, even when `df -h` shows free space), use a private
+directory on another local filesystem:
+
+```sh
+mkdir -m 700 -- "$HOME/.gomar-postgres-qa"
+QA_POSTGRES_SCRATCH_PARENT="$HOME/.gomar-postgres-qa" bash scripts/qa-postgres.sh
+```
+
+Use an existing absolute path without symlinks, outside the worktree, owned
+by your user with mode `0700`. Ancestors must be owned by your user or root,
+with no group or world write access unless protected by the sticky bit.
+The gate creates and cleans up its own random subdirectory for the source
+copy, build temporary files and database. It does not clean up the parent
+or other runs. The override does not change Bubblewrap isolation or where
+other launchers create temporary files before this script starts.
+
 The gate discovers database scenarios from the Go test binary, then runs
 each in its own fresh database in one private, Unix-socket-only cluster.
 The final JSON records individual passes, timing, the clean commit and

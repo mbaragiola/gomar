@@ -5,11 +5,22 @@ umask 077
 (( $# == 0 )) || { printf 'Usage: %s\n' "$0" >&2; exit 2; }
 repo="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)"
 cd "$repo"
+# Keep relative PATH entries anchored to the worktree, not the scratch parent.
+# Do not resolve executable symlinks: a toolchain shim may use its own name.
+path_entries="$PATH:"
+PATH=
+while [[ -n "$path_entries" ]]; do
+  entry="${path_entries%%:*}"
+  path_entries="${path_entries#*:}"
+  [[ "$entry" == /* ]] || entry="$repo${entry:+/$entry}"
+  PATH="${PATH:+$PATH:}$entry"
+done
 python="$(realpath "$(command -v "${QA_PYTHON:-/usr/bin/python3}")")"
 pg="$(realpath "${QA_PG_BIN:-$(pg_config --bindir)}")"
 bwrap="$(command -v bwrap)"
 go="$(command -v go)"
-[[ $(id -u) != 0 ]]
+uid="$(id -u)"
+[[ "$uid" != 0 ]]
 for name in initdb pg_ctl createdb dropdb; do
   [[ -x "$pg/$name" ]]
 done
@@ -20,7 +31,7 @@ done
 
 # Do not read or stage untracked data to calculate a source identity.
 clean_source() {
-  [[ -z "$(git status --porcelain=v1 --untracked-files=normal)" ]]
+  [[ -z "$(git -C "$repo" status --porcelain=v1 --untracked-files=normal)" ]]
 }
 if ! clean_source; then
   printf 'Run PostgreSQL QA in a clean worktree.\n' >&2
@@ -28,14 +39,51 @@ if ! clean_source; then
 fi
 commit="$(git rev-parse HEAD)"
 tree="$(git rev-parse 'HEAD^{tree}')"
-scratch="$(mktemp -d /tmp/gomar-postgres-qa.XXXXXXXX)"
+scratch_parent=/tmp
+if [[ -v QA_POSTGRES_SCRATCH_PARENT ]]; then
+  scratch_parent="$QA_POSTGRES_SCRATCH_PARENT"
+  invalid_parent() {
+    printf '%s\n' 'QA_POSTGRES_SCRATCH_PARENT must be an absolute, canonical, owner-only (0700) directory outside the worktree with safe parent directories.' >&2
+    exit 2
+  }
+  [[ "$scratch_parent" == /* && "$scratch_parent" != / &&
+    "$scratch_parent" != *[[:cntrl:]]* && -d "$scratch_parent" &&
+    "$scratch_parent" == "$(realpath -e -- "$scratch_parent")" &&
+    "$scratch_parent" != "$repo" && "$scratch_parent" != "$repo/"* ]] || invalid_parent
+
+  # A different user must not be able to replace any part of the path.
+  ancestor=
+  IFS=/ read -ra parts <<< "${scratch_parent#/}"
+  for part in "${parts[@]}"; do
+    ancestor+="/$part"
+    [[ -d "$ancestor" && ! -L "$ancestor" ]] || invalid_parent
+    metadata="$(stat -c '%u %a' -- "$ancestor")" || invalid_parent
+    read -r owner mode <<< "$metadata"
+    [[ "$owner" == "$uid" || "$owner" == 0 ]] || invalid_parent
+    # A trusted sticky parent (such as /var/tmp) protects its owned entries.
+    (( !(8#$mode & 0022) || (8#$mode & 01000) )) || invalid_parent
+  done
+  [[ "$owner" == "$uid" && "$mode" == 700 ]] || invalid_parent
+fi
+
+# Anchor cleanup to this directory. Only remove the fresh child created here,
+# never the configured parent, even if its pathname is moved during the run.
+cd -- "$scratch_parent"
+scratch_name="$(mktemp -d -- gomar-postgres-qa.XXXXXXXX)"
+scratch="$scratch_parent/$scratch_name"
+scratch_identity="$(stat -c '%d:%i' -- "$scratch_name")"
 cleanup() {
-  if [[ -s "$scratch/data/postmaster.pid" ]] &&
-    ! "$pg/pg_ctl" -D "$scratch/data" -m fast -w stop >/dev/null 2>&1; then
+  if [[ ! -d "$scratch_name" || -L "$scratch_name" ||
+    "$(stat -c '%d:%i' -- "$scratch_name")" != "$scratch_identity" ]]; then
+    printf '%s\n' 'Disposable PostgreSQL scratch directory changed; refusing cleanup. No pass manifest.' >&2
+    return 1
+  fi
+  if [[ -s "$scratch_name/data/postmaster.pid" ]] &&
+    ! "$pg/pg_ctl" -D "$scratch_name/data" -m fast -w stop >/dev/null 2>&1; then
     printf 'Disposable PostgreSQL fallback shutdown failed; no pass manifest.\n' >&2
     return 1
   fi
-  rm -rf -- "$scratch"
+  rm -rf -- "$scratch_name"
 }
 trap cleanup EXIT
 trap 'exit 130' INT
@@ -45,8 +93,12 @@ trap 'exit 143' TERM
 # These installed frontend dependencies are snapshotted for the fresh build.
 source="$scratch/source"
 mkdir "$source"
-git archive "$commit" | tar -x -C "$source"
+git -C "$repo" archive "$commit" | tar -x -C "$source"
 cp -a --reflink=auto -- "$repo/frontend/node_modules" "$source/frontend/"
+if [[ -v QA_POSTGRES_SCRATCH_PARENT ]]; then
+  mkdir "$scratch/build-tmp"
+  export TMPDIR="$scratch/build-tmp" GOTMPDIR="$scratch/build-tmp"
+fi
 build=("$bwrap" --die-with-parent --unshare-net --bind / / --dev-bind /dev /dev --proc /proc)
 "${build[@]}" bash "$source/scripts/stage-web.sh"
 cmp "$source/var/static/index.html" "$source/app/frontendembed/web/index.html"
@@ -78,7 +130,7 @@ if [[ "$python" != /usr/* ]]; then
 fi
 timeout 150s "${runtime[@]}" "$python" -I /fixture/source/scripts/qa/postgres_suite.py \
   /fixture "$pg" /fixture/test2json "$commit" "$tree"
-if [[ "$(git rev-parse HEAD)" != "$commit" || "$(git rev-parse 'HEAD^{tree}')" != "$tree" ]] || ! clean_source; then
+if [[ "$(git -C "$repo" rev-parse HEAD)" != "$commit" || "$(git -C "$repo" rev-parse 'HEAD^{tree}')" != "$tree" ]] || ! clean_source; then
   printf 'Gomar source changed during QA; no pass manifest was emitted.\n' >&2
   exit 1
 fi
