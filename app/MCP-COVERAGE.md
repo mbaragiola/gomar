@@ -533,3 +533,13 @@ Tests cover exact scope, allowed native set and human-approved clear,
 expired and suspended generic denial with no receipt, and unchanged
 revision history, sale and stock on denial. Other proposal lanes and
 barcode lookup remain outside this proof.
+
+
+The existing `gomar_sales_summary` uses the same isolated hosted read
+scope inside its receipt aggregate. Existing root and outlet-pinned keys
+were tested through the packaged tool before and after suspension and
+expiry. Root includes only admitted outlets, an eligible empty outlet
+returns zero, and denial exposes no names, amounts or binding data.
+The Buenos Aires registration month, original offline replay, stock,
+self-hosted empty root, and default behavior are unchanged. There is no
+corresponding browser endpoint or new tool.
