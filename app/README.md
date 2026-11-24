@@ -68,6 +68,55 @@ For an individual integration test, set `GOMAR_LOCAL_POSTGRES_TEST_DSN`
 to a private local PostgreSQL Unix socket and an empty `gomar_qa_`
 database. Never use a database that contains real records.
 
+## Synthetic private-file restore rehearsal
+
+From a clean worktree with the PostgreSQL gate prerequisites (including
+`pg_dump` and `pg_restore`), run:
+
+```sh
+bash scripts/qa-postgres.sh --private-restore
+```
+
+The same optional `QA_POSTGRES_SCRATCH_PARENT` applies. The rehearsal accepts
+no database, state path, credentials, or backup as input. It uses one private
+disposable PostgreSQL cluster, no external network, and the same Gomar build
+for source and restored reads. No provider or production system is contacted.
+
+- Create a synthetic document attachment and a different posted supplier
+  payment receipt through the native HTTP routes and verify the original
+  downloads. Stop the only app process after these requests finish and confirm
+  its database connections are gone. Keep it stopped while dumping the
+  database, copying the private state, and checking the sealed pair.
+- Bind the dump digest, migration ledger, and file digests to the checkpoint.
+  Verify generated basenames, owner, mode, sizes, and database relationships.
+  This fixture has no staged intake; a database with those rows is rejected.
+  It rejects a later-generation dump matched to earlier files, a missing file,
+  a same-sized corrupt file, a symlink, and a wrong mode before starting a
+  restored app.
+- Verify the admitted copy with `-check` and start only on isolated loopback,
+  with a SELECT-only database role and read-only file mounts. Confirm exact
+  bytes and private response headers, and that anonymous users and a signed-in
+  user restricted to another outlet receive no file. A later acknowledged
+  attachment is absent from the restored checkpoint. Test sessions are issued
+  via normal login before sealing and reused by fresh HTTP clients; a new
+  login would write to the restored database.
+
+The final JSON records the source identity, recovered fixture checkpoint and
+last write, passed checks, and three separate local timing intervals:
+
+- From just before stopping the source app to verification of the snapshot
+  contents and final source quiescence. This excludes writing the seal metadata.
+- The copy of the verified private files into the restored state directory.
+- From validation and import of the checkpoint dump to the first and both
+  verified HTTP downloads, with private files already staged. This includes
+  checking the restored file contents and starting the read-only app, but
+  excludes copying the files and running the deliberate failure cases.
+
+The runner verifies shutdown and discards the disposable state, dumps and
+credentials. These timings are not an end-to-end recovery time. This is not
+a production runbook, a recovery-time or data-loss guarantee, a version
+rollback, or a test of unsynced browser sales or provider recovery.
+
 ## Local startup
 
 Set `GOMAR_POSTGRES_DSN` to a PostgreSQL connection string. For a local Unix
