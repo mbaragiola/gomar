@@ -557,3 +557,15 @@ Allowed empty/disabled stock, stock and sale history, self-host and
 default behavior are unchanged. The local browser and packaged
 permission checks reuse already-issued access across suspension and
 expiry; no tool, write or production admission was added.
+
+For the existing staff reservation queue, the isolated fixture covers
+the native queue GET and `gomar_list_reservation_requests`,
+`gomar_read_reservation_request`, and `gomar_reservation_status`.
+The existing administrator and exact outlet checks (including MCP
+pinning) come before the same-snapshot #044 admission check, then the
+queue, cursor, reference, or aggregate query. An unadmitted outlet
+returns a generic denial; an admitted empty day still returns zero.
+The native screen may show the same guest name, table label and
+historical policy as before. MCP still omits them, and both omit the
+separate private contact records. No public availability, settings,
+menu, confirmation/cancellation, proposal, or new tool is involved.

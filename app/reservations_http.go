@@ -21,7 +21,11 @@ func (a *app) registerReservations(add func(string, string, http.HandlerFunc), p
 		add(reservationStaffBase+"/contact-settings", "GET", a.reservationStaff(reservationContactSettingsRead, false))
 		add(reservationStaffBase+"/contact-settings", "PUT", a.reservationContactSettingsWrite())
 	}
-	add(reservationStaffBase, "GET", a.reservationStaff(listReservationRequests, false))
+	queue := a.reservationStaff(listReservationRequests, false)
+	if a.hostedDiscoveryRead != nil {
+		queue = a.hostedNativeReservationQueueRead()
+	}
+	add(reservationStaffBase, "GET", queue)
 	add(reservationStaffBase+"/settings", "GET", a.reservationStaff(reservationSettingsRead, false))
 	add(reservationStaffBase+"/settings", "PUT", a.reservationStaff(reservationSettingsSave, true))
 	add(reservationStaffBase+"/tables", "POST", a.reservationStaff(reservationTableCreate, true))
