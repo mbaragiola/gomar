@@ -61,8 +61,8 @@ func (a *app) registerMCP(add func(string, string, http.HandlerFunc)) {
 	add("/api/v1/auth/mcp-token/{token}", http.MethodDelete, a.protected(a.revokeMCPToken))
 	add("/api/v1/entities/{entity}/outlets/{outlet}/mcp-read-access", http.MethodGet, a.protectedWithCache(a.listOwnMCPReadAccess, true))
 	add("/api/v1/mcp/me", http.MethodGet, a.mcpRead(mcpMe))
-	add("/api/v1/mcp/entities", http.MethodGet, a.mcpRead(mcpEntities))
-	add("/api/v1/mcp/entities/{entity}/outlets", http.MethodGet, a.mcpRead(mcpOutlets))
+	add("/api/v1/mcp/entities", http.MethodGet, a.mcpRead(a.mcpDiscoveryEntities))
+	add("/api/v1/mcp/entities/{entity}/outlets", http.MethodGet, a.mcpRead(a.mcpDiscoveryOutlets))
 	if a.enablePOS {
 		add("/api/v1/mcp/entities/{entity}/sales-summary", http.MethodGet, a.mcpRead(a.mcpSalesSummary))
 		add(mcpWorkspaceBase+"/pos-sale-times/{request}", http.MethodGet, a.mcpRead(mcpPOSSaleTime))
