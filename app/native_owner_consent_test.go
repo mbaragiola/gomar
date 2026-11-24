@@ -8,58 +8,16 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
+	"os"
 	"slices"
 	"strings"
 	"testing"
 	"time"
 )
 
-// The SQL store and HTTP paths below exist only in this synthetic test. No
-// production migration, public route, CLI, MCP registration, or billing
-// adapter can create a designation or collect consent.
-type testNativeOwnerStore struct{}
-
-func (testNativeOwnerStore) lockNativeOwnerDesignation(ctx context.Context, tx *sql.Tx, key string) (nativeOwnerDesignation, error) {
-	var d nativeOwnerDesignation
-	var outlets []byte
-	d.Target.Intent = key
-	err := tx.QueryRowContext(ctx, `SELECT actor_id,business,outlets,revision FROM gomar.fixture_owner_designations
-		WHERE intent=$1 FOR UPDATE`, key).Scan(&d.Actor, &d.Target.Business, &outlets, &d.Target.Revision)
-	if err == nil {
-		err = json.Unmarshal(outlets, &d.Target.Outlets)
-	}
-	return d, err
-}
-
-func (testNativeOwnerStore) saveNativeOwnerPreview(ctx context.Context, tx *sql.Tx, hash [32]byte, b nativeOwnerBinding) error {
-	value, err := json.Marshal(b)
-	if err != nil {
-		return err
-	}
-	_, err = tx.ExecContext(ctx, `INSERT INTO gomar.fixture_owner_consent(hash,intent,binding,expires)
-		VALUES($1,$2,$3,$4)`, hash[:], b.Designation.Target.Intent, value, b.Expires)
-	return err
-}
-
-func (testNativeOwnerStore) lockNativeOwnerPreview(ctx context.Context, tx *sql.Tx, hash [32]byte) (nativeOwnerBinding, error) {
-	var value []byte
-	var b nativeOwnerBinding
-	err := tx.QueryRowContext(ctx, `SELECT binding FROM gomar.fixture_owner_consent WHERE hash=$1
-		AND accepted IS NULL FOR UPDATE`, hash[:]).Scan(&value)
-	if err == nil {
-		err = json.Unmarshal(value, &b)
-	}
-	return b, err
-}
-
-func (testNativeOwnerStore) consumeNativeOwnerPreview(ctx context.Context, tx *sql.Tx, hash [32]byte, now time.Time) error {
-	var consumed string
-	return tx.QueryRowContext(ctx, `UPDATE gomar.fixture_owner_consent AS p SET accepted=$2 WHERE p.hash=$1
-		AND p.accepted IS NULL AND p.expires>$2 AND NOT EXISTS (
-			SELECT 1 FROM gomar.fixture_owner_consent AS used WHERE used.intent=p.intent AND used.accepted IS NOT NULL)
-		RETURNING intent`, hash[:], now).Scan(&consumed)
-}
-
+// These paths are mounted only in the synthetic provider test. They use
+// the deployed schema and real Gomar auth, not a simulated acceptance store.
 func checkNativeOwnerConsent(t *testing.T, a *app, ctx context.Context, db *sql.DB,
 	owner, other, otherOwnerSession []*http.Cookie, rotate func() *httptest.ResponseRecorder,
 ) {
@@ -69,17 +27,6 @@ func checkNativeOwnerConsent(t *testing.T, a *app, ctx context.Context, db *sql.
 			t.Fatal(err)
 		}
 	}
-	mustExec(`CREATE TABLE gomar.fixture_owner_designations (
-		intent TEXT PRIMARY KEY, actor_id BIGINT NOT NULL REFERENCES users,
-		business TEXT NOT NULL, outlets JSONB NOT NULL CHECK(jsonb_typeof(outlets)='array'),
-		revision BIGINT NOT NULL CHECK(revision>0)
-	);
-	CREATE TABLE gomar.fixture_owner_consent (
-		hash BYTEA PRIMARY KEY CHECK(octet_length(hash)=32),
-		intent TEXT NOT NULL REFERENCES gomar.fixture_owner_designations, binding JSONB NOT NULL,
-		expires TIMESTAMPTZ NOT NULL, accepted TIMESTAMPTZ CHECK(accepted<expires)
-	);
-	CREATE UNIQUE INDEX fixture_owner_one_acceptance ON gomar.fixture_owner_consent(intent) WHERE accepted IS NOT NULL;`)
 	hashOf := func(cookies []*http.Cookie) [32]byte {
 		t.Helper()
 		for _, cookie := range cookies {
@@ -99,20 +46,14 @@ func checkNativeOwnerConsent(t *testing.T, a *app, ctx context.Context, db *sql.
 		}
 		return id
 	}
-	designated := actorOf(owner)
-	if designated != actorOf(otherOwnerSession) || designated == actorOf(other) || hashOf(owner) == hashOf(otherOwnerSession) {
+	designated, otherActor := actorOf(owner), actorOf(other)
+	if designated != actorOf(otherOwnerSession) || designated == otherActor || hashOf(owner) == hashOf(otherOwnerSession) {
 		t.Fatal("expected two authentic sessions for one provider principal, and a separate principal")
 	}
-	mustExec(`INSERT INTO gomar.fixture_owner_designations VALUES
-		('signup-fixture',$1,'business-a','["outlet-b","outlet-a"]',1),
-		('another-intent',$1,'business-a','["outlet-a","outlet-b"]',1),
-		('stale-intent',$1,'business-a','["outlet-a"]',1)`, designated)
-
-	store := testNativeOwnerStore{}
 	previewPath, acceptPath := "/api/v1/native-owner-fixture/preview", "/api/v1/native-owner-fixture/accept"
 	fixture := http.NewServeMux()
 	fixture.HandleFunc(previewPath, a.providerLoginRoute(func(w http.ResponseWriter, r *http.Request) error {
-		var input struct{ Intent string }
+		var input struct{ Intent, Audience string }
 		body, err := readJSONBody(w, r)
 		if err != nil {
 			return err
@@ -120,7 +61,7 @@ func checkNativeOwnerConsent(t *testing.T, a *app, ctx context.Context, db *sql.
 		if err = decodeJSON(body, &input); err != nil {
 			return err
 		}
-		result, err := a.previewNativeOwnerConsent(r, store, input.Intent)
+		result, err := a.previewNativeOwnerConsent(r, input.Intent, input.Audience)
 		if err != nil {
 			return err
 		}
@@ -136,12 +77,37 @@ func checkNativeOwnerConsent(t *testing.T, a *app, ctx context.Context, db *sql.
 		if err = decodeJSON(body, &input); err != nil {
 			return err
 		}
-		if err = a.confirmNativeOwnerConsent(r, store, input); err != nil {
+		receipt, err := a.confirmNativeOwnerConsent(r, input)
+		if err != nil {
 			return err
 		}
-		w.WriteHeader(204)
+		jsonResponse(w, 200, receipt)
 		return nil
 	}))
+	type receiptRead struct {
+		Target nativeOwnerTarget
+		Ref    string
+	}
+	const readPath = "/api/v1/native-owner-fixture/receipt"
+	mountReceipt := func(handler *http.ServeMux, application *app) {
+		handler.HandleFunc(readPath, application.providerLoginRoute(func(w http.ResponseWriter, r *http.Request) error {
+			var input receiptRead
+			body, err := readJSONBody(w, r)
+			if err != nil {
+				return err
+			}
+			if err := decodeJSON(body, &input); err != nil {
+				return err
+			}
+			result, err := application.readNativeOwnerReceipt(r, input.Target, input.Ref)
+			if err != nil {
+				return err
+			}
+			jsonResponse(w, 200, result)
+			return nil
+		}))
+	}
+	mountReceipt(fixture, a)
 	origin := a.providerAuth.origin
 	call := func(h http.Handler, path string, input any, cookies []*http.Cookie, alter func(*http.Request)) *httptest.ResponseRecorder {
 		t.Helper()
@@ -156,7 +122,7 @@ func checkNativeOwnerConsent(t *testing.T, a *app, ctx context.Context, db *sql.
 			if c.MaxAge >= 0 {
 				r.AddCookie(c)
 			}
-			if c.Name == "csrftoken" {
+			if c.Name == "csrftoken" || c.Name == adminRecoveryCSRF {
 				r.Header.Set("X-CSRFToken", c.Value)
 			}
 		}
@@ -176,7 +142,96 @@ func checkNativeOwnerConsent(t *testing.T, a *app, ctx context.Context, db *sql.
 			t.Fatal("denied request disclosed business scope")
 		}
 	}
-	requestPreview := map[string]string{"intent": "signup-fixture"}
+	const audience = "gomar-hosted-qa"
+	ops := &app{db: db, host: a.host, adminRecovery: true}
+	recoveryCookies := nativeOwnerRecoveryFixture(t, ctx, db, ops, origin)
+	protected := func(r *http.Request) { *r = *r.WithContext(context.WithValue(r.Context(), privateHTTPSKey{}, true)) }
+	type amendment struct {
+		Target nativeOwnerTarget
+		Ref    string
+	}
+	const designatePath, approvePath, revokePath = "/admin/native-owner-fixture/designate", "/admin/native-owner-fixture/approve", "/admin/native-owner-fixture/revoke"
+	const alternateClaimantPath = "/admin/native-owner-fixture/designate-other-test-claimant"
+	for path, action := range map[string]func(*http.Request, amendment) (string, error){
+		designatePath: func(r *http.Request, change amendment) (string, error) {
+			// Only the authenticated provider fixture map supplies a claimant.
+			return "", ops.designateNativeOwner(r, change.Target, designated)
+		},
+		alternateClaimantPath: func(r *http.Request, change amendment) (string, error) {
+			return "", ops.designateNativeOwner(r, change.Target, otherActor)
+		},
+		approvePath: func(r *http.Request, change amendment) (string, error) {
+			return ops.approveNativeOwnerDesignation(r, change.Target)
+		},
+		revokePath: func(r *http.Request, change amendment) (string, error) {
+			return "", ops.revokeNativeOwnerApproval(r, change.Target, change.Ref)
+		},
+	} {
+		fixture.HandleFunc(path, func(w http.ResponseWriter, r *http.Request) {
+			var input amendment
+			body, err := readJSONBody(w, r)
+			if err == nil {
+				err = decodeJSON(body, &input)
+			}
+			if err == nil {
+				var ref string
+				ref, err = action(r, input)
+				if err == nil {
+					jsonResponse(w, 200, map[string]string{"ref": ref})
+					return
+				}
+			}
+			failure(w, err)
+		})
+	}
+	operate := func(path string, target nativeOwnerTarget, approval string, status int) string {
+		t.Helper()
+		w := call(fixture, path, amendment{target, approval}, recoveryCookies, protected)
+		expect(w, status)
+		if status != 200 {
+			return ""
+		}
+		var result map[string]string
+		if err := json.Unmarshal(w.Body.Bytes(), &result); err != nil {
+			t.Fatal(err)
+		}
+		return result["ref"]
+	}
+	firstScope := nativeOwnerTarget{Intent: "signup-fixture", Business: "business-a", Audience: audience,
+		RequestRef: "private-request-first", Outlets: []string{"outlet-b", "outlet-a"}, Revision: 1}
+	otherScope := nativeOwnerTarget{Intent: "another-intent", Business: "business-a", Audience: audience,
+		RequestRef: "private-request-other", Outlets: []string{"outlet-a", "outlet-b"}, Revision: 1}
+	staleScope := nativeOwnerTarget{Intent: "stale-intent", Business: "business-a", Audience: audience,
+		RequestRef: "private-request-stale", Outlets: []string{"outlet-a"}, Revision: 1}
+	requestPreview := map[string]string{"intent": firstScope.Intent, "audience": audience}
+	expect(call(ops.routes(), designatePath, amendment{Target: firstScope}, recoveryCookies, protected), 404)
+	expect(call(fixture, designatePath, amendment{Target: firstScope}, recoveryCookies, nil), 403)
+	expect(call(fixture, designatePath, amendment{Target: firstScope}, owner, protected), 403)
+	operate(designatePath, firstScope, "", 200)
+	operate(designatePath, firstScope, "", 404)
+	expect(call(fixture, previewPath, requestPreview, owner, nil), 404) // unapproved
+	wrongRecovery := firstScope
+	wrongRecovery.Audience = "another-audience"
+	operate(approvePath, wrongRecovery, "", 404)
+	wrongRecovery = firstScope
+	wrongRecovery.Outlets = []string{"outlet-a"}
+	operate(approvePath, wrongRecovery, "", 404)
+	approval := operate(approvePath, firstScope, "", 200)
+	if !nativeOwnerRef(approval, "approval-") {
+		t.Fatal("recovery approval was not recorded")
+	}
+	operate(approvePath, firstScope, "", 404)
+	for _, target := range []nativeOwnerTarget{otherScope, staleScope} {
+		operate(designatePath, target, "", 200)
+		operate(approvePath, target, "", 200)
+	}
+	crossRequest := otherScope
+	crossRequest.Intent, crossRequest.Revision = "unrelated-intent", 1
+	operate(designatePath, crossRequest, "", 404) // opaque private request cannot be reused
+	crossScope := firstScope
+	crossScope.Audience, crossScope.RequestRef, crossScope.Revision = "unrelated-audience", "private-request-conflict", 2
+	operate(designatePath, crossScope, "", 404)
+	expect(call(fixture, previewPath, map[string]string{"intent": firstScope.Intent, "audience": "unrelated-audience"}, owner, nil), 404)
 	expect(call(a.routes(), previewPath, requestPreview, owner, nil), 404)
 	expect(call(a.routes(), acceptPath, nativeOwnerConfirmation{}, owner, nil), 404)
 	expect(call(fixture, previewPath, requestPreview, other, nil), 404)
@@ -189,7 +244,7 @@ func checkNativeOwnerConsent(t *testing.T, a *app, ctx context.Context, db *sql.
 
 	preview := func(intent string, cookies []*http.Cookie) nativeOwnerPreview {
 		t.Helper()
-		reply := call(fixture, previewPath, map[string]string{"intent": intent}, cookies, nil)
+		reply := call(fixture, previewPath, map[string]string{"intent": intent, "audience": audience}, cookies, nil)
 		expect(reply, 200)
 		var result nativeOwnerPreview
 		if err := json.Unmarshal(reply.Body.Bytes(), &result); err != nil || !providerRandom(result.Challenge) {
@@ -213,19 +268,8 @@ func checkNativeOwnerConsent(t *testing.T, a *app, ctx context.Context, db *sql.
 	}
 	confirm(accept, other, 404)
 	confirm(accept, otherOwnerSession, 404)
-	// A real isolated recovery cookie, even accompanied by valid app CSRF,
-	// can manage operations but cannot accept on the owner's behalf.
-	var root user
-	if err := db.QueryRowContext(ctx, "SELECT id,username,password,staff,superuser FROM users WHERE username='same-email@example.invalid'").
-		Scan(&root.id, &root.name, &root.password, &root.staff, &root.superuser); err != nil {
-		t.Fatal(err)
-	}
-	recovery := &app{db: db, host: a.host, adminRecovery: true}
-	rw := httptest.NewRecorder()
-	if err := recovery.startAdminSession(rw, httptest.NewRequest("POST", origin+"/admin/login/", nil).WithContext(ctx), root); err != nil {
-		t.Fatal(err)
-	}
-	adminCookies := rw.Result().Cookies()
+	// Current recovery credentials cannot grant consent as an ordinary owner.
+	adminCookies := slices.Clone(recoveryCookies)
 	for _, cookie := range owner {
 		if cookie.Name == "csrftoken" {
 			adminCookies = append(adminCookies, cookie)
@@ -238,6 +282,8 @@ func checkNativeOwnerConsent(t *testing.T, a *app, ctx context.Context, db *sql.
 	for _, alter := range []func(*nativeOwnerTarget){
 		func(s *nativeOwnerTarget) { s.Intent = "another-intent" },
 		func(s *nativeOwnerTarget) { s.Business = "different-business" },
+		func(s *nativeOwnerTarget) { s.Audience = "different-audience" },
+		func(s *nativeOwnerTarget) { s.RequestRef = "unrelated-request" },
 		func(s *nativeOwnerTarget) { s.Revision++ },
 		func(s *nativeOwnerTarget) { s.Outlets = []string{"outlet-a"} },
 		func(s *nativeOwnerTarget) { s.Outlets = []string{"outlet-a", "different-outlet"} },
@@ -264,21 +310,38 @@ func checkNativeOwnerConsent(t *testing.T, a *app, ctx context.Context, db *sql.
 	mustExec("UPDATE sessions SET expires=1 WHERE token_hash=$1", session[:])
 	confirm(accept, owner, 404)
 	mustExec("UPDATE sessions SET expires=$1 WHERE token_hash=$2", expiry, session[:])
-	stale := preview("stale-intent", owner)
+	stale := preview(staleScope.Intent, owner)
 	staleInput := nativeOwnerConfirmation{Challenge: stale.Challenge, Target: stale.Target, Accept: true}
-	mustExec("UPDATE gomar.fixture_owner_designations SET revision=2 WHERE intent='stale-intent'")
+	var staleApproval string
+	if err := db.QueryRowContext(ctx, "SELECT approval_ref FROM gomar.native_owner_approvals WHERE intent=$1", staleScope.Intent).Scan(&staleApproval); err != nil {
+		t.Fatal(err)
+	}
+	operate(revokePath, staleScope, approval, 404)
+	operate(revokePath, staleScope, staleApproval, 200)
 	confirm(staleInput, owner, 404)
-	latest := preview("stale-intent", owner)
-	latestInput := nativeOwnerConfirmation{Challenge: latest.Challenge, Target: latest.Target, Accept: true}
-	staleHash := sha256.Sum256([]byte(latest.Challenge))
-	mustExec(`UPDATE gomar.fixture_owner_consent SET expires=NOW()-INTERVAL '1 second',
-		binding=jsonb_set(binding,'{Expires}',to_jsonb(NOW()-INTERVAL '1 second'))
-		WHERE hash=$1`, staleHash[:])
-	confirm(latestInput, owner, 404)
+	expect(call(fixture, previewPath, map[string]string{"intent": staleScope.Intent, "audience": audience}, owner, nil), 404)
+	operate(approvePath, staleScope, "", 404) // cannot reactivate a revoked revision
+	staleScope.Revision, staleScope.RequestRef = 2, "private-request-stale-revision-two"
+	operate(designatePath, staleScope, "", 200)
+	latestApproval := operate(approvePath, staleScope, "", 200)
+	confirm(staleInput, owner, 404)
+	expiredChallenge := newProviderRandom()
+	expiredHash := sha256.Sum256([]byte(expiredChallenge))
+	mustExec(`INSERT INTO gomar.native_owner_previews
+		(challenge_hash,session_hash,intent,revision,approval_ref,previewed_at,expires_at)
+		VALUES($1,$2,$3,2,$4,NOW()-INTERVAL '2 minutes',NOW()-INTERVAL '1 minute')`,
+		expiredHash[:], session[:], staleScope.Intent, latestApproval)
+	confirm(nativeOwnerConfirmation{Challenge: expiredChallenge, Target: staleScope, Accept: true}, owner, 404)
+	beforeSupersession := preview(staleScope.Intent, owner)
+	staleScope.Revision, staleScope.RequestRef = 3, "private-request-stale-revision-three"
+	operate(designatePath, staleScope, "", 200)
+	confirm(nativeOwnerConfirmation{Challenge: beforeSupersession.Challenge, Target: beforeSupersession.Target, Accept: true}, owner, 404)
+	expect(call(fixture, previewPath, map[string]string{"intent": staleScope.Intent, "audience": audience}, owner, nil), 404)
+	operate(approvePath, staleScope, "", 200)
 
 	snapshot := func() (accepted, entities, outlets, memberships, grants int) {
 		t.Helper()
-		if err := db.QueryRowContext(ctx, `SELECT (SELECT count(*) FROM gomar.fixture_owner_consent WHERE accepted IS NOT NULL),
+		if err := db.QueryRowContext(ctx, `SELECT (SELECT count(*) FROM gomar.native_owner_receipts),
 			(SELECT count(*) FROM entities),(SELECT count(*) FROM outlets),
 			(SELECT count(*) FROM memberships),(SELECT count(*) FROM outlet_grants)`).
 			Scan(&accepted, &entities, &outlets, &memberships, &grants); err != nil {
@@ -300,11 +363,81 @@ func checkNativeOwnerConsent(t *testing.T, a *app, ctx context.Context, db *sql.
 	first, next := <-done, <-done
 	statuses := []int{first.Code, next.Code}
 	slices.Sort(statuses)
-	if !slices.Equal(statuses, []int{204, 404}) {
+	if !slices.Equal(statuses, []int{200, 404}) {
 		t.Fatalf("one consent should win: %v, %s, %s", statuses, first.Body.String(), next.Body.String())
 	}
 	confirm(accept, owner, 404)
 	confirm(confirmations[1], owner, 404)
+	winning := first
+	if winning.Code != 200 {
+		winning = next
+	}
+	decodeReceipt := func(body []byte) nativeOwnerReceipt {
+		t.Helper()
+		var record nativeOwnerReceipt
+		var fields map[string]json.RawMessage
+		if err := json.Unmarshal(body, &record); err != nil || !nativeOwnerRef(record.Ref, "accept-") ||
+			json.Unmarshal(body, &fields) != nil || len(fields) != 5 || fields["receipt_ref"] == nil || fields["approval_ref"] == nil ||
+			fields["target"] == nil || fields["accepted_at"] == nil || fields["expires_at"] == nil {
+			t.Fatal("invalid or over-broad persisted receipt projection")
+		}
+		return record
+	}
+	receipt := decodeReceipt(winning.Body.Bytes())
+	if receipt.ApprovalRef != approval {
+		t.Fatal("consent receipt not bound to exact approval")
+	}
+	read := func(handler http.Handler, record nativeOwnerReceipt, jar []*http.Cookie, status int) nativeOwnerReceiptStatus {
+		t.Helper()
+		w := call(handler, readPath, receiptRead{record.Target, record.Ref}, jar, nil)
+		expect(w, status)
+		if status != 200 {
+			return nativeOwnerReceiptStatus{}
+		}
+		var snapshot nativeOwnerReceiptStatus
+		if err := json.Unmarshal(w.Body.Bytes(), &snapshot); err != nil ||
+			snapshot.Receipt.Ref != record.Ref || !sameNativeOwnerTarget(snapshot.Receipt.Target, record.Target) ||
+			!snapshot.Receipt.AcceptedAt.Equal(record.AcceptedAt) || snapshot.CheckedAt.Before(snapshot.Receipt.AcceptedAt) {
+			t.Fatal("exact history was not preserved")
+		}
+		return snapshot
+	}
+	expect(call(a.routes(), readPath, receiptRead{receipt.Target, receipt.Ref}, owner, nil), 404)
+	if !read(fixture, receipt, owner, 200).Current {
+		t.Fatal("new exact receipt not current")
+	}
+	expect(call(fixture, previewPath, requestPreview, owner, nil), 404) // cannot renew a consumed intent
+	if read(fixture, receipt, otherOwnerSession, 200).Current {
+		t.Fatal("another same-owner session regained current consent")
+	}
+	read(fixture, receipt, other, 404)
+	read(fixture, receipt, adminCookies, 401)
+	wrong := receipt
+	wrong.Target.Business = "another-business"
+	read(fixture, wrong, owner, 404)
+	wrong = receipt
+	wrong.Target.Audience = "unrelated-audience"
+	read(fixture, wrong, owner, 404)
+	operate(revokePath, firstScope, approval, 200)
+	if read(fixture, receipt, owner, 200).Current {
+		t.Fatal("revoked approval still current")
+	}
+	operate(revokePath, firstScope, approval, 404)
+	operate(approvePath, firstScope, "", 404)
+	expect(call(fixture, previewPath, requestPreview, owner, nil), 404)
+	reopened, err := connectPostgres(ctx, os.Getenv("GOMAR_LOCAL_POSTGRES_TEST_DSN"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer reopened.Close()
+	restarted := http.NewServeMux()
+	mountReceipt(restarted, &app{db: reopened, host: a.host, providerAuth: a.providerAuth})
+	if read(restarted, receipt, owner, 200).Current {
+		t.Fatal("fresh app/connection revived revoked consent")
+	}
+	if _, err := db.ExecContext(ctx, `UPDATE gomar.native_owner_receipts SET receipt_ref=receipt_ref WHERE receipt_ref=$1`, receipt.Ref); err == nil {
+		t.Fatal("durable receipt allowed mutation")
+	}
 	fresh := preview("stale-intent", owner)
 	fromOld := nativeOwnerConfirmation{Challenge: fresh.Challenge, Target: fresh.Target, Accept: true}
 	// Make the real callback stop at predecessor session deletion, after
@@ -350,10 +483,90 @@ func checkNativeOwnerConsent(t *testing.T, a *app, ctx context.Context, db *sql.
 		t.Fatalf("rotation conflict changed consent or access: %d %d %d %d %d", n, e, o, m, g)
 	}
 	renewed := preview("stale-intent", rotated)
-	confirm(nativeOwnerConfirmation{Challenge: renewed.Challenge, Target: renewed.Target, Accept: true}, rotated, 204)
+	w := call(fixture, acceptPath, nativeOwnerConfirmation{Challenge: renewed.Challenge, Target: renewed.Target, Accept: true}, rotated, nil)
+	expect(w, 200)
+	secondReceipt := decodeReceipt(w.Body.Bytes())
+	if !read(fixture, secondReceipt, rotated, 200).Current {
+		t.Fatal("fresh explicit consent was not current")
+	}
+	// Even a separate otherwise well-formed receipt row for the former
+	// revision must hit the intent uniqueness boundary in PostgreSQL.
+	oldKey := sha256.Sum256([]byte(beforeSupersession.Challenge))
+	if _, err := db.ExecContext(ctx, `INSERT INTO gomar.native_owner_receipts
+		(receipt_ref,challenge_hash,intent,revision,approval_ref,accepted_at,expires_at)
+		VALUES($1,$2,$3,2,$4,NOW(),NOW()+INTERVAL '1 second')`,
+		"accept-"+newProviderRandom(), oldKey[:], staleScope.Intent, latestApproval); !isUnique(err) {
+		t.Fatalf("expected database to reject a second receipt for another revision: %v", err)
+	}
+	// An accepted intent cannot be superseded to get a second receipt,
+	// even after explicit revocation and even for a distinct claimant.
+	afterAcceptance := staleScope
+	afterAcceptance.Revision, afterAcceptance.RequestRef = 4, "private-request-after-acceptance"
+	operate(designatePath, afterAcceptance, "", 404)
+	operate(alternateClaimantPath, afterAcceptance, "", 404)
+	afterAcceptance.Outlets = []string{"outlet-a", "outlet-b"}
+	operate(designatePath, afterAcceptance, "", 404)
+	operate(approvePath, afterAcceptance, "", 404)
+	operate(revokePath, staleScope, secondReceipt.ApprovalRef, 200)
+	operate(designatePath, afterAcceptance, "", 404)
+	operate(alternateClaimantPath, afterAcceptance, "", 404)
+	operate(approvePath, staleScope, "", 404)
+	expect(call(fixture, previewPath, map[string]string{"intent": staleScope.Intent, "audience": audience}, rotated, nil), 404)
+	confirm(nativeOwnerConfirmation{Challenge: renewed.Challenge, Target: afterAcceptance, Accept: true}, rotated, 404)
+	if read(restarted, secondReceipt, rotated, 200).Current {
+		t.Fatal("revoked receipt still current")
+	}
 	if n, e, o, m, g := snapshot(); n != 2 || e+o+m+g != 0 {
 		t.Fatalf("fresh explicit consent did not record exactly one additional approval: %d %d %d %d %d", n, e, o, m, g)
 	}
+}
+
+func nativeOwnerRecoveryFixture(t *testing.T, ctx context.Context, db *sql.DB, ops *app, origin string) []*http.Cookie {
+	t.Helper()
+	const username, password = "same-email@example.invalid", "synthetic-recovery-password"
+	if _, err := db.ExecContext(ctx, "UPDATE gomar.users SET password=$1 WHERE username=$2", encodePassword(password), username); err != nil {
+		t.Fatal(err)
+	}
+	ctx = context.WithValue(ctx, privateHTTPSKey{}, true)
+	routes := ops.routes()
+	csrf := httptest.NewRecorder()
+	routes.ServeHTTP(csrf, httptest.NewRequest("GET", origin+"/admin/login/", nil).WithContext(ctx))
+	if csrf.Code != 200 {
+		t.Fatalf("recovery sign-in form unavailable: %d", csrf.Code)
+	}
+	var token string
+	for _, cookie := range csrf.Result().Cookies() {
+		if cookie.Name == adminRecoveryCSRF {
+			token = cookie.Value
+		}
+	}
+	if token == "" {
+		t.Fatal("no isolated recovery CSRF")
+	}
+	form := url.Values{"username": {username}, "password": {password}, "csrfmiddlewaretoken": {token}}
+	req := httptest.NewRequest("POST", origin+"/admin/login/", strings.NewReader(form.Encode())).WithContext(ctx)
+	req.Header.Set("Origin", origin)
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	for _, cookie := range csrf.Result().Cookies() {
+		req.AddCookie(cookie)
+	}
+	result := httptest.NewRecorder()
+	routes.ServeHTTP(result, req)
+	if result.Code != 302 {
+		t.Fatalf("separate recovery authentication failed: %d", result.Code)
+	}
+	var found bool
+	cookies := result.Result().Cookies()
+	for _, cookie := range cookies {
+		found = found || cookie.Name == adminRecoveryCookie && cookie.Secure && cookie.HttpOnly && cookie.Path == "/admin/"
+		if cookie.Name == "sessionid" {
+			t.Fatal("recovery minted an ordinary app session")
+		}
+	}
+	if !found {
+		t.Fatal("no protected recovery session")
+	}
+	return cookies
 }
 
 func waitNativeOwnerBlocked(t *testing.T, ctx context.Context, db *sql.DB, blocker int, queryPart string) int {
