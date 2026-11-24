@@ -104,3 +104,29 @@ enables any operational usage. There is no registered staging/activation
 route or migration, runtime hosted authorization gate, proof of packaged
 MCP activation/suspension, tenancy or RLS choice, real provider, or
 cross-store atomicity.
+
+## Native customer review in the isolated fixture
+
+The local HTTPS fixture can explicitly configure **Revisá el alta** and
+inject a trusted server-owned resolver. With no configuration, a bare
+enable bit, no resolver, non-loopback authority, or an unassigned
+provider account, there is no customer signup workflow. No command-line
+flag, environment setting, or default app wiring installs the resolver.
+
+The browser supplies no actor, intent, business, branch scope, payer
+email, role, or private request reference. The resolver selects an exact
+native designation and a safe display projection, after the user's
+ordinary verified provider session has been checked. The immutable
+designation and freshly resolved labels are bound to a separate hash
+domain on the actual 040 preview. A stale scope or changed label cannot
+use the old challenge, and a new session needs a new review. Only a
+same-origin, CSRF-checked, closed-shape JSON confirmation by the original
+session records the 040 receipt. Questions about payment, access and
+activation stay separate. Reviewing, canceling, or confirming here
+never creates a 041 approved draft, dormant install, operational role
+or MCP credential.
+
+The synthetic fixture proves real local HTTP and browser behavior, not
+a live provider, public signup, payment, entitlement,
+deployment, or operational access. Live display sources would need
+their own verified mapping and readiness decisions.

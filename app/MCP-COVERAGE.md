@@ -459,3 +459,23 @@ lease. To verify server-held evidence for a **known exact reference**, use
 handoff above. The server and handoff still require the original cashier,
 business and outlet; they deny unauthorized readers without leaking timing
 or receipts. No MCP listing or cross-register permission is added.
+
+### Human signup consent: local HTTPS fixture only
+
+The prospective owner opens **Revisá el alta** in the isolated loopback
+fixture using the exact ordinary provider account and original session
+selected by the fixture's trusted resolver. They can review the intended
+organization and branches and explicitly confirm in Gomar. This is
+native-only: a human must see and accept the exact display, not send a
+bearer credential, an email, a private business identifier or a link with
+an asserted scope. An assigned prospect has no operational membership
+or MCP key from this workflow. An existing unrelated operational MCP key
+cannot discover, review or approve signup or receive private signup
+references. It keeps only its prior authorized scope.
+
+The default app has no signup page, API or MCP handoff. The only opt-in
+route here is an authenticated localhost HTTPS test fixture with its
+server-owned resolver, not a sharable link or a hosted signup rollout.
+The exact synthetic HTTP/browser tests cover the intended owner and
+changed session, and the packaged MCP check covers an independently
+scoped operational key plus signup denial and an unassigned owner.

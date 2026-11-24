@@ -21,6 +21,7 @@ type app struct {
 	reservationContacts bool
 	db                  *sql.DB
 	providerAuth        *hostedProviderAuth
+	nativeSignup        *nativeSignupHosted
 	adminRecovery       bool
 	providerOnly        bool
 	providerEmployee    bool
@@ -239,6 +240,7 @@ func (a *app) routes() http.Handler {
 		}
 		apiRoutes[path][method] = handler
 	}
+	a.registerNativeSignup(mux, addAPI, frontend)
 	a.registerKnowledge(addAPI)
 	a.registerPOS(addAPI)
 	a.registerDelivery(addAPI)

@@ -187,9 +187,34 @@ func lockedNativeOwnerSession(ctx context.Context, tx *sql.Tx, session [32]byte)
 	return actor, expires, nil
 }
 
+// The browser adapter also binds the precise reviewed labels. It has a
+// separate hash domain so the same challenge cannot be used on a path
+// which did not verify that display. No schema change or raw token storage.
+type nativeOwnerReviewBinding struct {
+	Target  nativeOwnerTarget
+	Display [32]byte
+}
+
+func nativeOwnerChallengeHash(challenge string, review *nativeOwnerReviewBinding) [32]byte {
+	if review == nil {
+		return sha256.Sum256([]byte(challenge))
+	}
+	h := sha256.New()
+	h.Write([]byte("gomar-native-signup-review-v1\x00"))
+	h.Write(review.Display[:])
+	h.Write([]byte(challenge))
+	var key [32]byte
+	copy(key[:], h.Sum(nil))
+	return key
+}
+
+func (a *app) previewNativeOwnerConsent(r *http.Request, intent, audience string) (nativeOwnerPreview, error) {
+	return a.previewBoundNativeOwnerConsent(r, intent, audience, nil)
+}
+
 // Take the same locks in this order in preview, consent and reading: actor,
 // exact current session, intent/current designation, then preview if needed.
-func (a *app) previewNativeOwnerConsent(r *http.Request, intent, audience string) (nativeOwnerPreview, error) {
+func (a *app) previewBoundNativeOwnerConsent(r *http.Request, intent, audience string, review *nativeOwnerReviewBinding) (nativeOwnerPreview, error) {
 	if !nativeOwnerOpaqueID(intent) || !nativeOwnerOpaqueID(audience) {
 		return nativeOwnerPreview{}, badInput
 	}
@@ -212,11 +237,12 @@ func (a *app) previewNativeOwnerConsent(r *http.Request, intent, audience string
 		return nativeOwnerPreview{}, nativeOwnerUnavailable(err)
 	}
 	now := nativeOwnerNow()
-	if d.Actor != actor || d.Target.Audience != audience || now.Unix() >= sessionExpiry || !d.approvedAt(now) {
+	if d.Actor != actor || d.Target.Audience != audience || now.Unix() >= sessionExpiry || !d.approvedAt(now) ||
+		(review != nil && !sameNativeOwnerTarget(d.Target, review.Target)) {
 		return nativeOwnerPreview{}, nativeOwnerConsentUnavailable
 	}
 	challenge := newProviderRandom()
-	key := sha256.Sum256([]byte(challenge))
+	key := nativeOwnerChallengeHash(challenge, review)
 	expires := nativeOwnerDeadline(now.Add(nativeOwnerConsentLifetime), d.Expires, d.ApprovalExpires.Time, time.Unix(sessionExpiry, 0))
 	var inserted int
 	err = tx.QueryRowContext(ctx, `INSERT INTO gomar.native_owner_previews
@@ -234,8 +260,12 @@ func (a *app) previewNativeOwnerConsent(r *http.Request, intent, audience string
 }
 
 func (a *app) confirmNativeOwnerConsent(r *http.Request, c nativeOwnerConfirmation) (nativeOwnerReceipt, error) {
+	return a.confirmBoundNativeOwnerConsent(r, c, nil)
+}
+
+func (a *app) confirmBoundNativeOwnerConsent(r *http.Request, c nativeOwnerConfirmation, review *nativeOwnerReviewBinding) (nativeOwnerReceipt, error) {
 	target, valid := canonicalNativeOwnerTarget(c.Target)
-	if !c.Accept || !valid || !providerRandom(c.Challenge) {
+	if !c.Accept || !valid || !providerRandom(c.Challenge) || (review != nil && !sameNativeOwnerTarget(target, review.Target)) {
 		return nativeOwnerReceipt{}, badInput
 	}
 	session, err := a.nativeOwnerBrowser(r)
@@ -259,7 +289,7 @@ func (a *app) confirmNativeOwnerConsent(r *http.Request, c nativeOwnerConfirmati
 	if d.Actor != actor || !sameNativeOwnerTarget(d.Target, target) || !d.ApprovalRef.Valid {
 		return nativeOwnerReceipt{}, nativeOwnerConsentUnavailable
 	}
-	key := sha256.Sum256([]byte(c.Challenge))
+	key := nativeOwnerChallengeHash(c.Challenge, review)
 	var boundSession []byte
 	var previewExpiry time.Time
 	err = tx.QueryRowContext(ctx, `SELECT session_hash,expires_at FROM gomar.native_owner_previews

@@ -1,6 +1,7 @@
 import { createApp, defineComponent, h, shallowRef } from 'vue'
 import App from './App.vue'
 import PosRoute from './pos/PosRoute.vue'
+import NativeSignup from './signup/NativeSignup.vue'
 import ReconciliationCloseHandoff from './components/ReconciliationCloseHandoff.vue'
 import { isReconciliationCloseHandoff } from './reconciliation-close-handoff'
 import PayableEligibilityHandoff from './components/PayableEligibilityHandoff.vue'
@@ -23,6 +24,7 @@ window.addEventListener('popstate', updateRoute)
 const Root = defineComponent(() => () => {
   const { path, hash, search, emptyQuery } = route.value
   // Choose the isolated shell before mounting anything that loads staff data.
+  if (path === '/alta') return h(NativeSignup, { key: `${search}:${hash}:${emptyQuery}`, validAddress: !hash && !search && !emptyQuery })
   if (isPayableEligibilityHandoff(path, hash)) return h(PayableEligibilityHandoff, { hash, search: search || (emptyQuery ? '?' : '') })
   if (isReconciliationCloseHandoff(path, hash)) return h(ReconciliationCloseHandoff, { hash, search })
   return path === '/pos' ? h(PosRoute, { hash, search, emptyQuery }) : h(App)
