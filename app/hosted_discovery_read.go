@@ -10,7 +10,7 @@ import (
 )
 
 // Only explicitly injected in the disposable composition. This is not a
-// general hosted-mode setting or authorization for any other route.
+// general hosted-mode setting or authorization outside the documented reads.
 type hostedDiscoveryReadFixture struct{ now func() time.Time }
 
 func (f *hostedDiscoveryReadFixture) clock() time.Time {
@@ -20,26 +20,29 @@ func (f *hostedDiscoveryReadFixture) clock() time.Time {
 	return time.Now().UTC()
 }
 
-// One set-based intersection for native and MCP entity/outlet discovery.
+// One set-based intersection for the documented native and MCP reads.
+// Each statement supplies its own typed discovery_input, including the
+// exact outlet for single-outlet reads.
 // The latest epoch is selected FIRST: missing, disputed, negative or
 // expired evidence cannot fall back to an older positive. Neither a
 // current paid scope nor a membership can substitute for a branch grant.
 // The native entity list alone keeps explicit self-host memberships as
 // candidates, then applies its original capability projection unchanged.
-const hostedDiscoveryReadSQL = `
-WITH granted AS (
+const hostedScopeEligibilitySQL = `
+granted AS (
     SELECT m.entity_id, c.class, o.id AS outlet_id, o.name, paid.business_ref
-    FROM gomar.memberships m JOIN gomar.entities e ON e.id=m.entity_id AND e.active
+    FROM discovery_input i JOIN gomar.memberships m ON m.user_id=i.actor_id
+    JOIN gomar.entities e ON e.id=m.entity_id AND e.active
     JOIN gomar.discovery_entity_class c ON c.entity_id=m.entity_id
     LEFT JOIN LATERAL (
         SELECT o.id,o.name FROM gomar.outlet_grants g
         JOIN gomar.outlets o ON o.id=g.outlet_id AND o.entity_id=m.entity_id AND o.active
-        WHERE g.membership_id=m.id AND ($3::bigint IS NULL OR o.id=$3)
+        WHERE g.membership_id=m.id AND (i.outlet_id IS NULL OR o.id=i.outlet_id)
     ) o ON TRUE
     LEFT JOIN gomar.discovery_paid_outlet paid ON (paid.outlet_id,paid.entity_id)=(o.id,m.entity_id)
-    WHERE m.user_id=$1 AND m.active AND (($5::boolean AND c.class='self_host')
+    WHERE m.active AND ((i.native_entity_list AND c.class='self_host')
       OR m.role IN ('administration','purchasing','accounting','read_only'))
-      AND ($2::bigint IS NULL OR m.entity_id=$2)
+      AND (i.entity_id IS NULL OR m.entity_id=i.entity_id)
 ), relevant AS (
     SELECT DISTINCT business_ref FROM granted WHERE business_ref IS NOT NULL
 ), newest AS (
@@ -49,19 +52,26 @@ WITH granted AS (
 ), eligible AS (
     SELECT n.business_ref
     FROM newest n JOIN gomar.discovery_scope_epoch h ON (h.business_ref,h.epoch)=(n.business_ref,n.epoch)
+    CROSS JOIN discovery_input i
     GROUP BY n.business_ref
-    HAVING COUNT(*)=1 AND BOOL_AND(h.state='eligible' AND h.verified_at<=$4 AND $4<h.valid_until
+    HAVING COUNT(*)=1 AND BOOL_AND(h.state='eligible' AND h.verified_at<=i.checked_at AND i.checked_at<h.valid_until
       AND h.branches=(SELECT array_agg(p.branch_ref ORDER BY p.branch_ref COLLATE "C")
                        FROM gomar.discovery_paid_outlet p WHERE p.business_ref=h.business_ref)
       AND NOT EXISTS (SELECT 1 FROM gomar.discovery_scope_epoch previous
           WHERE previous.business_ref=h.business_ref AND previous.epoch<h.epoch
             AND previous.state<>'eligible' AND previous.verified_at>=h.verified_at))
-)
-SELECT g.entity_id,g.outlet_id,COALESCE(g.name,'')
-FROM granted g
-WHERE (g.class='self_host' AND ($3::bigint IS NULL OR g.outlet_id IS NOT NULL))
-   OR (g.class='paid_hosted' AND EXISTS (SELECT 1 FROM eligible e WHERE e.business_ref=g.business_ref))
-ORDER BY g.entity_id,g.name,g.outlet_id`
+), discovery_admitted AS (
+    SELECT g.entity_id,g.outlet_id,COALESCE(g.name,'') AS name
+    FROM granted g CROSS JOIN discovery_input i
+    WHERE (g.class='self_host' AND (i.outlet_id IS NULL OR g.outlet_id IS NOT NULL))
+       OR (g.class='paid_hosted' AND EXISTS (SELECT 1 FROM eligible e WHERE e.business_ref=g.business_ref))
+)`
+
+const hostedDiscoveryReadSQL = `
+WITH discovery_input(actor_id,entity_id,outlet_id,checked_at,native_entity_list) AS (
+    VALUES ($1::bigint,$2::bigint,$3::bigint,$4::timestamptz,$5::boolean)
+), ` + hostedScopeEligibilitySQL + `
+SELECT entity_id,outlet_id,name FROM discovery_admitted ORDER BY entity_id,name,outlet_id`
 
 type discoveryReadQuerier interface {
 	QueryContext(context.Context, string, ...any) (*sql.Rows, error)

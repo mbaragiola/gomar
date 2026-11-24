@@ -60,10 +60,10 @@ def advance(phase):
 
 
 @contextmanager
-def mcp_session(page, number, outlet):
+def mcp_session(page, number, outlet, *, raw=False):
     status, issued = request(page, "/api/v1/auth/mcp-token", {"entity_id": number, "outlet_id": outlet})
     assert status == 201
-    token = Path(scratch) / f"fixture-token-{number}"
+    token = Path(scratch) / f"fixture-token-{number}-{outlet}"
     with os.fdopen(os.open(token, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600), "w") as stream:
         stream.write(issued["token"] + "\n")
     environ = {key: val for key, val in os.environ.items() if key in ("PATH", "HOME", "LANG", "LD_LIBRARY_PATH")}
@@ -105,7 +105,7 @@ def mcp_session(page, number, outlet):
                 assert "result" in rpc("initialize", {"protocolVersion": "2025-03-26", "capabilities": {},
                                                       "clientInfo": {"name": "gomar-discovery-qa", "version": "1"}})
                 rpc("notifications/initialized", {}, True)
-                yield call
+                yield rpc if raw else call
             finally:
                 peer.stdin.close()
                 try:
@@ -117,42 +117,47 @@ def mcp_session(page, number, outlet):
         token.unlink()
 
 
-with sync_playwright() as playwright:
-    browser = playwright.chromium.launch(executable_path=os.environ.get("QA_CHROME", "/opt/google/chrome/chrome"),
-        args=["--no-sandbox", "--disable-background-networking", "--no-proxy-server",
-              "--host-resolver-rules=EXCLUDE 127.0.0.1, MAP * ~NOTFOUND"])
-    try:
-        with browser.new_context(ignore_https_errors=True) as hosted, browser.new_context(
-                ignore_https_errors=True, is_mobile=True, has_touch=True,
-                viewport={"width": 390, "height": 820}) as phone, browser.new_context(ignore_https_errors=True) as ordinary:
-            for context in (hosted, phone, ordinary):
-                context.route("**/*", lambda route: route.continue_() if route.request.url.startswith(
-                    (origin + "/", control + "/")) else route.abort())
-            desk = browser_scope(hosted, origin)
-            mobile = browser_scope(phone, origin)
-            selfhost = browser_scope(ordinary, control)
-            for page in (desk, mobile):
-                ids(request(page, entities), [701, 702, 703])
-                ids(request(page, entities + "/701/outlets"), [711])
-            with mcp_session(desk, 701, 711) as a, mcp_session(desk, 702, 721) as b:
-                a("gomar_list_entities", [701])
-                a("gomar_list_outlets", [711], 701)
-                a("gomar_list_outlets", None, 702)
-                for phase in ("suspend", "expire"):
-                    advance(phase)
-                    for page in (desk, mobile):
-                        status, result = request(page, entities)
-                        ids((status, result), [702, 703])
-                        assert all(value not in json.dumps(result) for value in ("QA A descubierto", "00000000701", "QA sin permiso mapeado"))
-                        assert request(page, entities + "/701/outlets")[0] == 404
-                        ids(request(page, entities + "/702/outlets"), [721])
-                        ids(request(page, entities + "/703/outlets"), [731])
-                    a("gomar_list_entities", None)
-                    a("gomar_list_outlets", None, 701)
-                    b("gomar_list_entities", [702])
-                    b("gomar_list_outlets", [721], 702)
-                    ids(request(selfhost, entities), [701, 702, 703, 704, 705])
-                    ids(request(selfhost, entities + "/701/outlets"), [712, 711])
-    finally:
-        browser.close()
-print("PASS: actual Chrome and packaged MCP hosted discovery: old A scope denied after suspension/expiry, B and self-host preserved")
+def main():
+    with sync_playwright() as playwright:
+        browser = playwright.chromium.launch(executable_path=os.environ.get("QA_CHROME", "/opt/google/chrome/chrome"),
+            args=["--no-sandbox", "--disable-background-networking", "--no-proxy-server",
+                  "--host-resolver-rules=EXCLUDE 127.0.0.1, MAP * ~NOTFOUND"])
+        try:
+            with browser.new_context(ignore_https_errors=True) as hosted, browser.new_context(
+                    ignore_https_errors=True, is_mobile=True, has_touch=True,
+                    viewport={"width": 390, "height": 820}) as phone, browser.new_context(ignore_https_errors=True) as ordinary:
+                for context in (hosted, phone, ordinary):
+                    context.route("**/*", lambda route: route.continue_() if route.request.url.startswith(
+                        (origin + "/", control + "/")) else route.abort())
+                desk = browser_scope(hosted, origin)
+                mobile = browser_scope(phone, origin)
+                selfhost = browser_scope(ordinary, control)
+                for page in (desk, mobile):
+                    ids(request(page, entities), [701, 702, 703])
+                    ids(request(page, entities + "/701/outlets"), [711])
+                with mcp_session(desk, 701, 711) as a, mcp_session(desk, 702, 721) as b:
+                    a("gomar_list_entities", [701])
+                    a("gomar_list_outlets", [711], 701)
+                    a("gomar_list_outlets", None, 702)
+                    for phase in ("suspend", "expire"):
+                        advance(phase)
+                        for page in (desk, mobile):
+                            status, result = request(page, entities)
+                            ids((status, result), [702, 703])
+                            assert all(value not in json.dumps(result) for value in ("QA A descubierto", "00000000701", "QA sin permiso mapeado"))
+                            assert request(page, entities + "/701/outlets")[0] == 404
+                            ids(request(page, entities + "/702/outlets"), [721])
+                            ids(request(page, entities + "/703/outlets"), [731])
+                        a("gomar_list_entities", None)
+                        a("gomar_list_outlets", None, 701)
+                        b("gomar_list_entities", [702])
+                        b("gomar_list_outlets", [721], 702)
+                        ids(request(selfhost, entities), [701, 702, 703, 704, 705])
+                        ids(request(selfhost, entities + "/701/outlets"), [712, 711])
+        finally:
+            browser.close()
+    print("PASS: actual Chrome and packaged MCP hosted discovery: old A scope denied after suspension/expiry, B and self-host preserved")
+
+
+if __name__ == "__main__":
+    main()
