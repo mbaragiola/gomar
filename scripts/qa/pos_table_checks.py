@@ -93,6 +93,20 @@ def check_saved_table(browser, login, origin, psql, issue, connection):
     assert short_snapshot(psql) == "|".join(["2", "2", "1", "1", *before[4:]])
     with connection(owner_key) as call:
         assert call(tool, target) == compatible
+    # The same issued MCP key stops reading this handoff when the user's
+    # current selling role or exact branch grant is removed.
+    with connection(owner_key) as call:
+        psql("UPDATE gomar.memberships SET role='read_only' WHERE id=1")
+        try:
+            call(tool, target, denied=True)
+        finally:
+            psql("UPDATE gomar.memberships SET role='administration' WHERE id=1")
+        psql("DELETE FROM gomar.outlet_grants WHERE membership_id=1 AND outlet_id=1")
+        try:
+            call(tool, target, denied=True)
+        finally:
+            psql("INSERT INTO gomar.outlet_grants VALUES(1,1)")
+        assert call(tool, target) == compatible
     desktop.context.close()
 
     wrong = open_pos("qa-pos-limited", dest="/pos#entity=1&outlet=2&table=7")

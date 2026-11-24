@@ -83,12 +83,12 @@ INSERT INTO pos_table_check_items(check_id,outlet_id,product_id,revision,quantit
 		case "finalize":
 			handler = a.lockPOSTenderForWrite(a.finalizePOSTable)
 		case "legacy":
-			handler = a.lockOutletForOperation(func(r *http.Request, tx *sql.Tx, m entityMembership, raw []byte) (int, any, error) {
+			handler = lockPOSWriteScope("read_business_data", true, func(r *http.Request, tx *sql.Tx, m entityMembership, raw []byte) (int, any, error) {
 				return postPOSSale(r, tx, m, raw, false)
 			})
 		case "retire":
 			off := app{db: db, enablePOS: true, enablePOSTableChecks: true}
-			handler = off.lockOutletForOperation(off.retirePOSTableCheck)
+			handler = lockPOSWriteScope("read_business_data", true, off.retirePOSTableCheck)
 		}
 		code, data, err := handler(r, tx, actor, []byte(body))
 		if err == nil {
