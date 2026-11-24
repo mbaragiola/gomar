@@ -391,15 +391,7 @@ func (a *app) composeRoutes(observe func(method, pattern string)) http.Handler {
 		http.Redirect(w, r, "/admin/", http.StatusMovedPermanently)
 	})
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if a.classicPasswordsDisabled() {
-			r = providerOnlyRequest(r)
-		}
-		if a.providerEmployee {
-			r = r.WithContext(context.WithValue(r.Context(), providerEmployeeContextKey{}, true))
-		}
-		if a.managedEmployeesEnabled() {
-			r = r.WithContext(context.WithValue(r.Context(), employeeLoginContextKey{}, true))
-		}
+		r = a.requestAuthPolicy(r)
 		w.Header().Set("X-Gomar-Experimental", "foundation")
 		w.Header().Set("X-Content-Type-Options", "nosniff")
 		w.Header().Set("X-Frame-Options", "DENY")
@@ -416,6 +408,21 @@ func (a *app) composeRoutes(observe func(method, pattern string)) http.Handler {
 		}
 		mux.ServeHTTP(w, r)
 	})
+}
+
+// requestAuthPolicy adds the configured browser and MCP authentication realm
+// to a request before it reaches a handler. It does not choose routes.
+func (a *app) requestAuthPolicy(r *http.Request) *http.Request {
+	if a.classicPasswordsDisabled() {
+		r = providerOnlyRequest(r)
+	}
+	if a.providerEmployee {
+		r = r.WithContext(context.WithValue(r.Context(), providerEmployeeContextKey{}, true))
+	}
+	if a.managedEmployeesEnabled() {
+		r = r.WithContext(context.WithValue(r.Context(), employeeLoginContextKey{}, true))
+	}
+	return r
 }
 
 func withEntityPath(r *http.Request) *http.Request {

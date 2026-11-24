@@ -22,10 +22,10 @@ import (
 )
 
 // This isolated listener has no fallback to app.routes, shell, assets, or
-// operational write routes. It takes an ordinary synthetic provider session
-// and scoped bearer keys issued out of band. It does not exercise the app
-// router's provider-only or employee request policy. Auth handlers retain
-// their usual session upkeep. Loopback HTTP uses the unchanged Go MCP client.
+// operational write routes. Synthetic sessions and bearer keys are issued out
+// of band. It uses the app's request-level authentication policy; login
+// and session upkeep remain the responsibility of the existing handlers.
+// Loopback HTTP uses the unchanged Go MCP client.
 func newDeliveryPilotTestServer(t *testing.T, a *app) *httptest.Server {
 	t.Helper()
 	if a.hostedDiscoveryRead == nil {
@@ -61,7 +61,7 @@ func newDeliveryPilotTestServer(t *testing.T, a *app) *httptest.Server {
 			http.NotFound(w, r)
 			return
 		}
-		mux.ServeHTTP(w, r)
+		mux.ServeHTTP(w, a.requestAuthPolicy(r))
 	}))
 	t.Cleanup(s.Close)
 	return s
