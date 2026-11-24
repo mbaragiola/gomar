@@ -19,7 +19,7 @@ import (
 func checkNativeStagedActivation(t *testing.T, ctx context.Context, db *sql.DB, a, ops *app, ownerID int64,
 	owner, other, sameOwnerDifferentSession, recovery []*http.Cookie,
 	call func(http.Handler, string, any, []*http.Cookie, func(*http.Request)) *httptest.ResponseRecorder,
-	protected func(*http.Request), consent func(nativeOwnerTarget) nativeOwnerReceipt, revoke func(nativeOwnerReceipt),
+	protected func(*http.Request), consent func(nativeOwnerTarget, string, []nativeInstallBranch) nativeOwnerReceipt, revoke func(nativeOwnerReceipt),
 ) {
 	t.Helper()
 	const stagePath = "/api/v1/staged-activation-fixture/record"
@@ -101,10 +101,15 @@ func checkNativeStagedActivation(t *testing.T, ctx context.Context, db *sql.DB, 
 	}
 	prepare := func(caseName, cuit string) stagedCase {
 		t.Helper()
-		receipt := consent(nativeOwnerTarget{Intent: "stage-" + caseName, Business: "org-" + caseName, Audience: "gomar-hosted-qa",
-			RequestRef: "private-stage-" + caseName, Outlets: []string{"outlet-a", "outlet-b"}, Revision: 1})
-		draft := nativeInstallDraft{Target: receipt.Target, ConsentRef: receipt.Ref, LegalName: "Privado " + caseName, CUIT: cuit,
-			Initiator: "stage-initiator", Claimant: "stage-claimant", Branches: []nativeInstallBranch{{"outlet-a", "Privado A " + caseName}, {"outlet-b", "Privado B " + caseName}}}
+		draft := nativeInstallDraft{
+			Target: nativeOwnerTarget{Intent: "stage-" + caseName, Business: "org-" + caseName, Audience: "gomar-hosted-qa",
+				RequestRef: "private-stage-" + caseName, Outlets: []string{"outlet-a", "outlet-b"}, Revision: 1},
+			DisplayOrganization: "Marca local " + caseName, LegalName: "Privado " + caseName, CUIT: cuit,
+			Initiator: "stage-initiator", Claimant: "stage-claimant",
+			Branches: []nativeInstallBranch{{"outlet-a", "Privado A " + caseName}, {"outlet-b", "Privado B " + caseName}},
+		}
+		receipt := consent(draft.Target, draft.DisplayOrganization, draft.Branches)
+		draft.Target, draft.ConsentRef = receipt.Target, receipt.Ref
 		nativeVerify := func(_ context.Context, input nativeInstallRequest) (nativeInstallObservation, error) {
 			// This is only the separate first-install fixture, not the
 			// authority for staging operational-schema rows below.

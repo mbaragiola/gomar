@@ -519,13 +519,33 @@ func checkNativeOwnerConsent(t *testing.T, a *app, ctx context.Context, db *sql.
 	if n, e, o, m, g := snapshot(); n != 2 || e+o+m+g != 0 {
 		t.Fatalf("fresh explicit consent did not record exactly one additional approval: %d %d %d %d %d", n, e, o, m, g)
 	}
-	consent := func(target nativeOwnerTarget) nativeOwnerReceipt {
+	// These two installation fixtures now opt in to a genuinely bound
+	// confirmation with an exact synthetic display through the 040 locks.
+	consent := func(target nativeOwnerTarget, organization string, branches []nativeInstallBranch) nativeOwnerReceipt {
+		canonical, valid := canonicalNativeOwnerTarget(target)
+		ordered, validDisplay := canonicalNativeOwnerDisplay(canonical, organization, branches)
+		if !valid || !validDisplay {
+			t.Fatal("invalid synthetic display")
+		}
 		operate(designatePath, target, "", 200)
 		operate(approvePath, target, "", 200)
-		pr := preview(target.Intent, rotated)
-		w := call(fixture, acceptPath, nativeOwnerConfirmation{Challenge: pr.Challenge, Target: pr.Target, Accept: true}, rotated, nil)
+		binding := nativeOwnerReviewBinding{Actor: designated, Target: canonical,
+			Display: nativeOwnerDisplayDigest(designated, canonical, organization, ordered)}
+		var pr nativeOwnerPreview
+		w := call(a.providerLoginRoute(func(_ http.ResponseWriter, r *http.Request) error {
+			var err error
+			pr, err = a.previewBoundNativeOwnerConsent(r, canonical.Intent, canonical.Audience, &binding)
+			return err
+		}), previewPath, struct{}{}, rotated, nil)
 		expect(w, 200)
-		return decodeReceipt(w.Body.Bytes())
+		var receipt nativeOwnerReceipt
+		w = call(a.providerLoginRoute(func(_ http.ResponseWriter, r *http.Request) error {
+			var err error
+			receipt, err = a.confirmBoundNativeOwnerConsent(r, nativeOwnerConfirmation{Challenge: pr.Challenge, Target: pr.Target, Accept: true}, &binding)
+			return err
+		}), acceptPath, struct{}{}, rotated, nil)
+		expect(w, 200)
+		return receipt
 	}
 	revoke := func(r nativeOwnerReceipt) { operate(revokePath, r.Target, r.ApprovalRef, 200) }
 	t.Run("dormant_install", func(t *testing.T) {

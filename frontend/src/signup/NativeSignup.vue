@@ -122,11 +122,11 @@ function cancelReview() {
         <p>Volvé a abrir el alta desde Gomar con la cuenta indicada.</p>
       </template>
       <template v-else-if="phase === 'review' && review">
-        <h2 id="native-signup-heading" ref="step" tabindex="-1">{{ review.organization }}</h2>
+        <h2 id="native-signup-heading" ref="step" class="reviewed-label" tabindex="-1">{{ review.organization }}</h2>
         <div>
           <h3>Locales incluidos</h3>
           <ul class="gomar-feature-list" aria-label="Locales incluidos">
-            <li v-for="branch in review.branches" :key="branch">{{ branch }}</li>
+            <li v-for="branch in review.branches" :key="branch" class="reviewed-label">{{ branch }}</li>
           </ul>
         </div>
         <p>Confirmá solo si la organización y los locales son los que esperabas. Esto no confirma un pago ni habilita el acceso.</p>
@@ -164,5 +164,6 @@ function cancelReview() {
 .native-signup { max-inline-size: 38rem; }
 .native-signup > * + * { margin-block-start: 1rem; }
 .native-signup h2, .native-signup li { overflow-wrap: anywhere; }
+.reviewed-label { white-space: break-spaces; }
 .native-signup button { min-block-size: 44px; }
 </style>
