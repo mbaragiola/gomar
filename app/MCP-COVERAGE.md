@@ -217,6 +217,10 @@ and non-review runs never send a link. A signed-out operator can sign in
 normally and reopen the link. The handoff does not open regular review
 or change data; the operator must navigate to Financial Reconciliation
 and use the existing native review and close workflow with fresh checks.
+Once Gomar confirms a native close, its reconciliation workspace refreshes
+the run's history and shows the saved closed status and unresolved count in
+the run list. This refresh uses the existing native read permissions; it
+does not extend the MCP handoff or expose review data to MCP.
 
 ### Exact POS catalog product
 

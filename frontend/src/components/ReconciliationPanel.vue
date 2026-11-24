@@ -43,6 +43,7 @@ const selectedCash = reactive<Record<number, number | null>>({})
 const acknowledgements = reactive<Record<number, boolean>>({})
 const busy = ref(false)
 let generation = 0
+let scopeGeneration = 0
 let uploadGeneration = 0
 let candidateGeneration = 0
 let rowGeneration = 0
@@ -118,10 +119,14 @@ async function loadRuns(refreshCurrent = true) {
   try {
     const values = await request<ReconciliationRun[]>(`/entities/${entityId}/reconciliations`)
     if (!isCurrent(token, entityId)) return
-    runs.value = values
+    const known = new Map(runs.value.map((run) => [run.id, run]))
+    runs.value = values.map((run) => {
+      const prior = known.get(run.id)
+      return prior && prior.revision > run.revision ? prior : run
+    })
     if (refreshCurrent && current.value) {
-      const refreshed = values.find((item) => item.id === current.value?.id)
-      if (refreshed) current.value = refreshed
+      const refreshed = runs.value.find((item) => item.id === current.value?.id)
+      if (refreshed && refreshed.revision >= current.value.revision) current.value = refreshed
     }
   } catch (value) { if (token === generation) report(value) }
 }
@@ -154,8 +159,11 @@ async function openRun(run: ReconciliationRun, options: { preserveUpload?: boole
   busy.value = false
   clearTransient(options)
   try {
-    const detail = await request<ReconciliationRun>(`/entities/${entityId}/reconciliations/${run.id}`)
-    if (token !== generation) return
+    const result = await request<ReconciliationRun>(`/entities/${entityId}/reconciliations/${run.id}`)
+    if (!isCurrent(token, entityId)) return
+    // A close can commit while a request to reopen the run is still returning its old detail.
+    const closed = runs.value.find((item) => item.id === run.id && item.state === 'closed')
+    const detail = closed && closed.revision > result.revision ? closed : result
     if (current.value?.id === run.id && detail.revision < current.value.revision) return
     const preservedDefaultOutletId = current.value?.id === run.id && (options.preserveUpload || file.value !== null)
       ? defaultOutletId.value
@@ -322,22 +330,29 @@ async function decide(item: ReconciliationCandidate, decision: 'confirmed' | 're
         operation_key: operationKey(),
       }),
     })
-    if (!isCurrent(token, entityId, runId) || !current.value) return
+    if (!isCurrent(token, entityId, runId) || !current.value || result.revision < current.value.revision) return
     current.value.revision = result.revision
-    await loadCandidates(generation)
+    await Promise.all([loadCandidates(token), loadEvents(token)])
   } catch (value) { if (isCurrent(token, entityId, runId)) report(value) }
 }
 
 async function closeRun() {
   if (!current.value || !window.confirm('¿Cerrar la conciliación con las filas sin resolver visibles?')) return
   const token = generation
+  const scopeToken = scopeGeneration
   const entityId = props.entityId
   const runId = current.value.id
   try {
     const result = await request<ReconciliationRun>(`/entities/${entityId}/reconciliations/${runId}/close`, {
       method: 'POST', body: JSON.stringify({ expected_revision: current.value.revision, operation_key: operationKey() }),
     })
-    if (isCurrent(token, entityId, runId)) current.value = result
+    if (scopeToken !== scopeGeneration || entityId !== props.entityId) return
+    // Keep the authoritative summary even after Back or a different run is opened.
+    runs.value = runs.value.map((run) => run.id === runId && result.revision >= run.revision ? result : run)
+    if (current.value?.id !== runId || current.value.revision > result.revision) return
+    if (pendingDetail?.token === generation && pendingDetail.runId !== runId) return
+    current.value = result
+    await loadEvents(generation)
   } catch (value) { if (isCurrent(token, entityId, runId)) report(value) }
 }
 
@@ -427,6 +442,7 @@ watch(
 
 watch(() => [props.entityId, props.selectedOutletId], () => {
   generation += 1
+  scopeGeneration += 1
   candidateGeneration += 1
   rowGeneration += 1
   eventGeneration += 1
@@ -446,6 +462,7 @@ onMounted(() => {
 
 onBeforeUnmount(() => {
   generation += 1
+  scopeGeneration += 1
   candidateGeneration += 1
   rowGeneration += 1
   eventGeneration += 1
