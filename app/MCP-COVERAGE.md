@@ -471,11 +471,16 @@ bearer credential, an email, a private business identifier or a link with
 an asserted scope. An assigned prospect has no operational membership
 or MCP key from this workflow. An existing unrelated operational MCP key
 cannot discover, review or approve signup or receive private signup
-references. It keeps only its prior authorized scope.
+references. It keeps only its prior authorized scope. The exact approved
+display also stays in native consent and the protected recovery draft;
+the digest, legal name, CUIT, and private branch-label mapping are not
+MCP data. The draft and dormant install remain unregistered native
+operations, not MCP actions or handoffs.
 
 The default app has no signup page, API or MCP handoff. The only opt-in
 route here is an authenticated localhost HTTPS test fixture with its
 server-owned resolver, not a sharable link or a hosted signup rollout.
 The exact synthetic HTTP/browser tests cover the intended owner and
-changed session, and the packaged MCP check covers an independently
-scoped operational key plus signup denial and an unassigned owner.
+changed session and a persisted exact recovery draft after a fixture
+restart. The packaged MCP check covers an independently scoped
+operational key plus signup denial and an unassigned owner.

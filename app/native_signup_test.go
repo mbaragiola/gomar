@@ -82,6 +82,8 @@ type signupTestPeer struct {
 	db          *sql.DB
 	application *app
 	server      *httptest.Server
+	recovery    func(string) *http.Request
+	owner       func(string, string) *http.Request
 }
 
 func signupFixture(t *testing.T, ctx context.Context, db *sql.DB) signupTestPeer {
@@ -99,7 +101,7 @@ func signupFixture(t *testing.T, ctx context.Context, db *sql.DB) signupTestPeer
 	// still come from Gomar's exact verified provider-session entry point.
 	presets := map[string]verifiedProviderIdentity{}
 	actors := map[string]int64{}
-	for _, name := range []string{"primary", "changed", "desk", "mobile", "other", "staff"} {
+	for _, name := range []string{"primary", "changed", "desk", "mobile", "legacy", "other", "staff"} {
 		identity := verifiedProviderIdentity{"google", "https://accounts.google.com", "signup-fixture-" + name}
 		presets[name] = identity
 		r := httptest.NewRequest("GET", origin+"/__signup-fixture-sign-in/"+name, nil).WithContext(ctx)
@@ -138,19 +140,19 @@ func signupFixture(t *testing.T, ctx context.Context, db *sql.DB) signupTestPeer
 	}
 	const audience = "signup-fixture-hosted"
 	plans := map[int64]nativeSignupPlan{}
-	for _, name := range []string{"primary", "changed", "desk", "mobile"} {
-		target := nativeOwnerTarget{Intent: "signup-" + name, Business: "private-business-" + name, Audience: audience,
-			RequestRef: "private-request-" + name, Revision: 7, Outlets: []string{"outlet-a", "outlet-b"}}
+	for _, name := range []string{"primary", "changed", "desk", "mobile", "legacy"} {
+		target := signupFixtureTarget(name)
 		if err := ops.designateNativeOwner(recoveryRequest("/admin/__signup-fixture-designate"), target, actors[name]); err != nil {
 			t.Fatal(err)
 		}
 		if _, err := ops.approveNativeOwnerDesignation(recoveryRequest("/admin/__signup-fixture-approve"), target); err != nil {
 			t.Fatal(err)
 		}
-		plans[actors[name]] = nativeSignupPlan{Actor: actors[name], Target: target, Organization: "QA Organización " + name,
-			Branches: []nativeInstallBranch{{Ref: "outlet-b", Name: "Norte"}, {Ref: "outlet-a", Name: "Centro"}}}
+		plans[actors[name]] = nativeSignupPlan{Actor: actors[name], Target: target, Organization: "QA Organización  " + name,
+			Branches: []nativeInstallBranch{{Ref: "outlet-b", Name: "Norte"}, {Ref: "outlet-a", Name: "Local  Centro"}}}
 	}
 	var lock sync.RWMutex
+	original := map[string][]*http.Cookie{}
 	a.nativeSignup = &nativeSignupHosted{Enabled: true, Origin: origin, Audience: audience,
 		Resolver: func(_ context.Context, actor int64) (nativeSignupPlan, error) {
 			lock.RLock()
@@ -166,7 +168,8 @@ func signupFixture(t *testing.T, ctx context.Context, db *sql.DB) signupTestPeer
 	mux := http.NewServeMux()
 	mux.Handle("/", configured)
 	mux.HandleFunc("GET /__signup-fixture-sign-in/{preset}", func(w http.ResponseWriter, r *http.Request) {
-		id, ok := presets[r.PathValue("preset")]
+		name := r.PathValue("preset")
+		id, ok := presets[name]
 		if !ok || !a.nativeSignupLocal(r, r.URL.Path) {
 			http.NotFound(w, r)
 			return
@@ -176,6 +179,13 @@ func signupFixture(t *testing.T, ctx context.Context, db *sql.DB) signupTestPeer
 			failure(w, err)
 			return
 		}
+		lock.Lock()
+		if original[name] == nil {
+			// Keep the first synthetic session in memory only so the new
+			// fixture app can prove it uses the actual browser's session.
+			original[name] = (&http.Response{Header: w.Header()}).Cookies()
+		}
+		lock.Unlock()
 		w.WriteHeader(204)
 	})
 	mux.HandleFunc("GET /__signup-fixture-change-label", func(w http.ResponseWriter, r *http.Request) {
@@ -197,7 +207,25 @@ func signupFixture(t *testing.T, ctx context.Context, db *sql.DB) signupTestPeer
 	})
 	router = mux
 	server.StartTLS()
-	return signupTestPeer{t, ctx, db, a, server}
+	ownerRequest := func(name, path string) *http.Request {
+		r := httptest.NewRequest("POST", origin+path, nil).WithContext(ctx)
+		r.Header.Set("Origin", origin)
+		lock.RLock()
+		defer lock.RUnlock()
+		for _, cookie := range original[name] {
+			r.AddCookie(cookie)
+			if cookie.Name == "csrftoken" {
+				r.Header.Set("X-CSRFToken", cookie.Value)
+			}
+		}
+		return r
+	}
+	return signupTestPeer{t: t, ctx: ctx, db: db, application: a, server: server, recovery: recoveryRequest, owner: ownerRequest}
+}
+
+func signupFixtureTarget(name string) nativeOwnerTarget {
+	return nativeOwnerTarget{Intent: "signup-" + name, Business: "private-business-" + name, Audience: "signup-fixture-hosted",
+		RequestRef: "private-request-" + name, Revision: 7, Outlets: []string{"outlet-a", "outlet-b"}}
 }
 
 func (f signupTestPeer) client() *http.Client {
@@ -285,7 +313,7 @@ func TestPostgresNativeSignup(t *testing.T) {
 		var visible map[string]json.RawMessage
 		if json.Unmarshal(raw, &got) != nil || json.Unmarshal(raw, &visible) != nil ||
 			len(visible) != 3 || !providerRandom(got.Challenge) || got.Organization == "" || len(got.Branches) != 2 ||
-			got.Branches[0] != "Centro" || got.Branches[1] != "Norte" {
+			got.Branches[0] != "Local  Centro" || got.Branches[1] != "Norte" {
 			t.Fatal("review did not show only the safe exact display")
 		}
 		return got
@@ -319,14 +347,33 @@ func TestPostgresNativeSignup(t *testing.T) {
 	if err != nil || confirmations != 1 || drafts+pending != 0 || memberships != 1 {
 		t.Fatalf("unexpected signup effects: %d %d %d %d %v", confirmations, drafts, pending, memberships, err)
 	}
-	testNativeSignupChrome(t, ctx, f)
+	// The existing unbound internal path is never grandfathered into a
+	// draft/install, even when the provider consent is still current.
+	legacy := f.client()
+	login(legacy, "legacy")
+	oldTarget := signupFixtureTarget("legacy")
+	old, err := f.application.previewNativeOwnerConsent(f.owner("legacy", "/__fixture-review"), oldTarget.Intent, oldTarget.Audience)
+	if err != nil {
+		t.Fatalf("legacy fixture preview: %v", err)
+	}
+	oldReceipt, err := f.application.confirmNativeOwnerConsent(f.owner("legacy", "/__fixture-confirm"),
+		nativeOwnerConfirmation{Challenge: old.Challenge, Target: old.Target, Accept: true})
+	if err != nil {
+		t.Fatalf("legacy fixture confirmation: %v", err)
+	}
+	names := []string{"primary"}
+	if testNativeSignupChrome(t, ctx, f) {
+		names = append(names, "desk", "mobile")
+	}
+	f.server.Close()
+	checkSignupDisplayAfterRestart(t, f, names, oldReceipt)
 }
 
-func testNativeSignupChrome(t *testing.T, ctx context.Context, f signupTestPeer) {
+func testNativeSignupChrome(t *testing.T, ctx context.Context, f signupTestPeer) bool {
 	t.Helper()
 	script := os.Getenv("GOMAR_QA_SIGNUP_BROWSER_SCRIPT")
 	if script == "" {
-		return
+		return false
 	} // The regular PostgreSQL suite has no browser toolchain.
 	python, mcp := os.Getenv("GOMAR_QA_SIGNUP_PYTHON"), os.Getenv("GOMAR_QA_SIGNUP_MCP")
 	if !filepath.IsAbs(script) || !filepath.IsAbs(python) || !filepath.IsAbs(mcp) {
@@ -348,8 +395,9 @@ func testNativeSignupChrome(t *testing.T, ctx context.Context, f signupTestPeer)
 	var receipts, drafts, pending, memberships int
 	if err = f.db.QueryRowContext(ctx, `SELECT (SELECT count(*) FROM gomar.native_owner_receipts),
 		(SELECT count(*) FROM gomar.native_owner_install_drafts),(SELECT count(*) FROM gomar.native_owner_pending_installs),
-		(SELECT count(*) FROM gomar.memberships)`).Scan(&receipts, &drafts, &pending, &memberships); err != nil || receipts != 3 || drafts+pending != 0 || memberships != 1 {
+		(SELECT count(*) FROM gomar.memberships)`).Scan(&receipts, &drafts, &pending, &memberships); err != nil || receipts != 4 || drafts+pending != 0 || memberships != 1 {
 		t.Fatal("unexpected real browser effects")
 	}
 	t.Log(strings.TrimSpace(string(output)))
+	return true
 }

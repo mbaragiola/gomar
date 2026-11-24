@@ -36,6 +36,23 @@ def open_context(browser, mobile=False):
     return context
 
 
+def expect_visible_spacing(locator, exact):
+    assert locator.text_content() == exact
+    # Accessible names and Playwright's default text assertions normalize
+    # spaces. Measure rendered glyph ranges so a collapsing CSS rule fails.
+    assert locator.evaluate("""node => {
+      const label = node.firstChild;
+      const offset = label.data.indexOf('  ');
+      if (offset < 0 || getComputedStyle(node).whiteSpace !== 'break-spaces') return false;
+      const spaces = new Range();
+      spaces.setStart(label, offset);
+      spaces.setEnd(label, offset + 1);
+      const one = spaces.getBoundingClientRect().width;
+      spaces.setEnd(label, offset + 2);
+      return one > 0 && spaces.getBoundingClientRect().width > one + 1;
+    }""")
+
+
 def check_native(browser, actor, mobile):
     with open_context(browser, mobile) as context:
         page = context.new_page()
@@ -53,8 +70,12 @@ def check_native(browser, actor, mobile):
         button = page.get_by_role("button", name="Ver solicitud")
         button.focus()
         button.press("Enter")
-        expect(page.get_by_role("heading", name=f"QA Organización {actor}")).to_be_focused()
-        expect(page.get_by_role("list", name="Locales incluidos").locator("li")).to_have_text(["Centro", "Norte"])
+        heading = page.get_by_role("heading", name=f"QA Organización {actor}")
+        branches = page.get_by_role("list", name="Locales incluidos").locator("li")
+        expect(heading).to_be_focused()
+        expect(branches).to_have_text(["Local Centro", "Norte"])
+        expect_visible_spacing(heading, f"QA Organización  {actor}")
+        expect_visible_spacing(branches.first, "Local  Centro")
         expect(page.get_by_text("Esto no confirma un pago ni habilita el acceso.", exact=False)).to_be_visible()
         assert not writes
         assert page.locator("main").evaluate("node => node.scrollWidth <= node.clientWidth")
@@ -65,6 +86,11 @@ def check_native(browser, actor, mobile):
             assert stat.S_ISDIR(parent.st_mode) and stat.S_IMODE(parent.st_mode) == 0o700 and parent.st_uid == os.geteuid()
             with os.fdopen(os.open(output, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600), "wb") as image:
                 image.write(page.screenshot())
+        if mobile:
+            page.set_viewport_size({"width": 320, "height": 820})
+            expect(heading).to_be_visible()
+            expect(branches.first).to_be_visible()
+            assert page.evaluate("document.documentElement.scrollWidth <= window.innerWidth")
         page.get_by_role("button", name="Volver sin confirmar").click()
         expect(page.get_by_role("heading", name="Confirmá tu solicitud")).to_be_focused()
         assert not writes

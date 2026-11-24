@@ -12,8 +12,6 @@ import (
 	"net/http"
 	"net/netip"
 	"net/url"
-	"slices"
-	"strings"
 )
 
 // Only explicitly injected by the HTTPS loopback test fixture. No flag,
@@ -99,24 +97,17 @@ func (a *app) resolveNativeSignup(r *http.Request, cfg *nativeSignupHosted, sess
 		return nativeSignupPlan{}, nativeOwnerReviewBinding{}, nativeOwnerConsentUnavailable
 	}
 	target, valid := canonicalNativeOwnerTarget(plan.Target)
-	if !valid || target.Audience != cfg.Audience || !nativeInstallName(plan.Organization) || len(plan.Branches) != len(target.Outlets) {
+	if !valid || target.Audience != cfg.Audience {
 		return nativeSignupPlan{}, nativeOwnerReviewBinding{}, nativeOwnerConsentUnavailable
 	}
-	plan.Target = target
-	plan.Branches = slices.Clone(plan.Branches)
-	slices.SortFunc(plan.Branches, func(a, b nativeInstallBranch) int { return strings.Compare(a.Ref, b.Ref) })
-	names := make(map[string]bool, len(plan.Branches))
-	for i, branch := range plan.Branches {
-		if branch.Ref != target.Outlets[i] || !nativeInstallName(branch.Name) || names[branch.Name] {
-			return nativeSignupPlan{}, nativeOwnerReviewBinding{}, nativeOwnerConsentUnavailable
-		}
-		names[branch.Name] = true
+	branches, valid := canonicalNativeOwnerDisplay(target, plan.Organization, plan.Branches)
+	if !valid {
+		return nativeSignupPlan{}, nativeOwnerReviewBinding{}, nativeOwnerConsentUnavailable
 	}
-	serialized, err := json.Marshal(plan)
-	if err != nil {
-		return nativeSignupPlan{}, nativeOwnerReviewBinding{}, err
-	}
-	return plan, nativeOwnerReviewBinding{Target: target, Display: sha256.Sum256(serialized)}, nil
+	plan.Target, plan.Branches = target, branches
+	return plan, nativeOwnerReviewBinding{
+		Actor: actor, Target: target, Display: nativeOwnerDisplayDigest(actor, target, plan.Organization, branches),
+	}, nil
 }
 
 func (a *app) canOpenNativeSignup(r *http.Request, cfg *nativeSignupHosted) bool {

@@ -63,17 +63,17 @@ does not claim it is safe to boot an older executable on a newer schema.
 
 The unregistered install seam accepts only the designated claimant's
 original active provider session, exact current native consent and
-recovery approval, a private local draft, and an independently
-authenticated, short-lived Billing observation for a new server-minted
+recovery approval, a private local draft matching the owner-reviewed
+display, and an independently authenticated, short-lived Billing observation for a new server-minted
 nonce. The synthetic verifier binds the expected issuer, recipient,
 purpose and schema and exact audience, intent, business, request,
 claimant, initiator, branches, revision and consent. The minimal
 Billing result is not itself authentication or a complete binding.
 The verifier is called outside native transactions; the original
 request, current native state, timestamp and deadline are checked again
-before a single native commit. CUIT, legal and outlet names, browser
-digests and credentials are not sent to this verifier or returned in
-the install receipt. Existing operational CUITs are refused, not
+before a single native commit. CUIT, legal or display organization names,
+branch labels, display or browser digests, and credentials are not sent
+to this verifier or returned in the install receipt. Existing operational CUITs are refused, not
 adopted; the short native check does not reserve a CUIT in ordinary
 operations after the dormant commit.
 
@@ -125,6 +125,28 @@ session records the 040 receipt. Questions about payment, access and
 activation stay separate. Reviewing, canceling, or confirming here
 never creates a 041 approved draft, dormant install, operational role
 or MCP credential.
+
+### Durable display evidence at the recovery handoff
+
+Migration 042 adds one nullable, immutable version-1 display digest to
+consent receipts and a separate local display-organization field to
+drafts. The digest binds the exact native actor, audience, intent,
+business, request, revision, display organization and approved branch
+references paired with their exact labels, in the same order the browser
+shows them. Only explicit signup confirmation records it in the same
+transaction as the consent. Legacy receipts and drafts are not
+backfilled; exact history stays readable but cannot create a new draft
+or pending install without this evidence.
+
+The protected recovery operator still vets the legal entity name and
+CUIT independently. The owner approved the display organization and
+branch labels, not the legal identity or CUIT; a different legal name
+is permitted only in its separate field. Recovery draft creation and
+both native preflight and post-verifier checks for a fresh dormant
+install compare the exact display while holding the native intent lock.
+Changing a label or swapping two branch labels is a mismatch. No label
+other than the intended browser display, legal data, or digest leaves
+the native operation. Neither a draft nor pending history grants access.
 
 The synthetic fixture proves real local HTTP and browser behavior, not
 a live provider, public signup, payment, entitlement,

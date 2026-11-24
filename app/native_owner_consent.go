@@ -189,8 +189,9 @@ func lockedNativeOwnerSession(ctx context.Context, tx *sql.Tx, session [32]byte)
 
 // The browser adapter also binds the precise reviewed labels. It has a
 // separate hash domain so the same challenge cannot be used on a path
-// which did not verify that display. No schema change or raw token storage.
+// which did not verify that display. No raw token or label storage here.
 type nativeOwnerReviewBinding struct {
+	Actor   int64
 	Target  nativeOwnerTarget
 	Display [32]byte
 }
@@ -238,7 +239,7 @@ func (a *app) previewBoundNativeOwnerConsent(r *http.Request, intent, audience s
 	}
 	now := nativeOwnerNow()
 	if d.Actor != actor || d.Target.Audience != audience || now.Unix() >= sessionExpiry || !d.approvedAt(now) ||
-		(review != nil && !sameNativeOwnerTarget(d.Target, review.Target)) {
+		(review != nil && (actor != review.Actor || !sameNativeOwnerTarget(d.Target, review.Target))) {
 		return nativeOwnerPreview{}, nativeOwnerConsentUnavailable
 	}
 	challenge := newProviderRandom()
@@ -286,7 +287,7 @@ func (a *app) confirmBoundNativeOwnerConsent(r *http.Request, c nativeOwnerConfi
 	if err != nil {
 		return nativeOwnerReceipt{}, nativeOwnerUnavailable(err)
 	}
-	if d.Actor != actor || !sameNativeOwnerTarget(d.Target, target) || !d.ApprovalRef.Valid {
+	if d.Actor != actor || !sameNativeOwnerTarget(d.Target, target) || !d.ApprovalRef.Valid || (review != nil && review.Actor != actor) {
 		return nativeOwnerReceipt{}, nativeOwnerConsentUnavailable
 	}
 	key := nativeOwnerChallengeHash(c.Challenge, review)
@@ -306,10 +307,14 @@ func (a *app) confirmBoundNativeOwnerConsent(r *http.Request, c nativeOwnerConfi
 	ref := "accept-" + newProviderRandom()
 	expires := nativeOwnerDeadline(now.Add(nativeOwnerConsentLifetime), previewExpiry, d.Expires, d.ApprovalExpires.Time, time.Unix(sessionExpiry, 0))
 	var accepted int
+	var display any // SQL NULL for the existing unbound internal path.
+	if review != nil {
+		display = review.Display[:]
+	}
 	err = tx.QueryRowContext(ctx, `INSERT INTO gomar.native_owner_receipts
-		(receipt_ref,challenge_hash,intent,revision,approval_ref,accepted_at,expires_at)
-		VALUES($1,$2,$3,$4,$5,$6,$7) ON CONFLICT (intent) DO NOTHING RETURNING 1`,
-		ref, key[:], target.Intent, target.Revision, d.ApprovalRef.String, now, expires).Scan(&accepted)
+		(receipt_ref,challenge_hash,intent,revision,approval_ref,accepted_at,expires_at,display_digest)
+		VALUES($1,$2,$3,$4,$5,$6,$7,$8) ON CONFLICT (intent) DO NOTHING RETURNING 1`,
+		ref, key[:], target.Intent, target.Revision, d.ApprovalRef.String, now, expires, display).Scan(&accepted)
 	if err != nil {
 		return nativeOwnerReceipt{}, nativeOwnerUnavailable(err)
 	}

@@ -139,7 +139,7 @@ func loadFixtureStage(ctx context.Context, tx *sql.Tx, input fixtureStageInput, 
 	if d.Actor != owner || !sameNativeOwnerTarget(d.Target, input.Target) {
 		return state, nativeOwnerConsentUnavailable
 	}
-	native, original, err := loadNativeInstallConsent(ctx, tx, input.Target, input.ConsentRef)
+	native, original, display, err := loadNativeInstallConsent(ctx, tx, input.Target, input.ConsentRef)
 	if err != nil {
 		return state, nativeOwnerUnavailable(err)
 	}
@@ -158,11 +158,11 @@ func loadFixtureStage(ctx context.Context, tx *sql.Tx, input fixtureStageInput, 
 	}
 	var approved, pending []byte
 	state.Law.Target, state.Law.ConsentRef = input.Target, input.ConsentRef
-	err = tx.QueryRowContext(ctx, `SELECT legal_name,cuit,initiator_ref,claimant_ref,branch_plan,
+	err = tx.QueryRowContext(ctx, `SELECT legal_name,cuit,initiator_ref,claimant_ref,branch_plan,COALESCE(display_organization,''),
 		(SELECT json_agg(json_build_object('ref',b.branch_ref,'name',b.branch_name) ORDER BY b.branch_ref)
 		 FROM gomar.native_owner_pending_branches b WHERE b.install_ref=$3)
 		FROM gomar.native_owner_install_drafts WHERE intent=$1 AND consent_ref=$2`, input.Target.Intent, input.ConsentRef, input.InstallRef).
-		Scan(&state.Law.LegalName, &state.Law.CUIT, &state.Law.Initiator, &state.Law.Claimant, &approved, &pending)
+		Scan(&state.Law.LegalName, &state.Law.CUIT, &state.Law.Initiator, &state.Law.Claimant, &approved, &state.Law.DisplayOrganization, &pending)
 	if err != nil {
 		return state, nativeOwnerUnavailable(err)
 	}
@@ -171,7 +171,7 @@ func loadFixtureStage(ctx context.Context, tx *sql.Tx, input fixtureStageInput, 
 		return state, nativeOwnerConsentUnavailable
 	}
 	law, valid := canonicalNativeInstallDraft(state.Law)
-	if !valid || law.CUIT != cuit || !slices.Equal(law.Branches, actual) {
+	if !valid || law.CUIT != cuit || !slices.Equal(law.Branches, actual) || !matchesNativeOwnerDisplay(display, owner, law) {
 		return state, nativeOwnerConsentUnavailable
 	}
 	state.Law, state.Owner, state.Approval = law, owner, native.ApprovalRef

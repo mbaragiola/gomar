@@ -28,6 +28,7 @@ type nativeInstallBranch struct {
 type nativeInstallDraft struct {
 	Target              nativeOwnerTarget
 	ConsentRef          string
+	DisplayOrganization string
 	LegalName, CUIT     string
 	Initiator, Claimant string
 	Branches            []nativeInstallBranch
@@ -83,27 +84,22 @@ func canonicalNativeInstallDraft(draft nativeInstallDraft) (nativeInstallDraft, 
 		draft.Initiator == draft.Claimant || len(draft.Branches) != len(target.Outlets) {
 		return nativeInstallDraft{}, false
 	}
-	draft.Target, draft.CUIT = target, cuit
-	draft.Branches = slices.Clone(draft.Branches)
-	slices.SortFunc(draft.Branches, func(a, b nativeInstallBranch) int { return strings.Compare(a.Ref, b.Ref) })
-	names := make(map[string]bool, len(draft.Branches))
-	for i, branch := range draft.Branches {
-		if branch.Ref != target.Outlets[i] || !nativeInstallName(branch.Name) || names[branch.Name] {
-			return nativeInstallDraft{}, false
-		}
-		names[branch.Name] = true
+	branches, valid := canonicalNativeOwnerDisplay(target, draft.DisplayOrganization, draft.Branches)
+	if !valid {
+		return nativeInstallDraft{}, false
 	}
+	draft.Target, draft.CUIT, draft.Branches = target, cuit, branches
 	return draft, true
 }
 
-func loadNativeInstallConsent(ctx context.Context, tx *sql.Tx, target nativeOwnerTarget, ref string) (nativeOwnerReceipt, []byte, error) {
+func loadNativeInstallConsent(ctx context.Context, tx *sql.Tx, target nativeOwnerTarget, ref string) (nativeOwnerReceipt, []byte, []byte, error) {
 	receipt := nativeOwnerReceipt{Ref: ref, Target: target}
-	var original []byte
-	err := tx.QueryRowContext(ctx, `SELECT r.approval_ref,r.accepted_at,r.expires_at,p.session_hash
+	var original, display []byte
+	err := tx.QueryRowContext(ctx, `SELECT r.approval_ref,r.accepted_at,r.expires_at,p.session_hash,r.display_digest
 		FROM gomar.native_owner_receipts r JOIN gomar.native_owner_previews p ON p.challenge_hash=r.challenge_hash
 		WHERE r.receipt_ref=$1 AND r.intent=$2 AND r.revision=$3`, ref, target.Intent, target.Revision).
-		Scan(&receipt.ApprovalRef, &receipt.AcceptedAt, &receipt.ExpiresAt, &original)
-	return receipt, original, err
+		Scan(&receipt.ApprovalRef, &receipt.AcceptedAt, &receipt.ExpiresAt, &original, &display)
+	return receipt, original, display, err
 }
 
 // The recovery operator approves the private local draft through the existing
@@ -122,12 +118,13 @@ func (a *app) approveNativeInstallDraft(r *http.Request, expected nativeInstallD
 		if d.Actor == operator || !sameNativeOwnerTarget(d.Target, draft.Target) {
 			return nativeOwnerConsentUnavailable
 		}
-		consent, _, err := loadNativeInstallConsent(ctx, tx, draft.Target, draft.ConsentRef)
+		consent, _, display, err := loadNativeInstallConsent(ctx, tx, draft.Target, draft.ConsentRef)
 		if err != nil {
 			return err
 		}
 		now := nativeOwnerNow()
-		if now.Unix() >= sessionExpiry || !d.approvedAt(now) || d.ApprovalRef.String != consent.ApprovalRef || !now.Before(consent.ExpiresAt) {
+		if now.Unix() >= sessionExpiry || !d.approvedAt(now) || d.ApprovalRef.String != consent.ApprovalRef ||
+			!now.Before(consent.ExpiresAt) || !matchesNativeOwnerDisplay(display, d.Actor, draft) {
 			return nativeOwnerConsentUnavailable
 		}
 		branches, err := json.Marshal(draft.Branches)
@@ -136,11 +133,11 @@ func (a *app) approveNativeInstallDraft(r *http.Request, expected nativeInstallD
 		}
 		var one int
 		return tx.QueryRowContext(ctx, `INSERT INTO gomar.native_owner_install_drafts
-			(intent,consent_ref,approved_by,approved_at,legal_name,cuit,initiator_ref,claimant_ref,branch_plan)
-			SELECT $1,$2,$3,$4,$5,$6,$7,$8,$9 WHERE NOT EXISTS (SELECT 1 FROM gomar.entities WHERE cuit=$6)
+			(intent,consent_ref,approved_by,approved_at,legal_name,cuit,initiator_ref,claimant_ref,branch_plan,display_organization)
+			SELECT $1,$2,$3,$4,$5,$6,$7,$8,$9,$10 WHERE NOT EXISTS (SELECT 1 FROM gomar.entities WHERE cuit=$6)
 			ON CONFLICT (intent) DO NOTHING RETURNING 1`,
 			draft.Target.Intent, draft.ConsentRef, operator, now, draft.LegalName, draft.CUIT,
-			draft.Initiator, draft.Claimant, branches).Scan(&one)
+			draft.Initiator, draft.Claimant, branches, draft.DisplayOrganization).Scan(&one)
 	})
 }
 
@@ -159,19 +156,19 @@ func loadNativeInstallState(ctx context.Context, tx *sql.Tx, target nativeOwnerT
 	if d.Actor != actor || !sameNativeOwnerTarget(d.Target, target) {
 		return state, nativeOwnerConsentUnavailable
 	}
-	receipt, original, err := loadNativeInstallConsent(ctx, tx, target, ref)
+	receipt, original, display, err := loadNativeInstallConsent(ctx, tx, target, ref)
 	if err != nil {
 		return state, nativeOwnerUnavailable(err)
 	}
 	var branches []byte
 	var historicalPeer nativeInstallPeer
 	var historicalOwner int64
-	err = tx.QueryRowContext(ctx, `SELECT d.legal_name,d.cuit,d.initiator_ref,d.claimant_ref,d.branch_plan,
+	err = tx.QueryRowContext(ctx, `SELECT d.legal_name,d.cuit,d.initiator_ref,d.claimant_ref,d.branch_plan,COALESCE(d.display_organization,''),
 		COALESCE(i.install_ref,''),COALESCE(i.recorded_at,'epoch'::timestamptz),
 		COALESCE(i.billing_issuer,''),COALESCE(i.gomar_recipient,''),COALESCE(i.planned_owner_id,0)
 		FROM gomar.native_owner_install_drafts d LEFT JOIN gomar.native_owner_pending_installs i ON i.intent=d.intent
 		WHERE d.intent=$1 AND d.consent_ref=$2`, target.Intent, ref).
-		Scan(&state.draft.LegalName, &state.draft.CUIT, &state.draft.Initiator, &state.draft.Claimant, &branches,
+		Scan(&state.draft.LegalName, &state.draft.CUIT, &state.draft.Initiator, &state.draft.Claimant, &branches, &state.draft.DisplayOrganization,
 			&state.history.Ref, &state.history.RecordedAt, &historicalPeer.Issuer, &historicalPeer.Recipient, &historicalOwner)
 	if err != nil {
 		return nativeInstallState{}, nativeOwnerUnavailable(err)
@@ -195,7 +192,7 @@ func loadNativeInstallState(ctx context.Context, tx *sql.Tx, target nativeOwnerT
 	if err = json.Unmarshal(branches, &state.draft.Branches); err != nil {
 		return nativeInstallState{}, err
 	}
-	if canonical, ok := canonicalNativeInstallDraft(state.draft); ok {
+	if canonical, ok := canonicalNativeInstallDraft(state.draft); ok && matchesNativeOwnerDisplay(display, actor, canonical) {
 		state.draft = canonical
 	} else {
 		return nativeInstallState{}, nativeOwnerConsentUnavailable

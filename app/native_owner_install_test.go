@@ -17,7 +17,7 @@ import (
 func checkNativeDormantInstall(t *testing.T, ctx context.Context, db *sql.DB, a, ops *app, ownerID, foreignID int64,
 	owner, foreign, sameOwnerDifferentSession, recovery []*http.Cookie,
 	call func(http.Handler, string, any, []*http.Cookie, func(*http.Request)) *httptest.ResponseRecorder,
-	protected func(*http.Request), consent func(nativeOwnerTarget) nativeOwnerReceipt, revoke func(nativeOwnerReceipt),
+	protected func(*http.Request), consent func(nativeOwnerTarget, string, []nativeInstallBranch) nativeOwnerReceipt, revoke func(nativeOwnerReceipt),
 ) {
 	t.Helper()
 	const draftPath = "/admin/dormant-install-fixture/approve-draft"
@@ -84,11 +84,16 @@ func checkNativeDormantInstall(t *testing.T, ctx context.Context, db *sql.DB, a,
 
 	makeDraft := func(suffix, cuit string) (nativeOwnerReceipt, nativeInstallDraft) {
 		t.Helper()
-		record := consent(nativeOwnerTarget{Intent: "install-" + suffix, Business: "business-" + suffix, Audience: "gomar-hosted-qa",
-			RequestRef: "private-install-" + suffix, Outlets: []string{"outlet-b", "outlet-a"}, Revision: 7})
-		return record, nativeInstallDraft{Target: record.Target, ConsentRef: record.Ref, LegalName: "Privado fixture",
-			CUIT: cuit, Initiator: "fixture-initiator", Claimant: "fixture-claimant",
-			Branches: []nativeInstallBranch{{"outlet-b", "Privado B"}, {"outlet-a", "Privado A"}}}
+		draft := nativeInstallDraft{
+			Target: nativeOwnerTarget{Intent: "install-" + suffix, Business: "business-" + suffix, Audience: "gomar-hosted-qa",
+				RequestRef: "private-install-" + suffix, Outlets: []string{"outlet-b", "outlet-a"}, Revision: 7},
+			DisplayOrganization: "Marca local " + suffix, LegalName: "Privado fixture", CUIT: cuit,
+			Initiator: "fixture-initiator", Claimant: "fixture-claimant",
+			Branches: []nativeInstallBranch{{"outlet-b", "Privado B"}, {"outlet-a", "Privado A"}},
+		}
+		record := consent(draft.Target, draft.DisplayOrganization, draft.Branches)
+		draft.Target, draft.ConsentRef = record.Target, record.Ref
+		return record, draft
 	}
 	receipt, draft := makeDraft("one", pendingCUIT)
 	input := installInput{receipt.Target, receipt.Ref}
