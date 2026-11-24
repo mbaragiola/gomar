@@ -22,6 +22,7 @@ type app struct {
 	db                  *sql.DB
 	providerAuth        *hostedProviderAuth
 	nativeSignup        *nativeSignupHosted
+	signupPlanAdmin     *adminSignupPlanFixture
 	adminRecovery       bool
 	providerOnly        bool
 	providerEmployee    bool

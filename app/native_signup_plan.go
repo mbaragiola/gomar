@@ -6,6 +6,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"net/http"
+	"time"
 )
 
 type nativeSignupPlan struct {
@@ -16,6 +17,13 @@ type nativeSignupPlan struct {
 // Protected, unregistered writer. The designation and recovery approval
 // must already exist. The display contains no legal or financial identity.
 func (a *app) recordNativeSignupPlan(r *http.Request, expected nativeOwnerTarget, display nativeSignupPlan) error {
+	return a.recordNativeSignupPlanBefore(r, expected, display, time.Time{})
+}
+
+// The protected screen passes its original staging deadline. Neither an
+// actor/intent lock wait nor a slow insert can turn an admitted ticket into
+// durable authority after that deadline.
+func (a *app) recordNativeSignupPlanBefore(r *http.Request, expected nativeOwnerTarget, display nativeSignupPlan, cutoff time.Time) error {
 	target, valid := canonicalNativeOwnerTarget(expected)
 	if !valid {
 		return badInput
@@ -28,7 +36,15 @@ func (a *app) recordNativeSignupPlan(r *http.Request, expected nativeOwnerTarget
 	if err != nil {
 		return err
 	}
-	return a.nativeOwnerRecoveryTransaction(r, func(ctx context.Context, tx *sql.Tx, operator, sessionExpiry int64) error {
+	if !cutoff.IsZero() {
+		if !nativeOwnerNow().Before(cutoff) {
+			return nativeOwnerConsentUnavailable
+		}
+		ctx, cancel := context.WithDeadline(r.Context(), cutoff)
+		defer cancel()
+		r = r.WithContext(ctx)
+	}
+	err = a.nativeOwnerRecoveryTransaction(r, func(ctx context.Context, tx *sql.Tx, operator, sessionExpiry int64) error {
 		// This lookup identifies a lock target only. Pressing consent takes
 		// a shared actor lock; authoring any competing plan takes a
 		// conflicting actor lock before the same intent lock. No new plan
@@ -52,17 +68,31 @@ func (a *app) recordNativeSignupPlan(r *http.Request, expected nativeOwnerTarget
 			return err
 		}
 		now := nativeOwnerNow()
-		if d.Actor != pinned || !sameNativeOwnerTarget(d.Target, target) || !d.approvedAt(now) || now.Unix() >= sessionExpiry {
+		if d.Actor != pinned || !sameNativeOwnerTarget(d.Target, target) || !d.approvedAt(now) ||
+			now.Unix() >= sessionExpiry || (!cutoff.IsZero() && !now.Before(cutoff)) {
 			return nativeOwnerConsentUnavailable
 		}
 		var one int
-		return tx.QueryRowContext(ctx, `INSERT INTO gomar.native_signup_plans
+		err = tx.QueryRowContext(ctx, `INSERT INTO gomar.native_signup_plans
 			(intent,revision,approval_ref,authored_by,authored_at,organization,branch_display)
 			SELECT $1,$2,$3,$4,$5,$6,$7
 			WHERE NOT EXISTS (SELECT 1 FROM gomar.native_owner_receipts WHERE intent=$1)
 			ON CONFLICT (intent,revision) DO NOTHING RETURNING 1`,
 			target.Intent, target.Revision, d.ApprovalRef.String, operator, now, display.Organization, raw).Scan(&one)
+		if err != nil {
+			return err
+		}
+		if !cutoff.IsZero() && !nativeOwnerNow().Before(cutoff) {
+			return nativeOwnerConsentUnavailable
+		}
+		// nativeOwnerRecoveryTransaction commits with the same deadline-
+		// bounded context, immediately after this final check.
+		return nil
 	})
+	if err != nil && !cutoff.IsZero() && !nativeOwnerNow().Before(cutoff) {
+		return nativeOwnerConsentUnavailable
+	}
+	return err
 }
 
 type nativeSignupState string

@@ -477,8 +477,10 @@ status, or receive private signup references. The CSRF-checked browser
 read is a personal native operation, not an MCP handoff or a credential. It keeps only its prior authorized scope. The exact approved
 display also stays in native consent and the protected recovery draft;
 the digest, legal name, CUIT, and private branch-label mapping are not
-MCP data. Protected plan authorship, the draft, and the dormant install
-remain unregistered native operations, not MCP actions or handoffs.
+MCP data. The protected operator fixture is a native recovery screen
+for a separately approved case, not an MCP action or handoff. Case
+references, staged labels, legal data and tickets never go through MCP.
+The draft and dormant install remain unregistered native operations.
 
 The default app has no signup page, API or MCP handoff. The only opt-in
 route here is an authenticated localhost HTTPS test fixture with a
@@ -487,5 +489,8 @@ The exact synthetic HTTP/browser tests cover the intended owner and
 changed session and a persisted exact recovery draft after a fixture
 restart. The status tests verify both recorded stages across restart,
 with no reissue, mismatch disclosures or side effects. The packaged
-MCP check covers an independently scoped operational key plus signup
-and status denial and an unassigned owner.
+MCP check covers an independently scoped operational key plus signup,
+status and plan-authoring denial and an unassigned owner. The operator
+fixture verifies exact recovery scope, one explicit save and ordinary
+session, stale, changed and replay denials; the owner browser sees only
+the exact authored display.

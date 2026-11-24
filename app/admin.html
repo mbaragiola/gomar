@@ -22,6 +22,9 @@
         .admin-pages { display: flex; gap: 1rem; align-items: center; margin-top: 1rem; }
         td { text-align: left; padding: 0.65rem; border-bottom: 1px solid #ddd; }
         [role="alert"] { color: #922; }
+        #signup-plan-form { max-width: 38rem; overflow-wrap: anywhere; }
+        #signup-plan-form label input { display: block; box-sizing: border-box; width: 100%; max-width: 28rem; }
+        .signup-plan-label { white-space: break-spaces; overflow-wrap: anywhere; }
         #password-change-form { max-width: 38rem; padding: 1rem; background: white; }
         #password-change-form label { margin-top: 1rem; }
         #password-change-form input[type="password"] { display: block; max-width: 100%; }
@@ -77,6 +80,39 @@
     </form>
     {{else}}
     <p>Su contraseña ha sido cambiada.</p>
+    {{end}}
+    {{else if .SignupPlan}}
+    {{with .SignupPlan}}
+    {{if eq .Phase "saved"}}
+    <p role="status">Plan guardado. La persona designada puede revisarlo en Gomar. Esto no registra un pago ni habilita el acceso.</p>
+    {{else}}
+    <form id="signup-plan-form" method="post" action="/admin/alta/plan/" autocomplete="off">
+        <input type="hidden" name="csrfmiddlewaretoken" value="{{$.Token}}">
+        {{if eq .Phase "case"}}
+        <p>Buscá un caso que ya tenga una aprobación de recuperación vigente.</p>
+        <input type="hidden" name="action" value="open">
+        <label>Referencia privada del caso <input type="password" name="case" maxlength="128" required></label>
+        <button>Buscar caso</button>
+        {{else if eq .Phase "labels"}}
+        <input type="hidden" name="action" value="review">
+        <input type="hidden" name="ticket" value="{{.Ticket}}">
+        <label>Nombre visible de la organización <input name="organization" maxlength="160" required></label>
+        {{range .Slots}}
+        <label>Nombre visible del local {{.Ref}} <input name="{{.Field}}" maxlength="160" required></label>
+        {{end}}
+        <button>Revisar etiquetas</button>
+        {{else}}
+        <input type="hidden" name="action" value="save">
+        <input type="hidden" name="ticket" value="{{.Ticket}}">
+        <h2>Revisá antes de guardar</h2>
+        <p>Organización: <strong class="signup-plan-label">{{.Organization}}</strong></p>
+        <ul>{{range .Slots}}<li>{{.Ref}}: <span class="signup-plan-label">{{.Label}}</span></li>{{end}}</ul>
+        <p>Este plan solo define lo que va a revisar la persona designada.</p>
+        <button name="confirm" value="yes">Guardar plan</button>
+        {{end}}
+    </form>
+    {{end}}
+    <p><a href="/admin/alta/plan/">Volver a la referencia del caso</a></p>
     {{end}}
     {{else}}
     <nav aria-label="Configuración">
