@@ -266,12 +266,25 @@ physical printer.
 ### Save and reopen an untendered table check
 
 With both POS and its opt-in `-enable-pos-table-checks` flag enabled,
-Caja can save its current browser cart for one exact numbered table at the
-authorized branch while online. Saving requires a deliberate native click:
-no MCP caller has the unrecorded tab-local cart or may create one from
-guessed items. Saved rows use the exact current catalog revisions and can be
-consulted by authorized staff in the same branch. They do not register a
-sale, payment, stock change, reservation, or fiscal document. An operator can retire a saved check and free the table for another check; this doesn't edit or settle it. Retirement preserves the original check and reason.
+Caja can transfer its current browser cart to one exact numbered table at
+the authorized branch while online. Only Caja can start the transfer, block
+checkout for the local cart, or retry the exact request. A pending request
+survives a reload, sign-out, lock, or shift expiry on that browser. It can
+only be retried from an authorized register for the same actor, entity and
+branch, including after opening a new shift. No MCP caller has this
+unrecorded cart or can create one from guessed items. Confirmation clears
+the transferred local cart, even if the check was later retired or
+finalized. A verified refusal makes that exact request permanently unable
+to create a check; Caja can restore a cart that still matches the active
+register's catalog. If the cart cannot be restored, Caja preserves a
+read-only list of the original products and quantities for that cashier and
+branch until they mark it as reviewed. It is not a sellable cart and opening
+or acknowledging it does not save anything on the server. If the outcome
+is still unclear, Caja keeps checkout blocked. A missing table on lookup is
+not proof that a save failed.
+Saved rows use the exact current catalog revisions and can be consulted by authorized
+staff in the same branch. The transfer doesn't register a sale, payment,
+stock change, reservation, or fiscal document. An operator can retire a saved check and free the table for another check; this doesn't edit or settle it. Retirement preserves the original check and reason.
 
 `gomar_read_pos_table_check` returns the saved table number, total in ARS
 cents, fixed untendered status, and a same-origin **Caja** handoff. It uses
@@ -290,10 +303,19 @@ replacement at the same table. After retirement the MCP exact lookup
 finds no active check until a replacement is saved; it does not reveal
 retirement history or create a replacement.
 
-Native sale and table-check writes, including exact retries, recheck current
+Native sale and table-check writes, including exact retries and verified
+refusals, recheck current
 membership, role and the selected branch grant in their write transaction.
 MCP still only reads or hands off these operations. Catalog and stock
 proposals still require the existing scoped browser approval.
+
+After deploying this change, reload every already-open Caja register online
+before using saved table checks. Older cached register code does not clear
+or hold the local cart; the server still serves those clients during the
+transition. For a cart already in use on an older register, compare it with
+the saved table before recording a sale or re-entering it. An authorized
+operator can inspect the scoped handoff in Caja, but it does not release a
+pending cart without its exact save result.
 
 ### Find a document by its printed reference
 

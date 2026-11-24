@@ -46,7 +46,7 @@ INSERT INTO pos_table_check_items(check_id,outlet_id,product_id,revision,quantit
 		t.Fatalf("upgrade lost the existing open check: count=%d err=%v", backfilled, err)
 	}
 	a := app{db: db, enablePOS: true, enablePOSTableChecks: true}
-	const body = `{"id_solicitud":"00112233-4455-4677-8899-aabbccddeeff","mesa":7,"items":[{"producto_id":51,"revision":1,"cantidad":2}]}`
+	const body = `{"id_solicitud":"00112233-4455-4677-8899-aabbccddeeff","actor_id":51,"mesa":7,"items":[{"producto_id":51,"revision":1,"cantidad":2}]}`
 	m := entityMembership{entity: entity{ID: 51}, id: 51, userID: 51, role: "administration"}
 	type answer struct {
 		status int
@@ -75,15 +75,51 @@ INSERT INTO pos_table_check_items(check_id,outlet_id,product_id,revision,quantit
 	}
 	expectErr := func(got answer, wanted problem) {
 		t.Helper()
-		if got.err != wanted {
+		if got.err != wanted || got.value != nil {
 			t.Fatalf("failure = %v want %v", got.err, wanted)
 		}
 	}
 	reader := m
 	reader.role = "read_only"
 	expectErr(call("51", reader, body, false), forbiddenRole)
+	expectErr(call("51", m, strings.Replace(body, `"actor_id":51`, `"actor_id":52`, 1), false),
+		problem{403, "La cuenta de mesa está asociada a otra sesión de usuario."})
+	expectErr(call("51", m, strings.Replace(body, `"actor_id":51`, `"actor_id":null`, 1), false), badInput)
 	expectErr(call("52", m, body, true), missingOutlet)
-	expectErr(call("51", m, strings.Replace(body, `"producto_id":51`, `"producto_id":53`, 1), false), posChangedCatalog)
+	expectErr(call("51", m, strings.NewReplacer(`"actor_id":51,`, "", `"producto_id":51`, `"producto_id":53`).Replace(body), false), posChangedCatalog)
+	expectRefused := func(got answer, id string, table int64, reason string) {
+		t.Helper()
+		value, ok := got.value.(posTableSaveRejection)
+		if got.err != nil || got.status != 409 || !ok || value.RequestID != id || value.Table != table || value.Reason != reason {
+			t.Fatalf("rejection %+v, wanted %q for %s at %d", got, reason, id, table)
+		}
+	}
+	const staleID = "00112233-4455-4677-8899-aabbccddee03"
+	stale := strings.NewReplacer("00112233-4455-4677-8899-aabbccddeeff", staleID, `"mesa":7`, `"mesa":14`, `"revision":1`, `"revision":2`).Replace(body)
+	expectRefused(call("51", m, stale, false), staleID, 14, tableSaveCatalog)
+	unseen := strings.Replace(stale, "aabbccddee03", "aabbccddee05", 1)
+	changeScope := func(query string) {
+		t.Helper()
+		if _, err := db.ExecContext(ctx, query); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// The caller's pre-transaction membership is stale. Neither an exact
+	// existing refusal nor a new refusal is exposed or written once scope
+	// changes. The immutable rejection row count below also covers unseen.
+	changeScope("UPDATE memberships SET role='read_only' WHERE id=51")
+	expectErr(call("51", m, stale, false), forbiddenRole)
+	expectErr(call("51", m, unseen, false), forbiddenRole)
+	changeScope("UPDATE memberships SET role='administration' WHERE id=51")
+	changeScope("UPDATE entities SET active=FALSE WHERE id=51")
+	expectErr(call("51", m, stale, false), missingEntity)
+	expectErr(call("51", m, unseen, false), missingEntity)
+	changeScope("UPDATE entities SET active=TRUE WHERE id=51")
+	changeScope("DELETE FROM outlet_grants WHERE membership_id=51 AND outlet_id=51")
+	expectErr(call("51", m, stale, false), missingOutlet)
+	expectErr(call("51", m, unseen, false), missingOutlet)
+	changeScope("INSERT INTO outlet_grants VALUES (51,51)")
+	expectRefused(call("51", m, stale, false), staleID, 14, tableSaveCatalog)
 
 	blocker, err := db.BeginTx(ctx, nil)
 	if err != nil {
@@ -121,19 +157,32 @@ INSERT INTO pos_table_check_items(check_id,outlet_id,product_id,revision,quantit
 	if r0.err != nil || r1.err != nil || r0.status != 200 || r1.status != 201 || !reflect.DeepEqual(r0.value, r1.value) {
 		t.Fatalf("not an exact idempotent replay: %+v %+v", r0, r1)
 	}
+	legacy := call("51", m, strings.Replace(body, `"actor_id":51,`, "", 1), false)
+	if legacy.err != nil || legacy.status != 200 || !reflect.DeepEqual(legacy.value, r0.value) {
+		t.Fatalf("older cached shell could not replay: %+v", legacy)
+	}
 	check, ok := r0.value.(posTableCheck)
-	if !ok || check.Total != 2500 || len(check.Items) != 1 {
+	if !ok || check.RequestID != "00112233-4455-4677-8899-aabbccddeeff" || check.Total != 2500 || len(check.Items) != 1 {
 		t.Fatalf("invalid check: %+v", check)
 	}
 	expectErr(call("51", m, strings.Replace(body, `"cantidad":2`, `"cantidad":3`, 1), false), posConflict)
-	expectErr(call("51", m, strings.Replace(body, "aabbccddeeff", "aabbccddee00", 1), false), posTableCheckOccupied)
+	const occupiedID = "00112233-4455-4677-8899-aabbccddee00"
+	occupied := strings.Replace(body, "00112233-4455-4677-8899-aabbccddeeff", occupiedID, 1)
+	expectRefused(call("51", m, occupied, false), occupiedID, 7, tableSaveOccupied)
+	expectErr(call("51", m, strings.Replace(occupied, `"cantidad":2`, `"cantidad":3`, 1), false), posConflict)
 	if _, err = db.ExecContext(ctx, `
 INSERT INTO pos_product_versions(product_id,outlet_id,revision,name,price_minor,active) VALUES (51,51,2,'Pan nuevo',1850,TRUE);
 UPDATE pos_products SET current_revision=2 WHERE id=51 AND outlet_id=51;`); err != nil {
 		t.Fatal(err)
 	}
+	// Exact delayed requests cannot change outcome when their blocking
+	// catalog/slot condition disappears. GET never exposes the request UUID.
+	expectRefused(call("51", m, stale, false), staleID, 14, tableSaveCatalog)
+	expectRefused(call("51", m, strings.Replace(stale, `"actor_id":51,`, "", 1), false), staleID, 14, tableSaveCatalog)
 	reopened := call("51", m, "", true)
-	if reopened.err != nil || !reflect.DeepEqual(reopened.value, r0.value) {
+	readCheck := check
+	readCheck.RequestID = ""
+	if reopened.err != nil || !reflect.DeepEqual(reopened.value, readCheck) {
 		t.Fatalf("reopening changed the quote: %+v", reopened)
 	}
 	if prior := call("51", m, body, false); prior.err != nil || !reflect.DeepEqual(prior.value, r0.value) {
@@ -164,7 +213,8 @@ UPDATE pos_products SET current_revision=2 WHERE id=51 AND outlet_id=51;`); err 
 		t.Fatalf("retirement: %+v", first)
 	}
 	expectErr(call("51", m, "", true), posTableCheckMissing)
-	replacement := strings.Replace(strings.Replace(body, "aabbccddeeff", "aabbccddee00", 1), `"revision":1`, `"revision":2`, 1)
+	expectRefused(call("51", m, occupied, false), occupiedID, 7, tableSaveOccupied)
+	replacement := strings.Replace(strings.Replace(body, "aabbccddeeff", "aabbccddee04", 1), `"revision":1`, `"revision":2`, 1)
 	next := call("51", m, replacement, false)
 	if next.err != nil || next.status != 201 || next.value.(posTableCheck).ID == check.ID {
 		t.Fatalf("replacement: %+v", next)
@@ -173,16 +223,23 @@ UPDATE pos_products SET current_revision=2 WHERE id=51 AND outlet_id=51;`); err 
 		t.Fatalf("retire replay incorrectly affected new check: %+v", retry)
 	}
 	expectErr(retire("51", m, check.ID, "saved_in_error"), posTableCheckChanged)
-	if got := call("51", m, body, false); got.err != nil || !reflect.DeepEqual(first.value, got.value) {
+	retired := first.value.(posTableCheck)
+	retired.RequestID = check.RequestID
+	if got := call("51", m, body, false); got.err != nil || !reflect.DeepEqual(retired, got.value) {
 		t.Fatalf("old save retry returned wrong check: %+v", got)
 	}
-	if got := call("51", m, "", true); got.err != nil || !reflect.DeepEqual(next.value, got.value) {
+	replaced := next.value.(posTableCheck)
+	replaced.RequestID = ""
+	if got := call("51", m, "", true); got.err != nil || !reflect.DeepEqual(replaced, got.value) {
 		t.Fatalf("replacement lost or repriced: %+v", got)
 	}
 	if _, err := db.ExecContext(ctx, `UPDATE pos_table_check_retirements SET reason='saved_in_error'`); err == nil {
 		t.Fatal("retirement record was mutable")
 	}
-	for table, want := range map[string]int{"pos_table_checks": 3, "pos_table_check_items": 3, "pos_table_check_slots": 2, "pos_table_check_retirements": 1, "pos_sales": 0, "stock_movements": 0, "ap_payments": 0, "reservation_requests": 0} {
+	if _, err := db.ExecContext(ctx, `DELETE FROM pos_table_check_save_rejections`); err == nil {
+		t.Fatal("rejection record was mutable")
+	}
+	for table, want := range map[string]int{"pos_table_checks": 3, "pos_table_check_items": 3, "pos_table_check_slots": 2, "pos_table_check_retirements": 1, "pos_table_check_save_rejections": 2, "pos_sales": 0, "stock_movements": 0, "ap_payments": 0, "reservation_requests": 0} {
 		var count int
 		if err := db.QueryRowContext(ctx, fmt.Sprintf("SELECT count(*) FROM %s", table)).Scan(&count); err != nil || count != want {
 			t.Fatalf("%s count=%d want=%d err=%v", table, count, want, err)
