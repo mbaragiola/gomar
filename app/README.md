@@ -94,6 +94,30 @@ Do not treat a loopback setup as a deployment guide. Keep PostgreSQL backups
 and the private file directory together according to your recovery plan.
 See the [application dependency notices](THIRD_PARTY_NOTICES.md).
 
+## Protected Unix socket lifecycle
+
+With `-listen-unix` and `-unix-https-authority`, a running server stops
+accepting connections on SIGTERM or SIGINT and allows active HTTP requests
+up to 20 seconds to finish. If the drain fails, Gomar closes the remaining
+HTTP connections and exits with an error. Local TCP startup is unchanged.
+
+Provision a dedicated, ephemeral runtime directory with the service manager.
+The immediate parent of the socket must be owned by the Gomar service
+account and have mode 0700. The path must have no symlinks or group- or
+world-writable ancestors. For example, a systemd system service with
+`User=` set to the Gomar service account can use `RuntimeDirectory=gomar`,
+`RuntimeDirectoryMode=0700`, and `RuntimeDirectoryPreserve=no` for a
+dedicated `/run/gomar`. Set the manager's stop timeout longer than the
+20-second drain. Do not reuse a shared directory or put application state
+or other services' files there.
+
+Gomar never unlinks this path, even on clean shutdown. Startup refuses any
+existing node, including a stale socket. Have the service manager dispose
+of its own runtime directory after the service has stopped, and provision a
+fresh directory before restart. Do not add blind socket deletion on startup.
+Gomar itself does not recover a socket left by a crash, a forced kill, or
+a failed startup.
+
 ## Staff MCP connection
 
 Use the packaged `bin/gomar-mcp` built with the app, not the synthetic preview
