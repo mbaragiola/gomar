@@ -171,19 +171,26 @@ func ingestDelivery(ctx context.Context, db *sql.DB, event deliveryEvent, now ti
 
 func (a *app) registerDelivery(add func(string, string, http.HandlerFunc)) {
 	if a.enableDelivery {
-		add("/api/v1/entities/{entity}/outlets/{outlet}/delivery/orders", http.MethodGet, a.scoped("read_business_data", listDeliveryOrders))
+		inbox := a.scoped("read_business_data", a.listDeliveryOrders)
+		if a.hostedDiscoveryRead != nil {
+			inbox = a.hostedNativeDeliveryRead()
+		}
+		add("/api/v1/entities/{entity}/outlets/{outlet}/delivery/orders", http.MethodGet, inbox)
 	}
 }
 
 const deliveryInboxLimit = 100
 const deliveryInboxOrder = " ORDER BY updated_at DESC,id DESC"
 
-func listDeliveryOrders(r *http.Request, tx *sql.Tx, m entityMembership, _ []byte) (int, any, error) {
+func (a *app) listDeliveryOrders(r *http.Request, tx *sql.Tx, m entityMembership, _ []byte) (int, any, error) {
 	outlet, err := pathID(r, "outlet")
 	if err != nil {
 		return 0, nil, err
 	}
 	if err := requireSelectedDocumentOutlet(tx, m, outlet); err != nil {
+		return 0, nil, err
+	}
+	if err := a.admitDeliveryRead(r, tx, m, outlet); err != nil {
 		return 0, nil, err
 	}
 	rows, err := tx.QueryContext(r.Context(), `SELECT id,provider,external_order_id,cancelled,accepted_items,received_at,updated_at
