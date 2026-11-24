@@ -46,7 +46,7 @@ export function saleTimeHandoff(target: SaleTimeTarget): string {
   return `/pos#entity=${target.entity}&outlet=${target.outlet}&venta=${target.id}`
 }
 
-function validUTC(value: unknown): value is string {
+export function validUTC(value: unknown): value is string {
   if (typeof value !== 'string' || !utcPattern.test(value)) return false
   const date = new Date(value)
   return Number.isFinite(date.valueOf()) && date.getUTCFullYear() > 0 && date.toISOString().slice(0, 19) === value.slice(0, 19)

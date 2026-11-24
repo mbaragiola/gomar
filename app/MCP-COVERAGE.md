@@ -432,3 +432,30 @@ stock still records once on first registration. Sale capture and offline
 sync stay native-only because they use the operator's browser-local cart,
 clock and trusted, scoped lease. No payment, fiscal issuance, historical
 correction or backdating is provided.
+
+### Caja pre-close review (native only)
+
+In **Caja** (`/pos`), use the existing authorized register for the selected
+outlet and choose **Antes del cierre → Consultar ventas de este navegador**.
+This reads only the existing IndexedDB sales belonging to the account and
+outlet of the active lease in this browser. It neither queries the server nor
+arms a shift, sends the queue, or changes a sale. If the browser's store is
+missing or unavailable, the register reports a read error without creating it.
+Data outside this browser profile, account or outlet is not verified. Do not
+treat it as clearance to count stock or close the month. Check and sync
+each register first.
+
+The comparison uses the original Gomar registration and acknowledged,
+unverified till time for synchronized sales held in this browser. It includes
+registrations in the current and previous Buenos Aires month (relative to the
+browser clock) and accounts separately for missing times. A legacy row is
+never dated from its enqueue timestamp. Pending and review states are local
+observations, not proof that Gomar never received the sale.
+
+The register queue and the cross-month list inferred from browser-held
+receipts are native-only: MCP has no access to this device's IndexedDB or
+lease. To verify server-held evidence for a **known exact reference**, use
+`gomar_read_pos_sale_time` and its scoped **Horarios de la venta de Caja**
+handoff above. The server and handoff still require the original cashier,
+business and outlet; they deny unauthorized readers without leaking timing
+or receipts. No MCP listing or cross-register permission is added.
