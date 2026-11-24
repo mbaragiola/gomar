@@ -22,8 +22,8 @@ func (a *app) registerMCPWorkspace(add func(string, string, http.HandlerFunc)) {
 		add(mcpWorkspaceBase+"/stock-alert-summary", http.MethodGet, a.mcpRead(a.mcpStockAlertSummary))
 	}
 	if a.enableDelivery {
-		add(mcpWorkspaceBase+"/delivery-orders", http.MethodGet, a.mcpRead(mcpDelivery))
-		add(mcpWorkspaceBase+"/delivery-status-summary", http.MethodGet, a.mcpRead(mcpDeliveryStatusSummary))
+		add(mcpWorkspaceBase+"/delivery-orders", http.MethodGet, a.mcpRead(a.mcpDelivery))
+		add(mcpWorkspaceBase+"/delivery-status-summary", http.MethodGet, a.mcpRead(a.mcpDeliveryStatusSummary))
 	}
 	add(mcpWorkspaceBase+"/payables-summary", http.MethodGet, a.mcpRead(a.mcpPayablesSummary))
 }
@@ -279,11 +279,11 @@ type mcpDeliveryOrder struct {
 	UpdatedAt  string `json:"updated_at"`
 }
 
-func mcpDeliveryStatusSummary(r *http.Request, tx *sql.Tx, s mcpTokenScope) (any, error) {
+func (a *app) mcpDeliveryStatusSummary(r *http.Request, tx *sql.Tx, s mcpTokenScope) (any, error) {
 	if r.URL.RawQuery != "" || r.URL.ForceQuery {
 		return nil, badInput
 	}
-	outlet, err := mcpWorkspaceOutlet(r, tx, s)
+	outlet, err := a.mcpDeliveryReadOutlet(r, tx, s)
 	if err != nil {
 		return nil, err
 	}
@@ -306,11 +306,11 @@ func mcpDeliveryStatusSummary(r *http.Request, tx *sql.Tx, s mcpTokenScope) (any
 	return result, nil
 }
 
-func mcpDelivery(r *http.Request, tx *sql.Tx, s mcpTokenScope) (any, error) {
+func (a *app) mcpDelivery(r *http.Request, tx *sql.Tx, s mcpTokenScope) (any, error) {
 	if r.URL.RawQuery != "" {
 		return nil, badInput
 	}
-	outlet, err := mcpWorkspaceOutlet(r, tx, s)
+	outlet, err := a.mcpDeliveryReadOutlet(r, tx, s)
 	if err != nil {
 		return nil, err
 	}

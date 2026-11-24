@@ -569,3 +569,14 @@ The native screen may show the same guest name, table label and
 historical policy as before. MCP still omits them, and both omit the
 separate private contact records. No public availability, settings,
 menu, confirmation/cancellation, proposal, or new tool is involved.
+
+The isolated hosted delivery proof covers the existing native inbox
+and the packaged `gomar_list_recent_delivery` and
+`gomar_delivery_status_summary` only. The original flag, read role,
+outlet grant and MCP pin still apply. Same-snapshot exact #044 admission
+returns the generic denial without order identifiers or counts when
+scope is lost. Native latest 100, MCP latest 30 with truncation, and
+the MCP latest-100 summary keep their existing order and outputs.
+External order references and item details stay native-only; MCP
+returns no customer contact. No provider, ingestion, polling or
+operation changing orders is added.

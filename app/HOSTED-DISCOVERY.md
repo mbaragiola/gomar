@@ -37,7 +37,7 @@ verification details are returned.
 The read portion covers only the existing native entity/outlet lists,
 exact own Caja sale timing, their corresponding packaged MCP reads, and
 the packaged monthly sales summary, the existing protected stock reads,
-and the existing staff reservation queue reads.
+the existing staff reservation queue reads, and the existing delivery inbox reads.
 The barcode lane below is its sole write exception. There is no shared
 production mode or hosted access guarantee for other POS operations,
 MCP tools, proposal types, administration, public menus/reservations,
@@ -172,3 +172,23 @@ its existing reference, status, party size and local time, or day
 aggregates; contacts remain excluded from both. Staff settings, public
 availability and menus, all reservation changes, proposals, contacts,
 notifications and background work are outside this fixture lane.
+
+## Existing delivery inbox reads only
+
+The isolated fixture narrows the existing native inbox GET,
+`gomar_list_recent_delivery`, and `gomar_delivery_status_summary` to
+the actor's exact admitted outlet. It retains the delivery feature flag,
+browser login and employee organization rules, read-business role,
+active outlet grant, and MCP credential scope. The check and the order
+read share a read-only repeatable-read snapshot. Suspended, unmapped or
+expired paid outlets return the same generic missing-outlet response
+without order data or counts; a valid empty outlet still returns an
+empty list or zero counts.
+
+The native latest 100, MCP latest 30 with truncation, and MCP summary
+over the native latest 100 all keep their original updated-time and
+ID ordering. The existing native external order reference and product
+list remain native-only; MCP does not expose them or any customer
+contact. The default app, explicit self-host and disabled feature
+are unchanged. No ingestion, mapping or event changes, live provider,
+order action or polling is involved.
