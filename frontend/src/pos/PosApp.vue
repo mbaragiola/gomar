@@ -3,6 +3,7 @@ import SavedTableCheck from './SavedTableCheck.vue'
 import ThemeSelect from '../components/ThemeSelect.vue'
 import ManageBarcodes from './ManageBarcodes.vue'
 import SaleClock from './SaleClock.vue'
+import PrecloseSummary from './PrecloseSummary.vue'
 import { receiptClock, saleTimeHandoff } from './sale-time'
 import { computed, nextTick, onMounted, onUnmounted, ref } from 'vue'
 import { ApiError, request } from '../api'
@@ -702,6 +703,7 @@ onUnmounted(() => {
         </ul>
         <button type="button" :disabled="verifying" @click="acknowledgeRecovery">Marcar lista como revisada</button>
       </section>
+      <PrecloseSummary :key="grant.lease" :scope="grant" :updating="verifying || saving || syncing" />
       <section class="card gomar-feature">
         <div class="section-heading"><h2>Ventas de esta caja</h2>
           <button type="button" :disabled="!online || syncing || verifying || !pending" @click="sync">Sincronizar pendientes</button>

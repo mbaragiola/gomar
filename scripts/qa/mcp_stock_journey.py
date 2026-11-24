@@ -41,7 +41,7 @@ if with_finalization:
     from pos_table_finalization_checks import check_finalization
 with_pos_sale_time = len(sys.argv) > 12 and sys.argv[12] == "true"
 if with_pos_sale_time:
-    from pos_sale_time_checks import check_pos_sale_time
+    from pos_sale_time_checks import check_pos_preclose, check_pos_sale_time
 
 scope = {"entity_id": 1, "outlet_id": 1}
 base = "/api/v1/entities/1/outlets/1"
@@ -526,6 +526,7 @@ def main():
                         check_finalization(browser, login, origin, psql, issue, connection)
                     if with_pos_sale_time:
                         check_pos_sale_time(browser, login, origin, psql, issue, connection)
+                        check_pos_preclose(browser, login, origin, psql)
                 finally:
                     browser.close()
         finally:
@@ -533,6 +534,7 @@ def main():
             server.wait(timeout=8)
     if with_pos_sale_time:
         print("PASS: Chrome offline capture, reload, and lost-response replay; matched packaged MCP evidence, scoped handoff and denials; one stock movement")
+        print("PASS: desktop/mobile Chrome Caja pre-close, cross-month timing, legacy unknowns, scoped local snapshots and no reads or writes to Gomar")
     if with_barcode:
         print("PASS: exact barcode lookup and native approval in MCP; desktop/mobile Chrome scans, offline cache, and no sale")
     if with_manual_tender:

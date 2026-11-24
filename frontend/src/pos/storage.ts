@@ -29,10 +29,17 @@ export function lockOfflinePOS() {
   broadcastPOSLock()
 }
 
-function open(): Promise<IDBDatabase> {
+function open(initialize: boolean): Promise<IDBDatabase> {
   return new Promise((resolve, reject) => {
     const req = indexedDB.open(dbName, 1)
     req.onupgradeneeded = () => {
+      // Opening a missing database can start a version-change transaction
+      // before the readonly snapshot begins. The inspector never provisions
+      // or migrates a register, even after this browser evicted its data.
+      if (!initialize) {
+        req.transaction?.abort()
+        return
+      }
       req.result.createObjectStore('meta')
       req.result.createObjectStore('sales', { keyPath: 'id' }).createIndex('scope', 'key')
     }
@@ -49,8 +56,10 @@ function result<T>(req: IDBRequest<T>): Promise<T> {
   })
 }
 
-async function transact<T>(stores: string[], mode: IDBTransactionMode, run: (tx: IDBTransaction) => Promise<T>): Promise<T> {
-  const db = await open()
+async function transact<T>(
+  stores: string[], mode: IDBTransactionMode, run: (tx: IDBTransaction) => Promise<T>, { initialize = true } = {},
+): Promise<T> {
+  const db = await open(initialize)
   try {
     const tx = db.transaction(stores, mode, mode === 'readwrite' ? { durability: 'strict' } : undefined)
     const done = new Promise<void>((resolve, reject) => {
@@ -170,6 +179,16 @@ export function acknowledgeTableRecovery(grant: Grant, id: string) {
 
 export function salesFor(context: Context) {
   return transact(['sales'], 'readonly', (tx) => result<Sale[]>(tx.objectStore('sales').index('scope').getAll(scopeKey(context))))
+}
+
+// A read-only snapshot for the active register, not an entry point for
+// sync or an arbitrary actor/outlet lookup.
+export function readRegisterSales(grant: Grant, now: number) {
+  return transact(['meta', 'sales'], 'readonly', async (tx) => {
+    const current = await armed(tx)
+    if (!current || !sameRegister(grant, current) || now >= current.expires) return
+    return result<Sale[]>(tx.objectStore('sales').index('scope').getAll(scopeKey(current)))
+  }, { initialize: false })
 }
 
 export function enqueue(grant: Grant, quantities: ReadonlyMap<number, number>, id: string, now: number, paymentMethod: PaymentMethod) {
