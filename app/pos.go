@@ -88,7 +88,7 @@ func (a *app) registerPOS(add func(string, string, http.HandlerFunc)) {
 	add(posPath+"/sales", "POST", sell(func(r *http.Request, tx *sql.Tx, m entityMembership, raw []byte) (int, any, error) {
 		return postPOSSale(r, tx, m, raw, a.enableStock, a.posTime)
 	}))
-	add(posPath+"/sale-times/{request}", http.MethodGet, a.scoped("read_business_data", readPOSSaleTime))
+	add(posPath+"/sale-times/{request}", http.MethodGet, a.scoped("read_business_data", a.readPOSSaleTime))
 }
 
 func posOutlet(r *http.Request, tx *sql.Tx, m entityMembership) (int64, error) {

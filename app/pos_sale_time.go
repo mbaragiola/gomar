@@ -33,7 +33,7 @@ func parsePOSSaleTillTime(raw json.RawMessage) (string, error) {
 	return claim, nil
 }
 
-func readPOSSaleTime(r *http.Request, tx *sql.Tx, m entityMembership, _ []byte) (int, any, error) {
+func (a *app) readPOSSaleTime(r *http.Request, tx *sql.Tx, m entityMembership, _ []byte) (int, any, error) {
 	if !posSellingRole(m.role) {
 		return 0, nil, forbiddenRole
 	}
@@ -41,11 +41,11 @@ func readPOSSaleTime(r *http.Request, tx *sql.Tx, m entityMembership, _ []byte) 
 	if err != nil {
 		return 0, nil, err
 	}
-	result, err := loadPOSSaleTime(r, tx, m, outlet)
+	result, err := a.loadPOSSaleTime(r, tx, m, outlet)
 	return http.StatusOK, result, err
 }
 
-func mcpPOSSaleTime(r *http.Request, tx *sql.Tx, s mcpTokenScope) (any, error) {
+func (a *app) mcpPOSSaleTime(r *http.Request, tx *sql.Tx, s mcpTokenScope) (any, error) {
 	if !posSellingRole(s.role) {
 		return nil, forbiddenRole
 	}
@@ -56,16 +56,10 @@ func mcpPOSSaleTime(r *http.Request, tx *sql.Tx, s mcpTokenScope) (any, error) {
 	if err != nil {
 		return nil, err
 	}
-	return loadPOSSaleTime(r, tx, s.entityMembership, outlet)
+	return a.loadPOSSaleTime(r, tx, s.entityMembership, outlet)
 }
 
-func loadPOSSaleTime(r *http.Request, tx *sql.Tx, m entityMembership, outlet int64) (postime.Evidence, error) {
-	request := r.PathValue("request")
-	if !postime.ValidRequestID(request) || r.URL.RawQuery != "" || r.URL.ForceQuery {
-		return postime.Evidence{}, badInput
-	}
-	result := postime.Evidence{RequestID: request}
-	err := tx.QueryRowContext(r.Context(), `SELECT s.recorded_at,COALESCE(s.till_reported_at_utc,'') FROM pos_sales s
+const posSaleTimeSQL = `SELECT s.recorded_at,COALESCE(s.till_reported_at_utc,'') FROM pos_sales s
 		WHERE s.request_id=$1 AND s.outlet_id=$2 AND s.actor_id=$3
 		AND EXISTS(SELECT 1 FROM outlet_grants g
 			JOIN memberships member ON member.id=g.membership_id
@@ -73,7 +67,36 @@ func loadPOSSaleTime(r *http.Request, tx *sql.Tx, m entityMembership, outlet int
 			JOIN entities e ON e.id=o.entity_id
 			WHERE g.outlet_id=s.outlet_id AND member.id=$4 AND member.user_id=s.actor_id
 			AND member.entity_id=e.id AND e.id=$5 AND member.role=$6 AND member.active AND o.active AND e.active)
-		AND NOT EXISTS(SELECT 1 FROM pos_table_finalizations f WHERE f.sale_id=s.id)`, request, outlet, m.userID, m.id, m.ID, m.role).
+		AND NOT EXISTS(SELECT 1 FROM pos_table_finalizations f WHERE f.sale_id=s.id)`
+
+// Read the current exact entitlement and its receipt in one statement and
+// snapshot, after the existing native/MCP authentication and scope checks.
+// In a fixture without a synthetic clock, PostgreSQL supplies its own
+// statement time instead of trusting a client or an earlier request step.
+const hostedPOSSaleTimeSQL = `
+WITH discovery_input(actor_id,entity_id,outlet_id,checked_at,native_entity_list) AS (
+    VALUES ($3::bigint,$5::bigint,$2::bigint,COALESCE($7::timestamptz,statement_timestamp()),FALSE)
+), ` + hostedScopeEligibilitySQL + `
+` + posSaleTimeSQL + `
+    AND EXISTS (SELECT 1 FROM discovery_admitted d WHERE d.entity_id=$5 AND d.outlet_id=s.outlet_id)`
+
+func (a *app) loadPOSSaleTime(r *http.Request, tx *sql.Tx, m entityMembership, outlet int64) (postime.Evidence, error) {
+	request := r.PathValue("request")
+	if !postime.ValidRequestID(request) || r.URL.RawQuery != "" || r.URL.ForceQuery {
+		return postime.Evidence{}, badInput
+	}
+	result := postime.Evidence{RequestID: request}
+	query := posSaleTimeSQL
+	args := []any{request, outlet, m.userID, m.id, m.ID, m.role}
+	if f := a.hostedDiscoveryRead; f != nil {
+		query = hostedPOSSaleTimeSQL
+		var clock sql.NullTime
+		if f.now != nil {
+			clock = sql.NullTime{Time: f.clock(), Valid: true}
+		}
+		args = append(args, clock)
+	}
+	err := tx.QueryRowContext(r.Context(), query, args...).
 		Scan(&result.RegisteredAt, &result.TillReportedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return postime.Evidence{}, posSaleTimeMissing

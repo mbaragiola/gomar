@@ -32,6 +32,11 @@ type discoveryTestServer struct {
 
 func newDiscoveryTestServer(t *testing.T, ctx context.Context, db *sql.DB, mode *hostedDiscoveryReadFixture) discoveryTestServer {
 	t.Helper()
+	return newDiscoveryTestServerForSubject(t, ctx, db, mode, "fixture-hosted-discovery-user")
+}
+
+func newDiscoveryTestServerForSubject(t *testing.T, ctx context.Context, db *sql.DB, mode *hostedDiscoveryReadFixture, subject string) discoveryTestServer {
+	t.Helper()
 	var routes http.Handler
 	server := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { routes.ServeHTTP(w, r) }))
 	t.Cleanup(server.Close)
@@ -46,7 +51,7 @@ func newDiscoveryTestServer(t *testing.T, ctx context.Context, db *sql.DB, mode 
 			http.NotFound(w, r)
 			return
 		}
-		if err := a.startVerifiedProviderSession(w, r, verifiedProviderIdentity{"google", "https://accounts.google.com", "fixture-hosted-discovery-user"}); err != nil {
+		if err := a.startVerifiedProviderSession(w, r, verifiedProviderIdentity{"google", "https://accounts.google.com", subject}); err != nil {
 			failure(w, err)
 			return
 		}
@@ -302,7 +307,7 @@ func TestPostgresHostedDiscoveryRead(t *testing.T) {
 		t.Fatal("discovery performed writes or changed grants")
 	}
 
-	testHostedDiscoveryChrome(t, ctx, f, base, func(step string) {
+	testHostedScopedChrome(t, ctx, f, base, "GOMAR_QA_DISCOVERY_BROWSER", "GOMAR_QA_DISCOVERY_MCP", "PASS: actual Chrome and packaged MCP hosted discovery", func(step string) {
 		switch step {
 		case "begin":
 			now.Store(start.Add(3 * time.Second).UnixMicro())
@@ -394,13 +399,13 @@ func TestPostgresHostedDiscoveryRead(t *testing.T) {
 	t.Log("hosted discovery only: exact grants and maps, suspension/expiry/conflict deny A; B and self-host remain")
 }
 
-func testHostedDiscoveryChrome(t *testing.T, ctx context.Context, f, base discoveryTestServer, move func(string)) {
+func testHostedScopedChrome(t *testing.T, ctx context.Context, f, base discoveryTestServer, scriptEnv, binaryEnv, passMarker string, move func(string)) {
 	t.Helper()
-	script := os.Getenv("GOMAR_QA_DISCOVERY_BROWSER")
+	script := os.Getenv(scriptEnv)
 	if script == "" {
 		return
 	}
-	mcp, python := os.Getenv("GOMAR_QA_DISCOVERY_MCP"), os.Getenv("GOMAR_QA_SIGNUP_PYTHON")
+	mcp, python := os.Getenv(binaryEnv), os.Getenv("GOMAR_QA_SIGNUP_PYTHON")
 	if !filepath.IsAbs(script) || !filepath.IsAbs(mcp) || !filepath.IsAbs(python) {
 		t.Fatal("require absolute isolated browser and MCP commands")
 	}
@@ -443,8 +448,8 @@ func testHostedDiscoveryChrome(t *testing.T, ctx context.Context, f, base discov
 		}
 	}
 	result := <-done
-	if result.err != nil || !bytes.Contains(result.body, []byte("PASS: actual Chrome and packaged MCP hosted discovery")) {
-		t.Fatalf("isolated discovery QA failed: %v\n%s", result.err, result.body)
+	if result.err != nil || !bytes.Contains(result.body, []byte(passMarker)) {
+		t.Fatalf("isolated scoped-read QA failed: %v\n%s", result.err, result.body)
 	}
 	t.Log(string(result.body))
 }

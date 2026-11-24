@@ -506,3 +506,13 @@ hide the affected entity and deny both of its discovery calls without
 disclosing private paid references. The other scope and self-hosted
 control keep their prior grants. There is no new MCP tool or broader
 hosted authorization.
+
+The same fixture also gates `gomar_read_pos_sale_time` and the existing
+native exact handoff in their shared timing SELECT. The original cashier,
+current selling role and exact outlet credential remain required. Real
+Chrome and the packaged tool replay the same reference after suspension
+and expiration; both deny without returning clocks or a handoff. A
+same-entity unmapped outlet is denied even with its own existing grant.
+The unaffected paid and self-hosted scopes still return their own exact
+receipts. No new tool, device queue access, sale write or monthly report
+behavior is added.
