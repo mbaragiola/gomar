@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"crypto/subtle"
 	"database/sql"
 	"encoding/json"
 	"net/http"
@@ -64,73 +65,120 @@ func (a *app) recordNativeSignupPlan(r *http.Request, expected nativeOwnerTarget
 	})
 }
 
-// The browser never supplies the selector. The verified session holds the
-// claimant lock before enumeration, and only one currently eligible plan
-// can be selected. Old plans are history, not fallback candidates.
-func loadNativeSignupPlan(ctx context.Context, tx *sql.Tx, browser nativeOwnerBrowserState, audience string) (nativeSignupPlan, nativeOwnerDesignation, error) {
-	var plan nativeSignupPlan
-	var d nativeOwnerDesignation
+type nativeSignupState string
+
+const (
+	nativeSignupReviewable nativeSignupState = "review"
+	nativeSignupConfirmed  nativeSignupState = "confirmed"
+	nativeSignupPrepared   nativeSignupState = "prepared"
+)
+
+type nativeSignupSelection struct {
+	Plan        nativeSignupPlan
+	Designation nativeOwnerDesignation
+	State       nativeSignupState
+}
+
+// All paths use the same ambiguity check. The browser never supplies the
+// selector; an eligible exact plan or a receipt bound to this original
+// session is a candidate, and a history plus another candidate is denied.
+func loadNativeSignupSelection(ctx context.Context, tx *sql.Tx, browser nativeOwnerBrowserState, audience string) (nativeSignupSelection, error) {
+	var result nativeSignupSelection
 	now := nativeOwnerNow()
 	if now.Unix() >= browser.Expires {
-		return plan, d, unauthenticated
+		return result, unauthenticated
 	}
 	rows, err := tx.QueryContext(ctx, `SELECT p.intent,p.revision
 		FROM gomar.native_owner_designations d
 		JOIN gomar.native_signup_plans p ON (p.intent,p.revision)=(d.intent,d.revision)
 		JOIN gomar.native_owner_intents i ON i.intent=d.intent
 		JOIN gomar.native_owner_approvals a ON (a.intent,a.revision,a.approval_ref)=(p.intent,p.revision,p.approval_ref)
-		WHERE d.claimant_id=$1 AND i.audience=$2 AND d.expires_at>$3 AND a.expires_at>$3
-		  AND NOT EXISTS (SELECT 1 FROM gomar.native_owner_designations newer WHERE newer.intent=d.intent AND newer.revision>d.revision)
-		  AND NOT EXISTS (SELECT 1 FROM gomar.native_owner_approval_revocations v WHERE v.approval_ref=p.approval_ref)
-		  AND NOT EXISTS (SELECT 1 FROM gomar.native_owner_receipts r WHERE r.intent=d.intent)
-		LIMIT 2`, browser.Actor, audience, now)
+		LEFT JOIN gomar.native_owner_receipts r ON r.intent=d.intent
+		LEFT JOIN gomar.native_owner_previews previous ON previous.challenge_hash=r.challenge_hash
+		WHERE d.claimant_id=$1 AND i.audience=$2 AND (
+		  (r.intent IS NULL AND d.expires_at>$3 AND a.expires_at>$3
+		   AND NOT EXISTS (SELECT 1 FROM gomar.native_owner_designations newer WHERE newer.intent=d.intent AND newer.revision>d.revision)
+		   AND NOT EXISTS (SELECT 1 FROM gomar.native_owner_approval_revocations v WHERE v.approval_ref=p.approval_ref))
+		  OR (r.revision=p.revision AND r.approval_ref=p.approval_ref AND r.display_digest IS NOT NULL
+		   AND previous.session_hash=$4))
+		LIMIT 2`, browser.Actor, audience, now, browser.Session[:])
 	if err != nil {
-		return plan, d, err
+		return result, err
 	}
 	defer rows.Close()
 	var intent string
 	var revision int64
 	if !rows.Next() {
 		if err = rows.Err(); err != nil {
-			return plan, d, err
+			return result, err
 		}
-		return plan, d, nativeOwnerConsentUnavailable
+		return result, nativeOwnerConsentUnavailable
 	}
 	if err = rows.Scan(&intent, &revision); err != nil {
-		return plan, d, err
+		return result, err
 	}
 	if rows.Next() {
-		return plan, d, nativeOwnerConsentUnavailable
+		return result, nativeOwnerConsentUnavailable
 	}
 	if err = rows.Err(); err != nil {
-		return plan, d, err
+		return result, err
 	}
-	// Exhausted query rows before locking. Revocation, supersession,
-	// expiration, or consumption may have won the intent lock meanwhile.
-	d, err = lockCurrentNativeOwnerDesignation(ctx, tx, intent)
+	// Exhausted rows before locking. Consume/revoke/supersede may have won
+	// this intent already. Inspect authoritative rows again under its lock.
+	if _, _, err = lockNativeOwnerIntent(ctx, tx, intent); err != nil {
+		return result, nativeOwnerUnavailable(err)
+	}
+	var raw, digest, original []byte
+	var hasReceipt, sameReceipt, prepared bool
+	err = tx.QueryRowContext(ctx, `SELECT p.organization,p.branch_display,r.intent IS NOT NULL,
+		COALESCE(r.revision=p.revision AND r.approval_ref=p.approval_ref,false),r.display_digest,previous.session_hash,
+		EXISTS (SELECT 1 FROM gomar.native_owner_pending_installs install WHERE install.intent=p.intent
+		 AND install.consent_ref=r.receipt_ref AND install.planned_owner_id=$3)
+		FROM gomar.native_signup_plans p
+		LEFT JOIN gomar.native_owner_receipts r ON r.intent=p.intent
+		LEFT JOIN gomar.native_owner_previews previous ON previous.challenge_hash=r.challenge_hash
+		WHERE p.intent=$1 AND p.revision=$2`, intent, revision, browser.Actor).
+		Scan(&result.Plan.Organization, &raw, &hasReceipt, &sameReceipt, &digest, &original, &prepared)
 	if err != nil {
-		return plan, d, nativeOwnerUnavailable(err)
+		return nativeSignupSelection{}, nativeOwnerUnavailable(err)
+	}
+	loadRevision := int64(0) // Live review uses only the current designation.
+	if hasReceipt {
+		loadRevision = revision // History never gains current authorization.
+	}
+	d, err := loadNativeOwnerDesignation(ctx, tx, intent, loadRevision)
+	if err != nil {
+		return nativeSignupSelection{}, nativeOwnerUnavailable(err)
 	}
 	now = nativeOwnerNow()
 	if d.Actor != browser.Actor || d.Target.Audience != audience || d.Target.Revision != revision ||
-		!d.approvedAt(now) || now.Unix() >= browser.Expires {
-		return plan, d, nativeOwnerConsentUnavailable
-	}
-	var raw []byte
-	err = tx.QueryRowContext(ctx, `SELECT p.organization,p.branch_display FROM gomar.native_signup_plans p
-		WHERE p.intent=$1 AND p.revision=$2 AND p.approval_ref=$3
-		  AND NOT EXISTS (SELECT 1 FROM gomar.native_owner_receipts r WHERE r.intent=p.intent)`,
-		intent, revision, d.ApprovalRef.String).Scan(&plan.Organization, &raw)
-	if err != nil {
-		return plan, d, nativeOwnerUnavailable(err)
+		now.Unix() >= browser.Expires {
+		return nativeSignupSelection{}, nativeOwnerConsentUnavailable
 	}
 	var branches []nativeInstallBranch
 	if json.Unmarshal(raw, &branches) != nil {
-		return nativeSignupPlan{}, d, nativeOwnerConsentUnavailable
+		return nativeSignupSelection{}, nativeOwnerConsentUnavailable
 	}
 	var valid bool
-	if plan.Branches, valid = canonicalNativeOwnerDisplay(d.Target, plan.Organization, branches); !valid {
-		return nativeSignupPlan{}, d, nativeOwnerConsentUnavailable
+	if result.Plan.Branches, valid = canonicalNativeOwnerDisplay(d.Target, result.Plan.Organization, branches); !valid {
+		return nativeSignupSelection{}, nativeOwnerConsentUnavailable
 	}
-	return plan, d, nil
+	result.Designation = d
+	if hasReceipt {
+		expected := nativeOwnerDisplayDigest(browser.Actor, d.Target, result.Plan.Organization, result.Plan.Branches)
+		if !sameReceipt || subtle.ConstantTimeCompare(digest, expected[:]) != 1 ||
+			subtle.ConstantTimeCompare(original, browser.Session[:]) != 1 {
+			return nativeSignupSelection{}, nativeOwnerConsentUnavailable
+		}
+		result.State = nativeSignupConfirmed
+		if prepared {
+			result.State = nativeSignupPrepared
+		}
+		return result, nil
+	}
+	if !d.approvedAt(now) {
+		return nativeSignupSelection{}, nativeOwnerConsentUnavailable
+	}
+	result.State = nativeSignupReviewable
+	return result, nil
 }

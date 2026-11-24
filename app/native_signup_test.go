@@ -14,9 +14,11 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
+	"time"
 )
 
 func TestNativeSignupDefaultsAndStrictJSON(t *testing.T) {
@@ -25,8 +27,12 @@ func TestNativeSignupDefaultsAndStrictJSON(t *testing.T) {
 	a := &app{host: host, db: new(sql.DB), providerAuth: &hostedProviderAuth{host: host, origin: "https://" + host}}
 	for _, disabled := range []*nativeSignupHosted{nil, {Enabled: true}, {Enabled: true, Origin: "https://" + host}} {
 		a.nativeSignup = disabled
-		for _, path := range []string{"/alta", "/api/v1/alta/revisar", "/api/v1/alta/confirmar"} {
-			r := httptest.NewRequest("GET", "https://"+host+path, nil)
+		for _, path := range []string{"/alta", nativeSignupStatusPath, nativeSignupReviewPath, nativeSignupConfirmPath} {
+			method := http.MethodPost
+			if path == "/alta" {
+				method = http.MethodGet
+			}
+			r := httptest.NewRequest(method, "https://"+host+path, nil)
 			w := httptest.NewRecorder()
 			a.routes().ServeHTTP(w, r)
 			if w.Code != 404 {
@@ -323,6 +329,10 @@ func TestPostgresNativeSignup(t *testing.T) {
 	get(main, "/alta?owner=other", 404)
 	get(main, "/alta?", 404)
 	get(main, "/alta", 200)
+	if string(bytes.TrimSpace(post(main, "estado", "{}", 200))) != `{"state":"review"}` {
+		t.Fatal("pre-confirmation status exposed data or issued a preview")
+	}
+	post(main, "estado", `{"intent":"private-foreign"}`, 400)
 	post(main, "revisar", `{"email":"forged@example.invalid"}`, 400)
 	code, _, _ := f.request(main, "POST", "/api/v1/alta/revisar", "{}", "https://unrelated.invalid")
 	if code != 403 {
@@ -352,6 +362,7 @@ func TestPostgresNativeSignup(t *testing.T) {
 	other := f.client()
 	login(other, "other")
 	get(other, "/alta", 404)
+	post(other, "estado", "{}", 404)
 	post(other, "revisar", "{}", 404)
 	post(other, "confirmar", confirm(primary.Challenge), 404)
 	sameActor := f.client()
@@ -378,9 +389,42 @@ func TestPostgresNativeSignup(t *testing.T) {
 	post(main, "confirmar", `{"challenge":"`+primary.Challenge+`","confirm":false,"confirm":true}`, 400)
 	post(main, "confirmar", confirm(primary.Challenge)+`{}`, 400)
 	post(main, "confirmar", confirm(primary.Challenge), 204)
-	get(main, "/alta", 404)
+	f.restartApp()
+	db = f.db
+	get(main, "/alta", 200)
+	checkRecorded := func(c *http.Client, want nativeSignupState) {
+		t.Helper()
+		var got nativeSignupStatus
+		var fields map[string]json.RawMessage
+		raw := post(c, "estado", "{}", 200)
+		if json.Unmarshal(raw, &got) != nil || json.Unmarshal(raw, &fields) != nil || len(fields) != 3 ||
+			got.State != want || got.Organization != primary.Organization ||
+			!slices.Equal(got.Branches, primary.Branches) {
+			t.Fatal("original status returned anything outside its exact safe projection")
+		}
+	}
+	checkRecorded(main, nativeSignupConfirmed)
+	get(sameActor, "/alta", 404)
+	post(sameActor, "estado", "{}", 404)
 	post(main, "revisar", "{}", 404)
 	post(main, "confirmar", confirm(primary.Challenge), 404)
+	code, _, _ = f.request(main, "POST", nativeSignupStatusPath, "{}", "https://unrelated.invalid")
+	if code != 403 {
+		t.Fatal("foreign Origin reached state")
+	}
+	competitor := signupFixtureTarget("primary-competing")
+	approval := f.designateAndApprove("primary", competitor)
+	if err := f.ops.recordNativeSignupPlan(f.recovery("/admin/__signup-fixture-plan"), competitor, signupFixtureDisplay("foreign-display")); err != nil {
+		t.Fatal(err)
+	}
+	get(main, "/alta", 404)
+	post(main, "estado", "{}", 404)
+	post(main, "revisar", "{}", 404)
+	post(main, "confirmar", confirm(primary.Challenge), 404)
+	if err := f.ops.revokeNativeOwnerApproval(f.recovery("/admin/__signup-fixture-revoke"), competitor, approval); err != nil {
+		t.Fatal(err)
+	}
+	checkRecorded(main, nativeSignupConfirmed)
 	var confirmations, drafts, pending, memberships int
 	err := db.QueryRowContext(ctx, `SELECT (SELECT count(*) FROM gomar.native_owner_receipts),
 		(SELECT count(*) FROM gomar.native_owner_install_drafts),(SELECT count(*) FROM gomar.native_owner_pending_installs),
@@ -402,19 +446,40 @@ func TestPostgresNativeSignup(t *testing.T) {
 	if err != nil {
 		t.Fatalf("legacy fixture confirmation: %v", err)
 	}
-	names := []string{"primary"}
-	if testNativeSignupChrome(t, ctx, f) {
-		names = append(names, "desk", "mobile")
+	testNativeSignupChrome(t, ctx, &f)
+	checkSignupDisplayAfterRestart(t, f, []string{"primary"}, oldReceipt)
+	f.restartApp()
+	get(main, "/alta", 200)
+	snapshot := func() (state [8]int) {
+		t.Helper()
+		if err := f.db.QueryRowContext(ctx, `SELECT (SELECT count(*) FROM gomar.native_owner_previews),
+			(SELECT count(*) FROM gomar.native_owner_receipts),(SELECT count(*) FROM gomar.native_owner_install_drafts),
+			(SELECT count(*) FROM gomar.native_owner_pending_installs),(SELECT count(*) FROM gomar.native_owner_pending_branches),
+			(SELECT count(*) FROM gomar.entities),(SELECT count(*) FROM gomar.memberships),(SELECT count(*) FROM gomar.outlet_grants)`).
+			Scan(&state[0], &state[1], &state[2], &state[3], &state[4], &state[5], &state[6], &state[7]); err != nil {
+			t.Fatal(err)
+		}
+		return state
 	}
-	f.server.Close()
-	checkSignupDisplayAfterRestart(t, f, names, oldReceipt)
+	before := snapshot()
+	checkRecorded(main, nativeSignupPrepared)
+	checkRecorded(main, nativeSignupPrepared)
+	get(sameActor, "/alta", 404)
+	post(sameActor, "estado", "{}", 404)
+	post(other, "estado", "{}", 404)
+	post(main, "revisar", "{}", 404)
+	post(main, "confirmar", confirm(primary.Challenge), 404)
+	if snapshot() != before {
+		t.Fatal("status or denied repeat changed native or access state")
+	}
+	t.Log("original-session recorded and prepared status survived restart; repeated/foreign checks wrote nothing")
 }
 
-func testNativeSignupChrome(t *testing.T, ctx context.Context, f signupTestPeer) bool {
+func testNativeSignupChrome(t *testing.T, ctx context.Context, f *signupTestPeer) {
 	t.Helper()
 	script := os.Getenv("GOMAR_QA_SIGNUP_BROWSER_SCRIPT")
 	if script == "" {
-		return false
+		return
 	} // The regular PostgreSQL suite has no browser toolchain.
 	python, mcp := os.Getenv("GOMAR_QA_SIGNUP_PYTHON"), os.Getenv("GOMAR_QA_SIGNUP_MCP")
 	if !filepath.IsAbs(script) || !filepath.IsAbs(python) || !filepath.IsAbs(mcp) {
@@ -425,20 +490,89 @@ func testNativeSignupChrome(t *testing.T, ctx context.Context, f signupTestPeer)
 	if err := os.WriteFile(cert, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: f.server.Certificate().Raw}), 0600); err != nil {
 		t.Fatal(err)
 	}
+	ctx, stop := context.WithCancel(ctx)
+	defer stop()
 	cmd := exec.CommandContext(ctx, python, "-B", script, f.server.URL, mcp, cert, scratch)
-	output, err := cmd.CombinedOutput()
-	if err != nil {
-		t.Fatalf("isolated Chrome/packaged MCP failed: %v\n%s", err, output)
+	type runResult struct {
+		output []byte
+		err    error
 	}
+	done := make(chan runResult, 1)
+	go func() {
+		output, err := cmd.CombinedOutput()
+		done <- runResult{output: output, err: err}
+	}()
+	tick := time.NewTicker(20 * time.Millisecond)
+	defer tick.Stop()
+	// The Python fixture can signal only these two synthetic gates in its
+	// test-owned directory. It sends no session, private identifiers, or
+	// approval. Go drives protected setup separately, then replaces the app
+	// and connection pool before Chrome reloads its original session.
+	for _, candidate := range []struct{ actor, cuit string }{{"desk", "00000009121"}, {"mobile", "00000009806"}} {
+		ready := filepath.Join(scratch, "ready-"+candidate.actor)
+		waiting := true
+		for waiting {
+			select {
+			case result := <-done:
+				t.Fatalf("Chrome ended before prepared-state proof: %v\n%s", result.err, result.output)
+			case <-ctx.Done():
+				t.Fatal("Chrome did not signal the scoped fixture")
+			case <-tick.C:
+				if _, err := os.Stat(ready); os.IsNotExist(err) {
+					continue
+				} else if err != nil {
+					t.Fatal(err)
+				}
+				stageSignupBrowserFixture(t, f, candidate.actor, candidate.cuit)
+				f.restartApp()
+				if err := os.WriteFile(filepath.Join(scratch, "staged-"+candidate.actor), nil, 0600); err != nil {
+					t.Fatal(err)
+				}
+				waiting = false
+			}
+		}
+	}
+	result := <-done
+	if result.err != nil {
+		t.Fatalf("isolated Chrome/packaged MCP failed: %v\n%s", result.err, result.output)
+	}
+	output := result.output
 	if !bytes.Contains(output, []byte("PASS: native signup desktop/mobile and packaged MCP")) {
 		t.Fatal("expected actual Chrome and MCP pass marker")
 	}
 	var receipts, drafts, pending, memberships int
-	if err = f.db.QueryRowContext(ctx, `SELECT (SELECT count(*) FROM gomar.native_owner_receipts),
+	if err := f.db.QueryRowContext(ctx, `SELECT (SELECT count(*) FROM gomar.native_owner_receipts),
 		(SELECT count(*) FROM gomar.native_owner_install_drafts),(SELECT count(*) FROM gomar.native_owner_pending_installs),
-		(SELECT count(*) FROM gomar.memberships)`).Scan(&receipts, &drafts, &pending, &memberships); err != nil || receipts != 4 || drafts+pending != 0 || memberships != 1 {
+		(SELECT count(*) FROM gomar.memberships)`).Scan(&receipts, &drafts, &pending, &memberships); err != nil || receipts != 4 || drafts != 2 || pending != 2 || memberships != 1 {
 		t.Fatal("unexpected real browser effects")
 	}
 	t.Log(strings.TrimSpace(string(output)))
-	return true
+}
+
+func stageSignupBrowserFixture(t *testing.T, f *signupTestPeer, name, cuit string) {
+	t.Helper()
+	target := signupFixtureTarget(name)
+	var receipt, approval string
+	if err := f.db.QueryRowContext(f.ctx, `SELECT receipt_ref,approval_ref FROM gomar.native_owner_receipts WHERE intent=$1`,
+		target.Intent).Scan(&receipt, &approval); err != nil {
+		t.Fatal(err)
+	}
+	draft := signupFixtureInstallDraft(name, target, receipt, cuit)
+	if err := f.ops.approveNativeInstallDraft(f.recovery("/admin/__signup-fixture-draft"), draft); err != nil {
+		t.Fatal(err)
+	}
+	peer := nativeInstallPeer{Issuer: "billing-qa", Recipient: "gomar-qa"}
+	record, err := f.application.installNativeOwnerDormant(f.owner(name, "/__signup-fixture-dormant"), target, receipt, peer,
+		func(_ context.Context, got nativeInstallRequest) (nativeInstallObservation, error) {
+			want := nativeInstallRequest{Peer: peer, Purpose: nativeInstallPurpose, Schema: 1, Target: target, Nonce: got.Nonce,
+				Initiator: draft.Initiator, Claimant: draft.Claimant, ConsentRef: receipt, ApprovalRef: approval}
+			if !providerRandom(got.Nonce) || !sameNativeInstallRequest(got, want) {
+				return nativeInstallObservation{}, nativeOwnerConsentUnavailable
+			}
+			now := nativeOwnerNow()
+			return nativeInstallObservation{Binding: want, CheckedAt: now, ExpiresAt: now.Add(2 * time.Second)}, nil
+		})
+	if err != nil || !record.Dormant {
+		t.Fatalf("protected fixture did not record a dormant plan: %v", err)
+	}
 }

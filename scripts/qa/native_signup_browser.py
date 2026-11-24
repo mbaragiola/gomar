@@ -5,6 +5,7 @@ from pathlib import Path
 import stat
 import subprocess
 import sys
+import time
 
 from playwright.sync_api import expect, sync_playwright
 
@@ -51,6 +52,111 @@ def expect_visible_spacing(locator, exact):
       spaces.setEnd(label, offset + 2);
       return one > 0 && spaces.getBoundingClientRect().width > one + 1;
     }""")
+
+
+def reopened_status(page, actor, state, title):
+    with page.expect_response(lambda r: r.url.endswith("/alta/estado")) as waiting:
+        assert page.reload().status == 200
+    result = waiting.value
+    assert result.status == 200 and result.headers["cache-control"] == "private, no-store"
+    assert result.json() == {"state": state, "organization": f"QA Organización  {actor}",
+                             "branches": ["Local  Centro", "Norte"]}
+    expect(page.get_by_role("heading", name=title)).to_be_visible()
+    expect(page.get_by_text("no acredita un pago ni activa el acceso", exact=False)).to_be_visible()
+    expect(page.get_by_role("button", name="Confirmar solicitud")).to_have_count(0)
+    expect(page.get_by_role("button", name="Ver solicitud")).to_have_count(0)
+    assert page.evaluate("document.documentElement.scrollWidth <= window.innerWidth")
+
+
+def prepare_after_confirmation(actor):
+    # Empty signals in the test-owned directory only. There is no
+    # preparation route, no owner credential, and no approval in the signal.
+    ready = Path(scratch) / f"ready-{actor}"
+    with os.fdopen(os.open(ready, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600), "wb"):
+        pass
+    staged = Path(scratch) / f"staged-{actor}"
+    deadline = time.monotonic() + 12
+    while not staged.is_file() and time.monotonic() < deadline:
+        time.sleep(.02)
+    assert staged.is_file(), "protected fixture did not prepare and restart"
+
+
+
+def status_visibility_page(context, visible):
+    page = context.new_page()
+    page.add_init_script("""(() => {
+      window.signupFixtureVisible = __VISIBLE__;
+      window.signupFixtureSawOldStatus = false;
+      Object.defineProperty(document, 'visibilityState', {
+        configurable:true, get: () => window.signupFixtureVisible ? 'visible' : 'hidden',
+      });
+      new MutationObserver(() => {
+        if (document.body?.textContent.includes('QA Organización')) window.signupFixtureSawOldStatus = true;
+      }).observe(document, {childList:true, subtree:true, characterData:true});
+    })()""".replace("__VISIBLE__", "true" if visible else "false"))
+    return page
+
+
+def discard_status_while_hidden(context, actor):
+    # Supply the exact live HTTPS response, but hide the page before its
+    # delivery without sending an event. The final completion guard must
+    # drop it and do an independent status check on foreground.
+    page = status_visibility_page(context, True)
+    requests = []
+    page.on("request", lambda req: requests.append(req) if req.url.endswith("/alta/estado") else None)
+
+    def deliver_while_hidden(route):
+        upstream = route.fetch()
+        assert upstream.status == 200 and upstream.json()["organization"] == f"QA Organización  {actor}"
+        page.evaluate("window.signupFixtureVisible = false")
+        route.fulfill(response=upstream)
+
+    try:
+        page.route(origin + "/api/v1/alta/estado", deliver_while_hidden, times=1)
+        with page.expect_response(lambda r: r.url.endswith("/alta/estado")) as pending:
+            assert page.goto(origin + "/alta").status == 200
+        pending.value.finished()
+        # Give the page's fetch/JSON completion a turn without changing visibility.
+        page.evaluate("() => new Promise(resolve => setTimeout(resolve, 25))")
+        assert page.evaluate("document.visibilityState") == "hidden" and len(requests) == 1
+        assert not page.evaluate("window.signupFixtureSawOldStatus")
+        with page.expect_response(lambda r: r.url.endswith("/alta/estado")) as fresh:
+            page.evaluate("""() => {
+              window.signupFixtureVisible = true;
+              document.dispatchEvent(new Event('visibilitychange'));
+            }""")
+        assert fresh.value.status == 200 and fresh.value.json()["state"] == "prepared"
+        expect(page.get_by_role("heading", name="Preparación registrada")).to_be_visible()
+        assert len(requests) == 2
+    finally:
+        page.close()
+
+
+def hidden_status_after_rotation(context, actor):
+    # Controlled visibility on the real page, with actual Gomar session
+    # rotation in the same context and a real HTTPS status request.
+    page = status_visibility_page(context, False)
+    requests = []
+    page.on("request", lambda req: requests.append(req) if req.url.endswith("/alta/estado") else None)
+    try:
+        assert page.goto(origin + "/alta").status == 200
+        assert page.evaluate("document.visibilityState") == "hidden"
+        expect(page.get_by_role("heading", name="Consultando el estado")).to_be_visible()
+        assert not requests and not page.evaluate("window.signupFixtureSawOldStatus")
+        sign_in(page, actor)  # Rotates the exact original session in this context.
+        assert not requests and not page.evaluate("window.signupFixtureSawOldStatus")
+        with page.expect_response(lambda r: r.url.endswith("/alta/estado")) as waiting:
+            page.evaluate("""() => {
+              window.signupFixtureVisible = true;
+              document.dispatchEvent(new Event('visibilitychange'));
+            }""")
+        denied = waiting.value
+        assert denied.status == 404 and "QA Organización" not in denied.text()
+        expect(page.get_by_role("heading", name="Solicitud no disponible")).to_be_visible()
+        expect(page.get_by_role("heading", name="Preparación registrada")).to_have_count(0)
+        assert len(requests) == 1 and not page.evaluate("window.signupFixtureSawOldStatus")
+    finally:
+        page.close()
 
 
 def check_native(browser, actor, mobile):
@@ -117,6 +223,21 @@ def check_native(browser, actor, mobile):
         assert post(page, "/api/v1/auth/mcp-token", {"entity_id": 711, "outlet_id": 711})[0] in (403, 404)
         assert waiting.value.headers["cache-control"] == "private, no-store"
 
+        writes_before_reload = len(writes)
+        reopened_status(page, actor, "confirmed", "Confirmación recibida")
+        prepare_after_confirmation(actor)
+        reopened_status(page, actor, "prepared", "Preparación registrada")
+        assert len(writes) == writes_before_reload
+        with open_context(browser, mobile) as replacement:
+            assert replacement.request.get(f"{origin}/__signup-fixture-sign-in/{actor}").status == 204
+            assert replacement.request.get(origin + "/alta").status == 404
+            csrf = next(cookie["value"] for cookie in replacement.cookies() if cookie["name"] == "csrftoken")
+            denial = replacement.request.post(origin + "/api/v1/alta/estado",
+                                              headers={"Origin": origin, "X-CSRFToken": csrf}, data={})
+            assert denial.status == 404 and "QA Organización" not in denial.text() and "prepared" not in denial.text()
+        discard_status_while_hidden(context, actor)
+        hidden_status_after_rotation(context, actor)
+
 
 def mcp_regression(browser):
     with open_context(browser) as context:
@@ -124,6 +245,7 @@ def mcp_regression(browser):
         sign_in(page, "staff")
         assert page.goto(origin + "/alta").status == 404
         assert page.goto(origin).status == 200
+        assert post(page, "/api/v1/alta/estado", {})[0] == 404
         status, body = post(page, "/api/v1/auth/mcp-token", {"entity_id": 711, "outlet_id": 711})
         assert status == 201
         token = Path(scratch) / "mcp-fixture-token"
@@ -169,7 +291,9 @@ def mcp_regression(browser):
                     assert denied.get("isError") and "structuredContent" not in denied
                     hidden = rpc("tools/call", {"name": "gomar_confirm_native_owner_signup", "arguments": {}})
                     assert "error" in hidden or hidden.get("result", {}).get("isError")
-                    assert not any(text in json.dumps(denied) + json.dumps(hidden)
+                    hidden_status = rpc("tools/call", {"name": "gomar_get_native_signup_status", "arguments": {}})
+                    assert "error" in hidden_status or hidden_status.get("result", {}).get("isError")
+                    assert not any(text in json.dumps(denied) + json.dumps(hidden) + json.dumps(hidden_status)
                                    for text in ("private-request", "QA Organización", "accept-"))
                 finally:
                     proc.stdin.close()
@@ -194,4 +318,7 @@ with sync_playwright() as playwright:
         mcp_regression(browser)
     finally:
         browser.close()
+print("PASS: late hidden status dropped and independently refreshed in Chrome desktop/mobile")
+print("PASS: hidden-at-mount rotation denied on first visible check in Chrome desktop/mobile")
+print("PASS: original-session confirmed and prepared after restart in Chrome desktop/mobile")
 print("PASS: native signup desktop/mobile and packaged MCP")
