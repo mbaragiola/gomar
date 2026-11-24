@@ -145,6 +145,28 @@ claimant before acquiring the intent lock. Plans and their approval
 history survive an application restart without a callback, backfill,
 runtime writer, or new registered route.
 
+### Authoring one plan in the protected fixture
+
+A separate, explicitly injected recovery page lets the operator enter
+one existing private case reference as POST data. It never lists cases
+or repeats the reference in an address or rendered response. Only a
+current, already approved designation for the configured audience
+opens, with its server-fixed branch references. The operator enters
+display labels, reviews the exact mapping, and confirms the save.
+The final form has no editable labels or scope. The local staging
+tickets are opaque, bounded, short-lived, single-use, and bound to
+the exact protected recovery session. Opening another case invalidates
+that session's previous work. No stage by itself authorizes a write.
+
+The save reuses the protected 043 writer to recheck the operator,
+claimant, exact revision, approval and unconsumed scope. It writes
+only one local display plan. A direct TLS connection, forwarded
+headers, ordinary sessions or MCP credentials do not constitute
+protected ingress or recovery authorization. The fixture is off by
+default and adds no migration, approval, legal edit, access, payment,
+or rollout. In tests the private ingress marker is injected only by
+a dedicated in-process synthetic listener.
+
 ### Reopening your signup
 
 The original signed-in session may reopen **Revisá el alta**. Gomar

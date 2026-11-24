@@ -52,6 +52,7 @@ type adminPage struct {
 	SingleColumn                        bool
 	PasswordForm                        *adminPasswordForm
 	PasswordDone                        bool
+	SignupPlan                          *adminSignupPlanPage
 }
 
 func renderAdmin(w http.ResponseWriter, page adminPage) {
@@ -74,6 +75,10 @@ func redirectAdminLogin(w http.ResponseWriter, r *http.Request) {
 func (a *app) admin(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("Vary", "Cookie")
+	if r.URL.Path == adminSignupPlanPath || r.URL.Path == strings.TrimSuffix(adminSignupPlanPath, "/") {
+		a.serveAdminSignupPlan(w, r)
+		return
+	}
 	if a.adminRecovery && !effectiveHTTPS(r) {
 		failure(w, badCSRF)
 		return

@@ -293,7 +293,9 @@ def mcp_regression(browser):
                     assert "error" in hidden or hidden.get("result", {}).get("isError")
                     hidden_status = rpc("tools/call", {"name": "gomar_get_native_signup_status", "arguments": {}})
                     assert "error" in hidden_status or hidden_status.get("result", {}).get("isError")
-                    assert not any(text in json.dumps(denied) + json.dumps(hidden) + json.dumps(hidden_status)
+                    hidden_author = rpc("tools/call", {"name": "gomar_author_native_signup_plan", "arguments": {}})
+                    assert "error" in hidden_author or hidden_author.get("result", {}).get("isError")
+                    assert not any(text in json.dumps([denied, hidden, hidden_status, hidden_author])
                                    for text in ("private-request", "QA Organización", "accept-"))
                 finally:
                     proc.stdin.close()
