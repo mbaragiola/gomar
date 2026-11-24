@@ -1,4 +1,5 @@
 import { draft, quoteCart, sameContext, scopeKey, type Context, type Grant, type PaymentMethod, type Sale } from './model'
+import type { ReceiptClock } from './sale-time'
 import type { TableSave } from './tableSave'
 
 const dbName = 'gomar-pos-v1'
@@ -89,6 +90,17 @@ export function arm(grant: Grant) {
   })
 }
 
+export function refreshTillTimeCapability(grant: Grant, tillTimeV1: boolean) {
+  return transact(['meta'], 'readwrite', async (tx) => {
+    const current = await armed(tx)
+    if (!current || current.lease !== grant.lease || !sameContext(current, grant)) return
+    if ((current.tillTimeV1 === true) === tillTimeV1) return current
+    const updated = { ...current, tillTimeV1 }
+    await result(tx.objectStore('meta').put(updated, 'active'))
+    return updated
+  })
+}
+
 export function disarm(lease: string) {
   if (!lease) return Promise.resolve()
   return transact(['meta'], 'readwrite', async (tx) => {
@@ -171,11 +183,11 @@ export function enqueue(grant: Grant, quantities: ReadonlyMap<number, number>, i
   })
 }
 
-export function recordOutcome(context: Context, id: string, status: Sale['status'], serverId?: number) {
+export function recordOutcome(context: Context, id: string, status: Sale['status'], serverId?: number, receiptClock?: ReceiptClock) {
   return transact(['sales'], 'readwrite', async (tx) => {
     const store = tx.objectStore('sales')
     const sale = await result<Sale | undefined>(store.get(id))
     if (!sale || !sameContext(context, sale) || sale.status !== 'pending') return
-    await result(store.put({ ...sale, status, serverId }))
+    await result(store.put({ ...sale, status, serverId, receiptClock }))
   })
 }

@@ -39,6 +39,9 @@ if with_manual_tender:
 with_finalization = len(sys.argv) > 11 and sys.argv[11] == "true"
 if with_finalization:
     from pos_table_finalization_checks import check_finalization
+with_pos_sale_time = len(sys.argv) > 12 and sys.argv[12] == "true"
+if with_pos_sale_time:
+    from pos_sale_time_checks import check_pos_sale_time
 
 scope = {"entity_id": 1, "outlet_id": 1}
 base = "/api/v1/entities/1/outlets/1"
@@ -102,7 +105,7 @@ COMMIT;
         treasury_seed(psql)
     if with_bookings_wiki:
         booking_seed(psql)
-    if with_pos_prebill or with_pos_table_checks or with_manual_tender or with_finalization:
+    if with_pos_prebill or with_pos_table_checks or with_manual_tender or with_finalization or with_pos_sale_time:
         run([*app, "-create-admin", "qa-pos-limited"], input=password + "\n", capture_output=True)
         psql("""
 BEGIN;
@@ -521,11 +524,15 @@ def main():
                         barcode_journey(browser)
                     if with_finalization:
                         check_finalization(browser, login, origin, psql, issue, connection)
+                    if with_pos_sale_time:
+                        check_pos_sale_time(browser, login, origin, psql, issue, connection)
                 finally:
                     browser.close()
         finally:
             server.terminate()
             server.wait(timeout=8)
+    if with_pos_sale_time:
+        print("PASS: Chrome offline capture, reload, and lost-response replay; matched packaged MCP evidence, scoped handoff and denials; one stock movement")
     if with_barcode:
         print("PASS: exact barcode lookup and native approval in MCP; desktop/mobile Chrome scans, offline cache, and no sale")
     if with_manual_tender:

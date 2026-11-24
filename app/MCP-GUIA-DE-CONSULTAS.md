@@ -11,9 +11,14 @@ falta copiar identificadores técnicos ni pegar claves o archivos en el chat.
 
 > ¿Cuánto vendimos por caja en [sucursal] el mes pasado? Decime qué mes tomaste y no sumes otras sucursales.
 
-Podés pedir este mes o el anterior, según el calendario de Buenos Aires.
-El total es en pesos argentinos y solo incluye ventas registradas en la
-caja de Gomar, no delivery ni facturas.
+Podés pedir este mes o el anterior. El mes se determina por la hora en que
+Gomar registró cada venta, en Buenos Aires, no por el reloj de la caja.
+El total es en pesos argentinos y no incluye delivery ni facturas.
+
+> En [sucursal], para mi venta con referencia [referencia visible en Caja], ¿a qué hora la registró Gomar y qué hora informó la caja?
+
+La hora informada por la caja puede faltar y no está verificada. Ninguno de
+los dos horarios acredita un pago ni determina cuándo ocurrió la venta.
 
 **Reservas**
 

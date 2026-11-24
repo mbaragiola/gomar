@@ -2,6 +2,8 @@
 import SavedTableCheck from './SavedTableCheck.vue'
 import ThemeSelect from '../components/ThemeSelect.vue'
 import ManageBarcodes from './ManageBarcodes.vue'
+import SaleClock from './SaleClock.vue'
+import { receiptClock, saleTimeHandoff } from './sale-time'
 import { computed, nextTick, onMounted, onUnmounted, ref } from 'vue'
 import { ApiError, request } from '../api'
 import { localDateTime, money } from '../format'
@@ -9,13 +11,13 @@ import { maxLines, maxQuantity, normalizedProducts, positive, sameContext, saleR
   isPaymentMethod, matchesPaymentMethod, paymentLabels, productByBarcode,
   type Context, type Grant, type PaymentMethod, type Product, type Sale } from './model'
 import { acknowledgeTableRecovery, arm, beginTableSave, broadcastPOSLock, disarm, enqueue, finishTableSave, forgetLease,
-  localLease, lockOfflinePOS, posLockEvent, readGrant, readTableState, recordOutcome, rememberLease, salesFor } from './storage'
+  localLease, lockOfflinePOS, posLockEvent, readGrant, readTableState, recordOutcome, rememberLease, refreshTillTimeCapability, salesFor } from './storage'
 import { matchesTableSave, matchesTableSaveRejection, tableSaveRequest, type TableCheck, type TableSave } from './tableSave'
 
 interface Entity { id: number; nombre: string; rol: string; capacidades: string[] }
 interface Outlet { id: number; nombre: string }
-interface Catalog { actor_id: number; productos: Product[]; cuentas_mesa?: boolean; registro_medios_pago?: boolean; finalizacion_mesa?: boolean }
-interface Acknowledgment { id: number; id_solicitud: string; total_centavos: number; metodo_pago?: PaymentMethod }
+interface Catalog { actor_id: number; productos: Product[]; cuentas_mesa?: boolean; registro_medios_pago?: boolean; finalizacion_mesa?: boolean; hora_informada_caja_utc_v1?: boolean }
+interface Acknowledgment { id: number; id_solicitud: string; total_centavos: number; metodo_pago?: PaymentMethod; creado_en?: unknown; hora_informada_caja_utc?: unknown; estado_hora_caja?: unknown }
 const statusLabel = { pending: 'Pendiente de sincronizar', synced: 'Sincronizada', attention: 'Necesita revisión' }
 const sellingRoles = new Set(['administration', 'purchasing', 'accounting'])
 const online = ref(navigator.onLine)
@@ -153,6 +155,12 @@ async function scopedCatalog(s: Pick<Context, 'entity' | 'outlet'>): Promise<Cat
   return catalog
 }
 
+function updateTillTimeCapability(current: Grant, supported: boolean) {
+  // A catalog without the optional capability still uses the existing lease
+  // unchanged. Write local metadata only when the advertised value changes.
+  return (current.tillTimeV1 === true) === supported ? current : refreshTillTimeCapability(current, supported)
+}
+
 async function selectEntity() {
   const token = epoch
   const id = entity.value
@@ -222,11 +230,13 @@ async function refresh() {
         await locked('Cambió la cuenta. Las ventas de la otra cuenta se conservan sin sincronizar.')
         return
       }
-      const [sales, tableState] = await Promise.all([salesFor(current), readTableState(current)])
+      const verified = await updateTillTimeCapability(current, catalog.hora_informada_caja_utc_v1 === true)
+      if (!verified || token !== epoch || localLease() !== current.lease) return
+      const [sales, tableState] = await Promise.all([salesFor(verified), readTableState(verified)])
       if (token !== epoch || localLease() !== current.lease) return
       restoreTableSave(tableState.pending)
       tableRecovery.value = tableState.recovery
-      grant.value = { ...current, tableChecks: catalog.cuentas_mesa === true, manualTender: catalog.registro_medios_pago === true, tableFinalization: catalog.finalizacion_mesa === true }
+      grant.value = { ...verified, tableChecks: catalog.cuentas_mesa === true, manualTender: catalog.registro_medios_pago === true, tableFinalization: catalog.finalizacion_mesa === true }
       recorded.value = sales
     } else {
       entity.value = authorized.find((row) => sellingRoles.has(row.rol))?.id ?? authorized[0]?.id ?? 0
@@ -263,7 +273,7 @@ async function enable() {
     const catalog = await scopedCatalog(selection)
     if (token !== epoch || !navigator.onLine) return
     const next: Grant = { ...selection, actor: catalog.actor_id, label, lease: crypto.randomUUID(),
-      catalog: normalizedProducts(catalog.productos), tableChecks: catalog.cuentas_mesa === true, manualTender: catalog.registro_medios_pago === true, tableFinalization: catalog.finalizacion_mesa === true, expires: Date.now() + grantLifetime }
+      catalog: normalizedProducts(catalog.productos), tableChecks: catalog.cuentas_mesa === true, manualTender: catalog.registro_medios_pago === true, tableFinalization: catalog.finalizacion_mesa === true, tillTimeV1: catalog.hora_informada_caja_utc_v1 === true, expires: Date.now() + grantLifetime }
     await arm(next)
     if (token !== epoch) {
       await disarm(next.lease)
@@ -478,19 +488,23 @@ async function sync() {
       await locked('Cambió la cuenta. Las ventas guardadas no se enviaron.')
       return
     }
+    const supportsTillTime = fresh.hora_informada_caja_utc_v1 === true
+    const verified = await updateTillTimeCapability(current, supportsTillTime)
+    if (!verified || token !== epoch || !navigator.onLine || localLease() !== current.lease) return
+    if (grant.value?.lease === current.lease) grant.value = { ...grant.value, tillTimeV1: supportsTillTime }
     const sales = await salesFor(current)
     for (const sale of sales.sort((a, b) => a.created - b.created || a.id.localeCompare(b.id))) {
       if (token !== epoch || !navigator.onLine || localLease() !== current.lease || Date.now() >= current.expires) break
       if (sale.status !== 'pending' || !sameContext(current, sale)) continue
       try {
         const accepted = await appRequest<Acknowledgment>(`${endpoint(current)}/sales`, {
-          method: 'POST', body: JSON.stringify(saleRequest(sale)),
+          method: 'POST', body: JSON.stringify(saleRequest(sale, supportsTillTime)),
         })
         if (accepted.id_solicitud !== sale.id || accepted.total_centavos !== sale.total || !positive(accepted.id)
           || !matchesPaymentMethod(sale, accepted.metodo_pago)) {
           await recordOutcome(current, sale.id, 'attention')
         } else {
-          await recordOutcome(current, sale.id, 'synced', accepted.id)
+          await recordOutcome(current, sale.id, 'synced', accepted.id, receiptClock(accepted))
         }
       } catch (err) {
         if (err instanceof ApiError && (err.status === 409 || err.status === 422)) {
@@ -553,7 +567,7 @@ onMounted(async () => {
 })
 
 onUnmounted(() => {
-  epoch++
+  epoch++ // Stop the old view's work before an isolated handoff can open.
   window.removeEventListener('beforeprint', beforePrint)
   window.removeEventListener('online', connection)
   window.removeEventListener('offline', connection)
@@ -695,11 +709,22 @@ onUnmounted(() => {
         <p v-if="syncing" role="status">Sincronizando…</p>
         <ul v-if="recorded.length" class="gomar-feature-list">
           <li v-for="sale in [...recorded].sort((a, b) => b.created - a.created)" :key="sale.id">
-            {{ localDateTime(new Date(sale.created).toISOString()) }} · {{ fmt(sale.total) }} · {{ paymentLabels[sale.paymentMethod ?? 'efectivo'] }} · {{ statusLabel[sale.status] }}
+            {{ fmt(sale.total) }} · {{ paymentLabels[sale.paymentMethod ?? 'efectivo'] }} · {{ statusLabel[sale.status] }}
+            <SaleClock v-if="sale.receiptClock" :clock="sale.receiptClock" />
+            <div v-else-if="sale.tillReportedAt && sale.status !== 'synced'">
+              Hora informada por la caja (no verificada): <time :datetime="sale.tillReportedAt">{{ localDateTime(sale.tillReportedAt) }}</time>.
+            </div>
+            <div v-else>Guardada en este dispositivo: {{ localDateTime(new Date(sale.created).toISOString()) }}.</div>
+            <div v-if="sale.status === 'synced' && sale.tillReportedAt && sale.tillReportedAt !== sale.receiptClock?.tillReportedAt">
+              Esta hora local no coincide con la informada por el servidor o no quedó registrada allí.
+            </div>
+            <div v-if="sale.status === 'synced' && grant.tillTimeV1">
+              Referencia: <a :href="saleTimeHandoff(sale)" target="_blank" rel="noopener">{{ sale.id }}</a>
+            </div>
           </li>
         </ul>
         <p v-else>No hay ventas guardadas para este local.</p>
-        <small>Si una venta necesita revisión, no la vuelvas a cargar.</small>
+        <small>Si una venta necesita revisión, no la vuelvas a cargar. El reporte mensual usa la hora de registro de Gomar, no la del dispositivo.</small>
       </section>
     </template>
   </main>

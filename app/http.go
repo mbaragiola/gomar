@@ -27,6 +27,7 @@ type app struct {
 	employeeOnboarding  bool
 	employeePasswords   employeeAuthBudget
 	mcpClock            func() time.Time
+	posClock            func() time.Time
 
 	host                                      string
 	payablesClock                             func() time.Time

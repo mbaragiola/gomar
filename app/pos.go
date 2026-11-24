@@ -10,6 +10,8 @@ import (
 	"strings"
 	"time"
 	"unicode/utf8"
+
+	"github.com/mbaragiola/gomar/app/internal/postime"
 )
 
 const posPath = "/api/v1/entities/{entity}/outlets/{outlet}/pos"
@@ -47,12 +49,14 @@ type posSaleItem struct {
 }
 
 type posSale struct {
-	PaymentMethod string        `json:"metodo_pago"`
-	ID            int64         `json:"id"`
-	RequestID     string        `json:"id_solicitud"`
-	Total         int64         `json:"total_centavos"`
-	Items         []posSaleItem `json:"items"`
-	Recorded      string        `json:"creado_en"`
+	PaymentMethod  string        `json:"metodo_pago"`
+	ID             int64         `json:"id"`
+	RequestID      string        `json:"id_solicitud"`
+	Total          int64         `json:"total_centavos"`
+	Items          []posSaleItem `json:"items"`
+	Recorded       string        `json:"creado_en"`
+	TillReported   string        `json:"hora_informada_caja_utc,omitempty"`
+	TillTimeStatus string        `json:"estado_hora_caja,omitempty"`
 }
 
 func (a *app) registerPOS(add func(string, string, http.HandlerFunc)) {
@@ -82,8 +86,9 @@ func (a *app) registerPOS(add func(string, string, http.HandlerFunc)) {
 	add(posPath+"/catalog/{product}", "PUT", manage(savePOSProduct))
 	add(posPath+"/catalog/{product}/barcode", "PUT", manage(savePOSBarcode))
 	add(posPath+"/sales", "POST", sell(func(r *http.Request, tx *sql.Tx, m entityMembership, raw []byte) (int, any, error) {
-		return postPOSSale(r, tx, m, raw, a.enableStock)
+		return postPOSSale(r, tx, m, raw, a.enableStock, a.posTime)
 	}))
+	add(posPath+"/sale-times/{request}", http.MethodGet, a.scoped("read_business_data", readPOSSaleTime))
 }
 
 func posOutlet(r *http.Request, tx *sql.Tx, m entityMembership) (int64, error) {
@@ -122,7 +127,13 @@ func (a *app) listPOSCatalog(r *http.Request, tx *sql.Tx, m entityMembership, _ 
 		TableChecks  bool         `json:"cuentas_mesa,omitempty"`
 		ManualTender bool         `json:"registro_medios_pago,omitempty"`
 		Finalization bool         `json:"finalizacion_mesa,omitempty"`
-	}{m.userID, products, a.enablePOSTableChecks && posSellingRole(m.role) && !m.employee, a.enablePOSManualTender && a.enablePOSTableChecks && posSellingRole(m.role) && !m.employee, a.enablePOSTableFinalization && a.enablePOSManualTender && a.enablePOSTableChecks && posSellingRole(m.role) && !m.employee}, rows.Err()
+		TillTimeV1   bool         `json:"hora_informada_caja_utc_v1,omitempty"`
+	}{
+		Actor: m.userID, Products: products, TableChecks: a.enablePOSTableChecks && posSellingRole(m.role) && !m.employee,
+		ManualTender: a.enablePOSManualTender && a.enablePOSTableChecks && posSellingRole(m.role) && !m.employee,
+		Finalization: a.enablePOSTableFinalization && a.enablePOSManualTender && a.enablePOSTableChecks && posSellingRole(m.role) && !m.employee,
+		TillTimeV1:   posSellingRole(m.role),
+	}, rows.Err()
 }
 
 func savePOSProduct(r *http.Request, tx *sql.Tx, m entityMembership, raw []byte) (int, any, error) {
@@ -193,7 +204,7 @@ func savePOSProduct(r *http.Request, tx *sql.Tx, m entityMembership, raw []byte)
 	return status, p, err
 }
 
-func postPOSSale(r *http.Request, tx *sql.Tx, m entityMembership, raw []byte, stockEnabled bool) (int, any, error) {
+func postPOSSale(r *http.Request, tx *sql.Tx, m entityMembership, raw []byte, stockEnabled bool, now func() time.Time) (int, any, error) {
 	if !posSellingRole(m.role) {
 		return 0, nil, forbiddenRole
 	}
@@ -207,8 +218,9 @@ func postPOSSale(r *http.Request, tx *sql.Tx, m entityMembership, raw []byte, st
 		RequestID     string          `json:"id_solicitud"`
 		Actor         int64           `json:"actor_id"`
 		Items         []posLine       `json:"items"`
+		TillReported  json.RawMessage `json:"hora_informada_caja_utc"`
 	}
-	if err := decodePayables(raw, &input, "id_solicitud", "actor_id", "items", "metodo_pago"); err != nil {
+	if err := decodePayables(raw, &input, "id_solicitud", "actor_id", "items", "metodo_pago", "hora_informada_caja_utc"); err != nil {
 		return 0, nil, err
 	}
 	method := "efectivo" // Older offline cash carts did not send this field.
@@ -248,8 +260,8 @@ func postPOSSale(r *http.Request, tx *sql.Tx, m entityMembership, raw []byte, st
 	sale := posSale{RequestID: input.RequestID, Items: make([]posSaleItem, 0, len(input.Items))}
 	var savedOutlet, savedActor int64
 	var finalized bool
-	err = tx.QueryRowContext(ctx, `SELECT id,outlet_id,actor_id,total_minor,recorded_at,payment_method,EXISTS(SELECT 1 FROM pos_table_finalizations f WHERE f.sale_id=s.id) FROM pos_sales s WHERE request_id=$1`, input.RequestID).
-		Scan(&sale.ID, &savedOutlet, &savedActor, &sale.Total, &sale.Recorded, &sale.PaymentMethod, &finalized)
+	err = tx.QueryRowContext(ctx, `SELECT id,outlet_id,actor_id,total_minor,recorded_at,payment_method,COALESCE(till_reported_at_utc,''),EXISTS(SELECT 1 FROM pos_table_finalizations f WHERE f.sale_id=s.id) FROM pos_sales s WHERE request_id=$1`, input.RequestID).
+		Scan(&sale.ID, &savedOutlet, &savedActor, &sale.Total, &sale.Recorded, &sale.PaymentMethod, &sale.TillReported, &finalized)
 	if err == nil {
 		if finalized || savedOutlet != outlet || savedActor != m.userID || sale.PaymentMethod != method {
 			return 0, nil, posConflict
@@ -278,9 +290,18 @@ func postPOSSale(r *http.Request, tx *sql.Tx, m entityMembership, raw []byte, st
 		if len(sale.Items) != len(input.Items) {
 			return 0, nil, posConflict
 		}
+		// This is the original evidence (including absence), not the retry's claim.
+		if sale.TillReported != "" {
+			registered, _ := postime.ParseUTC(sale.Recorded)
+			sale.TillTimeStatus, _ = postime.Status(sale.TillReported, registered)
+		}
 		return 200, sale, nil
 	}
 	if !errors.Is(err, sql.ErrNoRows) {
+		return 0, nil, err
+	}
+	sale.TillReported, err = parsePOSSaleTillTime(input.TillReported)
+	if err != nil {
 		return 0, nil, err
 	}
 	for _, line := range input.Items {
@@ -300,9 +321,13 @@ func postPOSSale(r *http.Request, tx *sql.Tx, m entityMembership, raw []byte, st
 		sale.Items = append(sale.Items, item)
 	}
 	sale.PaymentMethod = method
-	sale.Recorded = time.Now().UTC().Format(time.RFC3339Nano)
-	if err := tx.QueryRowContext(ctx, `INSERT INTO pos_sales(request_id,outlet_id,actor_id,total_minor,recorded_at,payment_method)
-		VALUES($1,$2,$3,$4,$5,$6) ON CONFLICT(request_id) DO NOTHING RETURNING id`, sale.RequestID, outlet, m.userID, sale.Total, sale.Recorded, method).Scan(&sale.ID); err != nil {
+	registered := now().UTC()
+	sale.Recorded = registered.Format(time.RFC3339Nano)
+	if sale.TillReported != "" {
+		sale.TillTimeStatus, _ = postime.Status(sale.TillReported, registered)
+	}
+	if err := tx.QueryRowContext(ctx, `INSERT INTO pos_sales(request_id,outlet_id,actor_id,total_minor,recorded_at,payment_method,till_reported_at_utc)
+		VALUES($1,$2,$3,$4,$5,$6,NULLIF($7,'')) ON CONFLICT(request_id) DO NOTHING RETURNING id`, sale.RequestID, outlet, m.userID, sale.Total, sale.Recorded, method, sale.TillReported).Scan(&sale.ID); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return 0, nil, posConflict
 		}

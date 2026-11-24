@@ -1,3 +1,5 @@
+import { capturedTillTime, type ReceiptClock } from './sale-time'
+
 export interface Context {
   actor: number
   entity: number
@@ -19,6 +21,7 @@ export interface Grant extends Context {
   tableChecks?: boolean
   manualTender?: boolean
   tableFinalization?: boolean
+  tillTimeV1?: boolean
 }
 export interface Line {
   producto_id: number
@@ -45,6 +48,8 @@ export interface Sale extends Context {
   id: string
   key: string
   created: number
+  tillReportedAt?: string // Captured at enqueue, never derived for an existing row.
+  receiptClock?: ReceiptClock
   lines: Line[]
   total: number
   paymentMethod?: PaymentMethod // Absent in cash-only records from the earlier version.
@@ -112,12 +117,15 @@ export function draft(grant: Grant, quantities: ReadonlyMap<number, number>, id:
   if (!isPaymentMethod(paymentMethod)) throw new Error('Elegí cómo se pagó la venta.')
   const { lines, total } = quoteCart(grant, quantities, now)
   const { actor, entity, outlet } = grant
-  return { id, key: scopeKey(grant), actor, entity, outlet, created: now, lines, total, paymentMethod, status: 'pending' }
+  const tillReportedAt = grant.tillTimeV1 === true ? capturedTillTime(now) : undefined
+  return { id, key: scopeKey(grant), actor, entity, outlet, created: now, lines, total, paymentMethod, status: 'pending',
+    ...(tillReportedAt ? { tillReportedAt } : {}) }
 }
 
-export function saleRequest(sale: Sale) {
+export function saleRequest(sale: Sale, tillTimeV1 = false) {
   return { id_solicitud: sale.id, actor_id: sale.actor,
     ...(sale.paymentMethod === undefined ? {} : { metodo_pago: sale.paymentMethod }),
+    ...(tillTimeV1 === true && sale.tillReportedAt ? { hora_informada_caja_utc: sale.tillReportedAt } : {}),
     items: sale.lines.map(({ producto_id, revision, cantidad }) => ({ producto_id, revision, cantidad })) }
 }
 
