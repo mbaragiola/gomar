@@ -66,7 +66,7 @@ INSERT INTO pos_table_check_items(check_id,outlet_id,product_id,revision,quantit
 		if read {
 			response.status, response.value, response.err = a.readPOSTableCheck(r, tx, actor, nil)
 		} else {
-			response.status, response.value, response.err = a.lockOutletForOperation(a.savePOSTableCheck)(r, tx, actor, []byte(input))
+			response.status, response.value, response.err = lockPOSWriteScope("read_business_data", true, a.savePOSTableCheck)(r, tx, actor, []byte(input))
 		}
 		if response.err == nil {
 			response.err = tx.Commit()
@@ -149,7 +149,7 @@ UPDATE pos_products SET current_revision=2 WHERE id=51 AND outlet_id=51;`); err 
 		r.SetPathValue("outlet", outlet)
 		r.SetPathValue("table", "7")
 		input := fmt.Sprintf(`{"id_cuenta":%q,"motivo":%q}`, id, reason)
-		status, value, err := a.lockOutletForOperation(a.retirePOSTableCheck)(r, tx, actor, []byte(input))
+		status, value, err := lockPOSWriteScope("read_business_data", true, a.retirePOSTableCheck)(r, tx, actor, []byte(input))
 		if err == nil {
 			err = tx.Commit()
 		}

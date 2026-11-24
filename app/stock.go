@@ -48,7 +48,8 @@ func (a *app) registerStock(add func(string, string, http.HandlerFunc), enabled 
 			capability = "manage_entity_access"
 		}
 		if body {
-			next = a.lockOutletForOperation(next)
+			// Movements record the actor; administrative settings do not.
+			next = lockPOSWriteScope(capability, !admin, next)
 		}
 		handler := a.scopedRequest(capability, func(r *http.Request, tx *sql.Tx, m entityMembership, raw []byte) (int, any, error) {
 			if !stockReadRole(m.role) {

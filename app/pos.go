@@ -59,11 +59,17 @@ func (a *app) registerPOS(add func(string, string, http.HandlerFunc)) {
 	if !a.enablePOS {
 		return
 	}
+	sell := func(next scopedHandler) http.HandlerFunc {
+		return a.scopedRequest("read_business_data", lockPOSWriteScope("read_business_data", true, next), true)
+	}
+	manage := func(next scopedHandler) http.HandlerFunc {
+		return a.scopedRequest("manage_entity_access", lockPOSWriteScope("manage_entity_access", false, next), true)
+	}
 	add(posPath+"/catalog", "GET", a.scoped("read_business_data", a.listPOSCatalog))
 	if a.enablePOSTableChecks {
-		add(posPath+"/table-checks", http.MethodPost, a.scopedRequest("read_business_data", a.lockOutletForOperation(a.savePOSTableCheck), true))
+		add(posPath+"/table-checks", http.MethodPost, sell(a.savePOSTableCheck))
 		add(posPath+"/table-checks/{table}", http.MethodGet, a.scoped("read_business_data", a.readPOSTableCheck))
-		add(posPath+"/table-checks/{table}/retire", http.MethodPost, a.scopedRequest("read_business_data", a.lockOutletForOperation(a.retirePOSTableCheck), true))
+		add(posPath+"/table-checks/{table}/retire", http.MethodPost, sell(a.retirePOSTableCheck))
 		if a.enablePOSManualTender {
 			if a.enablePOSTableFinalization {
 				add(posPath+"/table-checks/{table}/finalize", http.MethodPost, a.scopedRequest("read_business_data", a.lockPOSTenderForWrite(a.finalizePOSTable), true))
@@ -72,33 +78,12 @@ func (a *app) registerPOS(add func(string, string, http.HandlerFunc)) {
 			add(posPath+"/table-checks/{table}/tender", http.MethodPost, a.scopedRequest("read_business_data", a.lockPOSTenderForWrite(a.writePOSTender), true))
 		}
 	}
-	add(posPath+"/catalog", "POST", a.scopedRequest("manage_entity_access", a.lockOutletForOperation(savePOSProduct), true))
-	add(posPath+"/catalog/{product}", "PUT", a.scopedRequest("manage_entity_access", a.lockOutletForOperation(savePOSProduct), true))
-	add(posPath+"/catalog/{product}/barcode", "PUT", a.scopedRequest("manage_entity_access", a.lockOutletForOperation(savePOSBarcode), true))
-	add(posPath+"/sales", "POST", a.scopedRequest("read_business_data", a.lockOutletForOperation(func(r *http.Request, tx *sql.Tx, m entityMembership, raw []byte) (int, any, error) {
+	add(posPath+"/catalog", "POST", manage(savePOSProduct))
+	add(posPath+"/catalog/{product}", "PUT", manage(savePOSProduct))
+	add(posPath+"/catalog/{product}/barcode", "PUT", manage(savePOSBarcode))
+	add(posPath+"/sales", "POST", sell(func(r *http.Request, tx *sql.Tx, m entityMembership, raw []byte) (int, any, error) {
 		return postPOSSale(r, tx, m, raw, a.enableStock)
-	}), true))
-}
-
-// Native SQLite already serializes writers through its immediate transaction.
-// Hosted writers lock a single selected outlet before reading mutable business
-// facts; the same lock covers catalog, sales, and physical inventory counts.
-func (a *app) lockOutletForOperation(next scopedHandler) scopedHandler {
-	return func(r *http.Request, tx *sql.Tx, m entityMembership, raw []byte) (int, any, error) {
-		switch m.role {
-		case "administration", "purchasing", "accounting":
-		default:
-			return 0, nil, forbiddenRole
-		}
-		outlet, err := posOutlet(r, tx, m)
-		if err != nil {
-			return 0, nil, err
-		}
-		if err := lockPostgresOutlet(r.Context(), tx, outlet); err != nil {
-			return 0, nil, err
-		}
-		return next(r, tx, m, raw)
-	}
+	}))
 }
 
 func posOutlet(r *http.Request, tx *sql.Tx, m entityMembership) (int64, error) {
@@ -209,9 +194,7 @@ func savePOSProduct(r *http.Request, tx *sql.Tx, m entityMembership, raw []byte)
 }
 
 func postPOSSale(r *http.Request, tx *sql.Tx, m entityMembership, raw []byte, stockEnabled bool) (int, any, error) {
-	switch m.role {
-	case "administration", "purchasing", "accounting":
-	default:
+	if !posSellingRole(m.role) {
 		return 0, nil, forbiddenRole
 	}
 	ctx := r.Context()

@@ -290,6 +290,11 @@ replacement at the same table. After retirement the MCP exact lookup
 finds no active check until a replacement is saved; it does not reveal
 retirement history or create a replacement.
 
+Native sale and table-check writes, including exact retries, recheck current
+membership, role and the selected branch grant in their write transaction.
+MCP still only reads or hands off these operations. Catalog and stock
+proposals still require the existing scoped browser approval.
+
 ### Find a document by its printed reference
 
 In Comprobantes, use **Buscar por referencia impresa** for the selected
