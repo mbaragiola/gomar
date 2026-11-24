@@ -48,3 +48,39 @@ rechecked if approval or payment is reversed during delivery. Separately
 design the staff/owner UI, retention of expired previews, and rollout.
 Neither signup nor any change to entities, outlets, memberships, or
 grants is provided here.
+
+## Dormant first-owner install
+
+Migration 041 adds empty immutable tables for a locally recovery-approved
+organization draft, one pending install and intended administration
+assignment, and its exact pending branches. The install refers to an
+existing 040 consent; a one-time opaque receipt is history, not a
+credential. It never creates an operational entity, outlet, membership
+or grant. Inactive flags on operational rows would not be enough: the
+ordinary catalog can edit outlet activation, independent of this
+contract. The dormant tables have no activation path. This migration
+does not claim it is safe to boot an older executable on a newer schema.
+
+The unregistered install seam accepts only the designated claimant's
+original active provider session, exact current native consent and
+recovery approval, a private local draft, and an independently
+authenticated, short-lived Billing observation for a new server-minted
+nonce. The synthetic verifier binds the expected issuer, recipient,
+purpose and schema and exact audience, intent, business, request,
+claimant, initiator, branches, revision and consent. The minimal
+Billing result is not itself authentication or a complete binding.
+The verifier is called outside native transactions; the original
+request, current native state, timestamp and deadline are checked again
+before a single native commit. CUIT, legal and outlet names, browser
+digests and credentials are not sent to this verifier or returned in
+the install receipt. Existing operational CUITs are refused, not
+adopted; the short native check does not reserve a CUIT in ordinary
+operations after the dormant commit.
+
+The local fixture mounts the seam only for synthetic HTTP tests with
+real PostgreSQL. An exact retry can read immutable dormant history
+without asking Billing for a second observation or renewing access.
+Even a reversal after the private check cannot create operational
+access here. No authenticated inter-service transport, cross-database
+atomicity, request mapping in a live system, checkout, public route,
+MCP workflow, or activation mechanism is provided.

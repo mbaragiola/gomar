@@ -519,6 +519,20 @@ func checkNativeOwnerConsent(t *testing.T, a *app, ctx context.Context, db *sql.
 	if n, e, o, m, g := snapshot(); n != 2 || e+o+m+g != 0 {
 		t.Fatalf("fresh explicit consent did not record exactly one additional approval: %d %d %d %d %d", n, e, o, m, g)
 	}
+	t.Run("dormant_install", func(t *testing.T) {
+		consent := func(target nativeOwnerTarget) nativeOwnerReceipt {
+			operate(designatePath, target, "", 200)
+			operate(approvePath, target, "", 200)
+			pr := preview(target.Intent, rotated)
+			w := call(fixture, acceptPath, nativeOwnerConfirmation{Challenge: pr.Challenge, Target: pr.Target, Accept: true}, rotated, nil)
+			expect(w, 200)
+			return decodeReceipt(w.Body.Bytes())
+		}
+		checkNativeDormantInstall(t, ctx, db, a, ops, designated, otherActor, rotated, other, otherOwnerSession,
+			recoveryCookies, call, protected, consent, func(r nativeOwnerReceipt) {
+				operate(revokePath, r.Target, r.ApprovalRef, 200)
+			})
+	})
 }
 
 func nativeOwnerRecoveryFixture(t *testing.T, ctx context.Context, db *sql.DB, ops *app, origin string) []*http.Cookie {
