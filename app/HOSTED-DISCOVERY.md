@@ -36,7 +36,8 @@ verification details are returned.
 
 The read portion covers only the existing native entity/outlet lists,
 exact own Caja sale timing, their corresponding packaged MCP reads, and
-the packaged monthly sales summary, and the existing protected stock reads.
+the packaged monthly sales summary, the existing protected stock reads,
+and the existing staff reservation queue reads.
 The barcode lane below is its sole write exception. There is no shared
 production mode or hosted access guarantee for other POS operations,
 MCP tools, proposal types, administration, public menus/reservations,
@@ -150,3 +151,24 @@ a denied outlet. Existing tracked, disabled, negative, low and healthy
 stock, list/filter cursors, and the Buenos Aires movement period and
 detail are unchanged. This covers no settings, movement or sale writer,
 stock proposal, catalog read, public route, worker or offline behavior.
+
+## Existing staff reservation queue reads only
+
+The one native staff queue GET and the existing packaged queue list,
+exact request detail and day status counts use the same exact #044
+outlet barrier before reading any queue data. This is only in the
+injected fixture and in the readers' read-only repeatable-read snapshot.
+Existing administrator, actor, active outlet grant, employee
+organization and MCP credential checks are retained. Missing scope
+returns the same generic 404 as an unavailable outlet, even with a
+known reference or cursor, and never returns names, references or
+counts. A valid empty queue still returns its empty list or zero counts.
+The default app, explicitly self-hosted behavior, day boundaries and
+cursor semantics are unchanged.
+
+The staff browser retains its existing exact guest display, including
+the captured policy and table labels. The MCP queue remains limited to
+its existing reference, status, party size and local time, or day
+aggregates; contacts remain excluded from both. Staff settings, public
+availability and menus, all reservation changes, proposals, contacts,
+notifications and background work are outside this fixture lane.

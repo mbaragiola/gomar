@@ -13,8 +13,8 @@ import (
 const mcpReservationQueuePath = mcpWorkspaceBase + "/reservation-requests"
 
 func (a *app) registerMCPReservationQueue(add func(string, string, http.HandlerFunc)) {
-	add(mcpReservationQueuePath, http.MethodGet, a.mcpRead(mcpListReservationRequests))
-	add(mcpReservationQueuePath+"/{reservation}", http.MethodGet, a.mcpRead(mcpReadReservationRequest))
+	add(mcpReservationQueuePath, http.MethodGet, a.mcpRead(a.mcpListReservationRequests))
+	add(mcpReservationQueuePath+"/{reservation}", http.MethodGet, a.mcpRead(a.mcpReadReservationRequest))
 	add(mcpWorkspaceBase+"/reservation-availability", http.MethodGet, a.mcpRead(a.mcpReservationAvailability))
 }
 
@@ -68,8 +68,8 @@ func mcpScanReservationRequest(row interface{ Scan(...any) error }) (mcpclient.R
 	return entry, nil
 }
 
-func mcpListReservationRequests(r *http.Request, tx *sql.Tx, s mcpTokenScope) (any, error) {
-	outlet, err := mcpReservationQueueScope(r, tx, s)
+func (a *app) mcpListReservationRequests(r *http.Request, tx *sql.Tx, s mcpTokenScope) (any, error) {
+	outlet, err := a.mcpReservationReadOutlet(r, tx, s)
 	if err != nil {
 		return nil, err
 	}
@@ -111,8 +111,8 @@ func mcpListReservationRequests(r *http.Request, tx *sql.Tx, s mcpTokenScope) (a
 	return result, rows.Err()
 }
 
-func mcpReadReservationRequest(r *http.Request, tx *sql.Tx, s mcpTokenScope) (any, error) {
-	outlet, err := mcpReservationQueueScope(r, tx, s)
+func (a *app) mcpReadReservationRequest(r *http.Request, tx *sql.Tx, s mcpTokenScope) (any, error) {
+	outlet, err := a.mcpReservationReadOutlet(r, tx, s)
 	if err != nil {
 		return nil, err
 	}

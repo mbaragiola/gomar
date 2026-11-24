@@ -14,7 +14,7 @@ import (
 )
 
 func (a *app) registerMCPBookingReads(add func(string, string, http.HandlerFunc)) {
-	add(mcpWorkspaceBase+"/reservation-status", http.MethodGet, a.mcpRead(mcpReservationStatus))
+	add(mcpWorkspaceBase+"/reservation-status", http.MethodGet, a.mcpRead(a.mcpReservationStatus))
 	add(mcpWorkspaceBase+"/reservation-setup", http.MethodGet, a.mcpRead(a.mcpReservationSetup))
 	add(mcpWorkspaceBase+"/reservation-start-setup", http.MethodGet, a.mcpRead(a.mcpReservationStartSetup))
 	add(mcpWorkspaceBase+"/reservation-table-setup", http.MethodGet, a.mcpRead(mcpReservationTableSetup))
@@ -127,12 +127,9 @@ func mcpReservationTableSetup(r *http.Request, tx *sql.Tx, s mcpTokenScope) (any
 	return result, nil
 }
 
-func mcpReservationStatus(r *http.Request, tx *sql.Tx, s mcpTokenScope) (any, error) {
-	outlet, err := mcpWorkspaceOutlet(r, tx, s)
+func (a *app) mcpReservationStatus(r *http.Request, tx *sql.Tx, s mcpTokenScope) (any, error) {
+	outlet, err := a.mcpReservationReadOutlet(r, tx, s)
 	if err != nil {
-		return nil, err
-	}
-	if err := requireReservationStaff(r.Context(), tx, s.entityMembership, outlet); err != nil {
 		return nil, err
 	}
 	raw, err := mcpOptionalQuery(r, "date")
