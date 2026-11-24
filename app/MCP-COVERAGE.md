@@ -165,6 +165,16 @@ of one current unposted draft, leaving the number, business, outlet and
 other data unchanged. It does not expand previously issued number-only
 keys. See [point-of-sale proposals](MCP-DOCUMENT-POINT-OF-SALE-PROPOSALS.md).
 
+### Native supplier payments
+
+Draft creation, posting, reversal, and private receipt handling require an
+authorized operator in Gomar. The payment workspace clears its open draft,
+allocations, and selected receipt on a branch switch. History and invoice
+allocations still cover the operator's authorized branches; history shows the
+payment's branch, and **Abrir** uses the selected branch. Nothing is deleted or
+posted by switching branches. Existing MCP reads remain pinned to one branch
+and do not include payment references, methods, or receipts.
+
 ### Payable eligibility
 
 `gomar_check_payable_eligibility` checks one `document_id` for the selected

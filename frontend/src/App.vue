@@ -68,9 +68,15 @@ let handoffGeneration = 0
 const payables = ref<Payable[]>([])
 const payments = ref<Payment[]>([])
 const paymentDraft = ref<Payment | null>(null)
+const openingPayment = ref(false)
+const activePayment = computed(() => !openingPayment.value && paymentDraft.value?.outlet.id === selectedOutletId.value
+  ? paymentDraft.value : null)
 const showAccountsPayable = ref(false)
 const showReconciliation = ref(false)
-const paymentReceipt = ref<File | null>(null)
+const paymentReceiptInput = ref<HTMLInputElement | null>(null)
+const paymentReceipt = ref<{ paymentId: number; file: File } | null>(null)
+const activePaymentReceipt = computed(() => paymentReceipt.value?.paymentId === activePayment.value?.id
+  ? paymentReceipt.value : null)
 type StaffView = 'documents' | 'payables' | 'reconciliation' | 'stock' | 'delivery' | 'reservations' | 'knowledge' | 'chat' | 'suppliers' | 'access'
 const staffView = ref<StaffView>('documents')
 const staffHeading = ref<HTMLHeadingElement | null>(null)
@@ -319,15 +325,8 @@ function clearContextState(resetBusy = true) {
   showStock.value = false
   showReservations.value = false
   management.value = null
-  payables.value = []
-  payments.value = []
-  paymentDraft.value = null
-  paymentDetailGeneration += 1
-  showAccountsPayable.value = false
+  clearPaymentContext()
   showReconciliation.value = false
-  paymentReceipt.value = null
-  Object.keys(allocationAmounts).forEach((key) => delete allocationAmounts[Number(key)])
-  Object.assign(paymentForm, { supplier_id: 0, moneda: 'ARS', total: '', metodo: 'bank_transfer', referencia: '' })
   Object.assign(newOutletForm, { nombre: '', activa: true })
   Object.assign(newMembershipForm, { usuario: '', rol: 'unassigned', activa: true, outlet_ids: [] })
   clearDocumentState(resetBusy)
@@ -739,6 +738,7 @@ async function changeOutlet() {
   selectStaffView('documents')
   const contextToken = ++contextGeneration
   clearDocumentState()
+  clearPaymentContext()
   documentForm.supplier_id = suppliers.value[0]?.id ?? 0
   documentForm.issuer_cuit = suppliers.value[0]?.cuit ?? ''
   error.value = ''
@@ -1253,47 +1253,47 @@ async function postSelectedDocumentToPayable() {
   }
 }
 
-async function createPaymentDraft() {
-  if (!selectedEntityId.value || !selectedOutletId.value) return
-  const sessionToken = sessionGeneration
-  const contextToken = contextGeneration
+function paymentWorkspace() {
   const entityId = selectedEntityId.value
   const outletId = selectedOutletId.value
+  if (!entityId || !outletId || !hasOutlet.value || !canRecordPayments.value) return null
+  const sessionToken = sessionGeneration
+  const contextToken = contextGeneration
+  const current = () => contextIsCurrent(sessionToken, contextToken, entityId) && selectedOutletId.value === outletId
+  return { entityId, outletId, sessionToken, contextToken, current }
+}
+
+async function createPaymentDraft() {
+  const scope = paymentWorkspace()
+  if (!scope || openingPayment.value || activePayment.value) return
+  const { entityId, outletId, sessionToken, contextToken } = scope
   const paymentDetailToken = ++paymentDetailGeneration
+  const current = () => scope.current() && paymentDetailToken === paymentDetailGeneration
   paymentReceipt.value = null
   try {
     const created = await request<Payment>(`/entities/${entityId}/payments`, {
       method: 'POST',
       body: JSON.stringify({ ...paymentForm, outlet_id: outletId }),
     })
-    if (
-      !contextIsCurrent(sessionToken, contextToken, entityId)
-      || selectedOutletId.value !== outletId
-      || paymentDetailToken !== paymentDetailGeneration
-    ) return
+    if (!current() || created.outlet.id !== outletId) return
     paymentDraft.value = created
     await loadAccountsPayable(sessionToken, contextToken)
   } catch (value) {
-    if (
-      contextIsCurrent(sessionToken, contextToken, entityId)
-      && paymentDetailToken === paymentDetailGeneration
-    ) showError(value)
+    if (current()) showError(value)
   }
 }
 
-async function openPayment(paymentId: number) {
-  if (!selectedEntityId.value) return
-  const sessionToken = sessionGeneration
-  const contextToken = contextGeneration
-  const entityId = selectedEntityId.value
-  const paymentDetailToken = ++paymentDetailGeneration
-  paymentReceipt.value = null
+async function openPayment(payment: Payment) {
+  const scope = paymentWorkspace()
+  if (!scope || payment.outlet.id !== scope.outletId) return
+  clearPaymentDraft()
+  openingPayment.value = true
+  error.value = ''
+  const paymentDetailToken = paymentDetailGeneration
+  const current = () => scope.current() && paymentDetailToken === paymentDetailGeneration
   try {
-    const detail = await request<Payment>(`/entities/${entityId}/payments/${paymentId}`)
-    if (
-      !contextIsCurrent(sessionToken, contextToken, entityId)
-      || paymentDetailToken !== paymentDetailGeneration
-    ) return
+    const detail = await request<Payment>(`/entities/${scope.entityId}/payments/${payment.id}`)
+    if (!current() || detail.id !== payment.id || detail.outlet.id !== scope.outletId) return
     paymentDraft.value = detail
     Object.assign(paymentForm, {
       supplier_id: detail.supplier.id,
@@ -1302,44 +1302,53 @@ async function openPayment(paymentId: number) {
       metodo: detail.metodo,
       referencia: detail.referencia,
     })
-    Object.keys(allocationAmounts).forEach((key) => delete allocationAmounts[Number(key)])
     detail.aplicaciones?.forEach((item) => { allocationAmounts[item.payable_id] = item.importe })
   } catch (value) {
-    if (
-      contextIsCurrent(sessionToken, contextToken, entityId)
-      && paymentDetailToken === paymentDetailGeneration
-    ) showError(value)
+    if (current()) showError(value)
+  } finally {
+    if (current()) openingPayment.value = false
   }
 }
 
 function clearPaymentDraft() {
   paymentDetailGeneration += 1
+  openingPayment.value = false
   paymentDraft.value = null
   paymentReceipt.value = null
   Object.keys(allocationAmounts).forEach((key) => delete allocationAmounts[Number(key)])
+  Object.assign(paymentForm, {
+    supplier_id: suppliers.value[0]?.id ?? 0, moneda: 'ARS', total: '', metodo: 'bank_transfer', referencia: '',
+  })
+}
+
+function clearPaymentContext() {
+  clearPaymentDraft()
+  payables.value = []
+  payments.value = []
+  showAccountsPayable.value = false
 }
 
 async function postCurrentPayment() {
-  if (!selectedEntityId.value || !paymentDraft.value) return
-  const sessionToken = sessionGeneration
-  const contextToken = contextGeneration
-  const entityId = selectedEntityId.value
-  const paymentId = paymentDraft.value.id
-  const idempotencyKey = paymentDraft.value.idempotency_key
+  const scope = paymentWorkspace()
+  const draft = activePayment.value
+  if (!scope || draft?.estado !== 'draft') return
+  const { entityId, sessionToken, contextToken } = scope
+  const paymentDetailToken = paymentDetailGeneration
+  const isCurrent = () => scope.current() && paymentDetailToken === paymentDetailGeneration && activePayment.value?.id === draft.id
   const aplicaciones = eligiblePayables.value
     .filter((item) => allocationAmounts[item.id]?.trim())
     .map((item) => ({ payable_id: item.id, importe: allocationAmounts[item.id] }))
-  if (!window.confirm('¿Querés registrar este pago? Una vez registrado solo se corrige con una reversión.')) return
+  if (!window.confirm(`¿Querés registrar este pago de ${draft.outlet.nombre}? Una vez registrado solo se corrige con una reversión.`)) return
   try {
     const posted = await request<Payment>(
-      `/entities/${entityId}/payments/${paymentId}/post`,
-      { method: 'POST', body: JSON.stringify({ idempotency_key: idempotencyKey, aplicaciones }) },
+      `/entities/${entityId}/payments/${draft.id}/post`,
+      { method: 'POST', body: JSON.stringify({ idempotency_key: draft.idempotency_key, aplicaciones }) },
     )
-    if (!contextIsCurrent(sessionToken, contextToken, entityId) || paymentDraft.value?.id !== paymentId) return
+    if (!isCurrent() || posted.id !== draft.id || posted.outlet.id !== scope.outletId) return
     paymentDraft.value = posted
     await loadAccountsPayable(sessionToken, contextToken)
   } catch (value) {
-    if (contextIsCurrent(sessionToken, contextToken, entityId) && paymentDraft.value?.id === paymentId) showError(value)
+    if (isCurrent()) showError(value)
   }
 }
 
@@ -1351,39 +1360,53 @@ async function reverseSupplierPayment(payment: Payment) {
   const contextToken = contextGeneration
   const entityId = selectedEntityId.value
   const paymentId = payment.id
+  const paymentDetailToken = paymentDetailGeneration
+  const current = () => contextIsCurrent(sessionToken, contextToken, entityId)
   try {
     await request(`/entities/${entityId}/payments/${paymentId}/reverse`, {
       method: 'POST', body: JSON.stringify({ motivo }),
     })
-    if (!contextIsCurrent(sessionToken, contextToken, entityId)) return
+    if (!current()) return
     await loadAccountsPayable(sessionToken, contextToken)
-    if (paymentDraft.value?.id === paymentId) {
-      paymentDraft.value = payments.value.find((item) => item.id === paymentId) ?? paymentDraft.value
+    if (current() && paymentDetailToken === paymentDetailGeneration && activePayment.value?.id === paymentId) {
+      const updated = payments.value.find((item) => item.id === paymentId && item.outlet.id === selectedOutletId.value)
+      if (updated) paymentDraft.value = updated
     }
   } catch (value) {
-    if (contextIsCurrent(sessionToken, contextToken, entityId)) showError(value)
+    if (current()) showError(value)
   }
 }
 
-async function uploadPaymentReceipt() {
-  if (!selectedEntityId.value || !paymentDraft.value || !paymentReceipt.value) return
-  const sessionToken = sessionGeneration
-  const contextToken = contextGeneration
-  const entityId = selectedEntityId.value
-  const paymentId = paymentDraft.value.id
-  const receiptFile = paymentReceipt.value
+function selectPaymentReceipt(event: Event) {
+  const payment = activePayment.value
+  const input = paymentReceiptInput.value
+  // A picker from a replaced payment must not supply a file for the new one.
+  if (!payment || !input || event.target !== input) return
+  const file = input.files?.[0]
+  paymentReceipt.value = file ? { paymentId: payment.id, file } : null
+}
+
+async function uploadPaymentReceipt(event: Event) {
+  const scope = paymentWorkspace()
+  const payment = activePayment.value
+  const receipt = activePaymentReceipt.value
+  if (!scope || !payment || !receipt || payment.tiene_comprobante || event.target !== paymentReceiptInput.value?.form) return
+  const { entityId, sessionToken, contextToken } = scope
+  const paymentDetailToken = paymentDetailGeneration
+  const current = () => scope.current() && paymentDetailToken === paymentDetailGeneration && activePayment.value?.id === payment.id
   const form = new FormData()
-  form.append('archivo', receiptFile)
+  form.append('archivo', receipt.file)
   try {
-    await request(`/entities/${entityId}/payments/${paymentId}/receipt`, {
+    await request(`/entities/${entityId}/payments/${payment.id}/receipt`, {
       method: 'POST', body: form,
     })
-    if (!contextIsCurrent(sessionToken, contextToken, entityId) || paymentDraft.value?.id !== paymentId) return
-    paymentDraft.value.tiene_comprobante = true
+    const updated = activePayment.value
+    if (!current() || !updated) return
+    updated.tiene_comprobante = true
     paymentReceipt.value = null
     await loadAccountsPayable(sessionToken, contextToken)
   } catch (value) {
-    if (contextIsCurrent(sessionToken, contextToken, entityId) && paymentDraft.value?.id === paymentId) showError(value)
+    if (current()) showError(value)
   }
 }
 
@@ -1655,8 +1678,10 @@ onBeforeUnmount(() => window.removeEventListener('hashchange', syncAttachmentHan
             </div>
             <div class="ap-column payment-box">
               <h3>Nuevo pago manual</h3>
+              <p v-if="hasOutlet" class="muted">Local del pago: {{ outlets.find((item) => item.id === selectedOutletId)?.nombre }}</p>
               <p class="muted">Efectivo y transferencia son solo etiquetas. Gomar no ejecuta movimientos bancarios.</p>
-              <form v-if="!paymentDraft" class="stack" @submit.prevent="createPaymentDraft">
+              <p v-if="openingPayment" class="muted" role="status">Cargando pago…</p>
+              <form v-else-if="!activePayment" class="stack" @submit.prevent="createPaymentDraft">
                 <label>Proveedor<select v-model="paymentForm.supplier_id" required><option v-for="supplier in suppliers" :key="supplier.id" :value="supplier.id">{{ supplier.razon_social }}</option></select></label>
                 <label>Moneda<select v-model="paymentForm.moneda"><option value="ARS">ARS</option><option value="USD">USD</option></select></label>
                 <label>Total<input v-model="paymentForm.total" inputmode="decimal" placeholder="0,00" required /></label>
@@ -1665,31 +1690,31 @@ onBeforeUnmount(() => window.removeEventListener('hashchange', syncAttachmentHan
                 <button class="primary">Crear borrador</button>
               </form>
               <div v-else class="stack">
-                <p><strong>Borrador #{{ paymentDraft.id }}</strong> · {{ money(paymentDraft.total, paymentDraft.moneda) }} · {{ paymentDraft.metodo_nombre }}</p>
-                <template v-if="paymentDraft.estado === 'draft'">
-                  <label v-for="item in eligiblePayables" :key="item.id">{{ item.referencia }} · saldo {{ money(item.saldo, item.moneda) }}
+                <p><strong>Borrador #{{ activePayment.id }}</strong> · {{ money(activePayment.total, activePayment.moneda) }} · {{ activePayment.metodo_nombre }}</p>
+                <template v-if="activePayment.estado === 'draft'">
+                  <label v-for="item in eligiblePayables" :key="item.id">{{ item.referencia }} · {{ item.outlet.nombre }} · saldo {{ money(item.saldo, item.moneda) }}
                     <input v-model="allocationAmounts[item.id]" inputmode="decimal" placeholder="Importe a aplicar" />
                   </label>
-                  <p><strong>Aplicado:</strong> {{ money(allocatedTotal.toFixed(2), paymentDraft.moneda) }} / {{ money(paymentDraft.total, paymentDraft.moneda) }}</p>
+                  <p><strong>Aplicado:</strong> {{ money(allocatedTotal.toFixed(2), activePayment.moneda) }} / {{ money(activePayment.total, activePayment.moneda) }}</p>
                   <button class="primary" @click="postCurrentPayment">Registrar pago</button>
                 </template>
-                <p v-else-if="paymentDraft.estado === 'posted'" class="ocr-status">Pago registrado. Para corregirlo, registrá una reversión.</p>
+                <p v-else-if="activePayment.estado === 'posted'" class="ocr-status">Pago registrado. Para corregirlo, registrá una reversión.</p>
                 <p v-else class="ocr-status">Pago revertido.</p>
-                <form v-if="!paymentDraft.tiene_comprobante" :key="paymentDraft.id" class="upload" @submit.prevent="uploadPaymentReceipt">
-                  <label class="file-picker">{{ paymentReceipt?.name ?? 'Adjuntar comprobante privado' }}<input aria-describedby="payment-receipt-format-help" type="file" accept=".png,.jpg,.jpeg,image/png,image/jpeg" required @change="paymentReceipt = ($event.target as HTMLInputElement).files?.[0] ?? null" /></label>
-                  <button class="secondary" :disabled="!paymentReceipt">Adjuntar</button>
+                <form v-if="!activePayment.tiene_comprobante" :key="activePayment.id" class="upload" @submit.prevent="uploadPaymentReceipt">
+                  <label class="file-picker">{{ activePaymentReceipt?.file.name ?? 'Adjuntar comprobante privado' }}<input ref="paymentReceiptInput" aria-describedby="payment-receipt-format-help" type="file" accept=".png,.jpg,.jpeg,image/png,image/jpeg" required @change="selectPaymentReceipt" /></label>
+                  <button class="secondary" :disabled="!activePaymentReceipt">Adjuntar</button>
                   <small id="payment-receipt-format-help">Un comprobante en PNG o JPEG. Máximo 10 MiB y 40 megapíxeles por imagen.</small>
                 </form>
-                <button v-else class="secondary" @click="downloadPaymentReceipt(paymentDraft)">Descargar comprobante</button>
+                <button v-else class="secondary" @click="downloadPaymentReceipt(activePayment)">Descargar comprobante</button>
                 <button class="text-button" @click="clearPaymentDraft">Preparar otro pago</button>
               </div>
             </div>
           </div>
           <div class="subsection"><h3>Historial de pagos</h3>
             <div v-for="payment in payments" :key="payment.id" class="ap-row">
-              <span><strong>#{{ payment.id }} · {{ payment.supplier.razon_social }}</strong><small>{{ payment.metodo_nombre }} · {{ payment.referencia || 'Sin referencia' }}</small></span>
+              <span><strong>#{{ payment.id }} · {{ payment.supplier.razon_social }}</strong><small>{{ payment.outlet.nombre }} · {{ payment.metodo_nombre }} · {{ payment.referencia || 'Sin referencia' }}</small></span>
               <span><strong>{{ money(payment.total, payment.moneda) }}</strong><small>{{ payment.tipo === 'reversal' ? `Reversión de #${payment.reversion_de}` : payment.estado_nombre }}</small></span>
-              <span class="row-actions"><button class="text-button" @click="openPayment(payment.id)">Abrir</button><button v-if="payment.tiene_comprobante" class="text-button" @click="downloadPaymentReceipt(payment)">Comprobante</button><button v-if="canReversePayments && payment.estado === 'posted' && payment.tipo === 'payment'" class="danger" @click="reverseSupplierPayment(payment)">Revertir</button></span>
+              <span class="row-actions"><button v-if="payment.outlet.id === selectedOutletId" class="text-button" @click="openPayment(payment)">Abrir</button><small v-else>Seleccioná {{ payment.outlet.nombre }} para abrir</small><button v-if="payment.tiene_comprobante" class="text-button" @click="downloadPaymentReceipt(payment)">Comprobante</button><button v-if="canReversePayments && payment.estado === 'posted' && payment.tipo === 'payment'" class="danger" @click="reverseSupplierPayment(payment)">Revertir</button></span>
             </div>
             <p v-if="!payments.length" class="empty">Todavía no hay pagos.</p>
           </div>
