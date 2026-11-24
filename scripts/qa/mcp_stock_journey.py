@@ -14,6 +14,7 @@ from playwright.sync_api import expect, sync_playwright
 
 from codex_stock_transport import codex_tools
 from mcp_purchase_checks import purchase_checks, purchase_seed, purchase_snapshot, purchase_tools
+from mcp_treasury_checks import treasury_checks, treasury_seed, treasury_snapshot, treasury_tools
 from pos_prebill_checks import sale_count
 
 if not __debug__:
@@ -98,6 +99,7 @@ COMMIT;
 """)
     if with_purchases:
         purchase_seed(psql)
+        treasury_seed(psql)
     if with_bookings_wiki:
         booking_seed(psql)
     if with_pos_prebill or with_pos_table_checks or with_manual_tender or with_finalization:
@@ -288,6 +290,7 @@ def journey(chromium):
     original = "3|1|1|1|0|1|2|0|0"
     assert snapshot() == original
     original_purchases = purchase_snapshot(psql) if with_purchases else None
+    original_treasury = treasury_snapshot(psql) if with_purchases else None
     with connection(read, rename, minimum) as call:
         readback(call, old_name, 1, 1)
         rename_id = pending(call, rename_tool, "rename", rename_input, 1)
@@ -299,6 +302,7 @@ def journey(chromium):
             readonly("gomar_read_stock_product", {**scope, "product_id": 2}, denied=True)
             if with_purchases:
                 purchase_tools(readonly, scope, may_handoff=False)
+                treasury_tools(readonly, scope, allowed=False)
             if with_bookings_wiki:
                 booking_tools(readonly, scope, allowed=False)
         readback(call, old_name, 1, 1)
@@ -363,7 +367,12 @@ SELECT
 """) == "1|2|1|1|1|1"
         if with_purchases:
             purchase_checks(call, owner, reader, origin, scope)
+            treasury_tools(call, scope, allowed=True)
+            owner.goto(origin)
+            treasury_checks(owner, origin)
+            treasury_checks(peer, origin)
             assert purchase_snapshot(psql) == original_purchases
+            assert treasury_snapshot(psql) == original_treasury
 
     if with_bookings_wiki:
         disabled, denied = request_credential(owner, "reservation_cancel"), request_credential(reader, "reservation_confirm")
@@ -525,6 +534,7 @@ def main():
     print(f"PASS: {transport}, Chrome review, denials, revocation, and exact stock readback")
     if with_purchases:
         print("PASS: same staff session, scoped purchases and native handoff; no changes to documents or payments")
+        print("PASS: desktop/mobile treasury outlet switches, scoped MCP payment reads and denials; no payment writes")
 
     if with_bookings_wiki:
         print("PASS: scoped reservation proposal, native approval, wiki reads, and role/branch/action denials")
