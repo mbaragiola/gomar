@@ -12,11 +12,18 @@ import (
 	"time"
 )
 
+func signupFixtureInstallDraft(name string, target nativeOwnerTarget, ref, cuit string) nativeInstallDraft {
+	display := signupFixtureDisplay(name)
+	return nativeInstallDraft{Target: target, ConsentRef: ref, DisplayOrganization: display.Organization,
+		LegalName: "Razón social verificada " + name, CUIT: cuit, Initiator: "qa-init", Claimant: "qa-owner-" + name,
+		Branches: display.Branches}
+}
+
 func checkSignupDisplayAfterRestart(t *testing.T, old signupTestPeer, names []string, legacy nativeOwnerReceipt) {
 	t.Helper()
-	// The HTTPS fixture which wrote the receipts is already closed. Open
-	// fresh app instances and a new pool; no resolver, state or browser
-	// display data can carry over. Only the real session cookies are reused.
+	// Close the pool that wrote the receipts. Use fresh app instances and
+	// a fresh pool; no browser display can carry over. The HTTPS fixture
+	// is reconfigured before the caller issues any subsequent requests.
 	if err := old.db.Close(); err != nil {
 		t.Fatal(err)
 	}
@@ -51,17 +58,16 @@ func checkSignupDisplayAfterRestart(t *testing.T, old signupTestPeer, names []st
 		return n
 	}
 	before := opsCounts()
-	makeDraft := func(name string, target nativeOwnerTarget, ref string, cuit string) nativeInstallDraft {
-		return nativeInstallDraft{Target: target, ConsentRef: ref, DisplayOrganization: "QA Organización  " + name,
-			LegalName: "Razón social verificada " + name, CUIT: cuit, Initiator: "qa-init", Claimant: "qa-owner-" + name,
-			Branches: []nativeInstallBranch{{"outlet-b", "Norte"}, {"outlet-a", "Local  Centro"}}}
-	}
+	var beforeDrafts, beforeInstalls, beforeBranches int
+	counts(`SELECT (SELECT count(*) FROM gomar.native_owner_install_drafts),
+		(SELECT count(*) FROM gomar.native_owner_pending_installs),(SELECT count(*) FROM gomar.native_owner_pending_branches)`,
+		&beforeDrafts, &beforeInstalls, &beforeBranches)
 
 	status, err := a.readNativeOwnerReceipt(old.owner("legacy", ownerPath), legacy.Target, legacy.Ref)
 	if err != nil || !status.Current || status.Receipt.Ref != legacy.Ref {
 		t.Fatal("unbound internal consent should still have its exact readable history")
 	}
-	oldDraft := makeDraft("legacy", legacy.Target, legacy.Ref, "00000009139")
+	oldDraft := signupFixtureInstallDraft("legacy", legacy.Target, legacy.Ref, "00000009139")
 	deny("unbound receipt cannot approve a hosted draft", ops.approveNativeInstallDraft(old.recovery(recoveryPath), oldDraft))
 	// Simulate an existing 041 recovery draft (for example from a previous
 	// binary): not even a convincing local name can stand in for consent.
@@ -113,7 +119,7 @@ func checkSignupDisplayAfterRestart(t *testing.T, old signupTestPeer, names []st
 		if err != nil || len(digest) != 32 {
 			t.Fatalf("%s: expected persisted owner display evidence", name)
 		}
-		draft := makeDraft(name, target, consentRef, cuits[i])
+		draft := signupFixtureInstallDraft(name, target, consentRef, cuits[i])
 		for _, change := range []func(*nativeInstallDraft){
 			func(d *nativeInstallDraft) { d.DisplayOrganization = d.LegalName },
 			func(d *nativeInstallDraft) { d.DisplayOrganization += " renombrada" },
@@ -202,7 +208,8 @@ func checkSignupDisplayAfterRestart(t *testing.T, old signupTestPeer, names []st
 	var drafts, installs, branches int
 	counts(`SELECT (SELECT count(*) FROM gomar.native_owner_install_drafts),
 		(SELECT count(*) FROM gomar.native_owner_pending_installs),(SELECT count(*) FROM gomar.native_owner_pending_branches)`, &drafts, &installs, &branches)
-	if calls != 0 || drafts != 1+len(names) || installs != len(names) || branches != 2*len(names) || opsCounts() != before {
+	if calls != 0 || drafts != beforeDrafts+1+len(names) ||
+		installs != beforeInstalls+len(names) || branches != beforeBranches+2*len(names) || opsCounts() != before {
 		t.Fatal("unexpected private, pending or operational effects")
 	}
 	t.Logf("persisted signup display: %d exact protected drafts and dormant plans after fixture restart; renamed/swapped/collapsed/unbound denied; no operations", len(names))

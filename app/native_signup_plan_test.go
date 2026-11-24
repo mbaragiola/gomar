@@ -96,6 +96,7 @@ func TestPostgresNativeSignupPlanResolver(t *testing.T) {
 		t.Helper()
 		before := counters()
 		call("GET", "/alta", "", 404)
+		call("POST", "/api/v1/alta/estado", "{}", 404)
 		call("POST", "/api/v1/alta/revisar", "{}", 404)
 		call("POST", "/api/v1/alta/confirmar", `{"challenge":"`+challenge+`","confirm":true}`, 404)
 		if counters() != before {
@@ -160,8 +161,9 @@ func TestPostgresNativeSignupPlanResolver(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer tx.Rollback()
-	exact, designation, err := loadNativeSignupPlan(ctx, tx, live, target.Audience)
-	if err != nil || exact.Organization != plan.Organization || !sameNativeOwnerTarget(designation.Target, target) {
+	exact, err := loadNativeSignupSelection(ctx, tx, live, target.Audience)
+	if err != nil || exact.State != nativeSignupReviewable || exact.Plan.Organization != plan.Organization ||
+		!sameNativeOwnerTarget(exact.Designation.Target, target) {
 		t.Fatal("one current plan was not resolved under the browser actor lock")
 	}
 	var pid int

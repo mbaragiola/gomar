@@ -466,13 +466,15 @@ The prospective owner opens **Revisá el alta** in the isolated loopback
 fixture using the exact ordinary provider account and original session.
 Gomar resolves the single eligible plan from PostgreSQL for that account
 and the configured audience. They can review the intended
-organization and branches and explicitly confirm in Gomar. This is
+organization and branches, explicitly confirm in Gomar, and reopen
+the confirmed or dormant status only from their original active session. This is
 native-only: a human must see and accept the exact display, not send a
 bearer credential, an email, a private business identifier or a link with
 an asserted scope. An assigned prospect has no operational membership
 or MCP key from this workflow. An existing unrelated operational MCP key
-cannot discover, review or approve signup or receive private signup
-references. It keeps only its prior authorized scope. The exact approved
+cannot discover, review or approve signup, read its pre-membership
+status, or receive private signup references. The CSRF-checked browser
+read is a personal native operation, not an MCP handoff or a credential. It keeps only its prior authorized scope. The exact approved
 display also stays in native consent and the protected recovery draft;
 the digest, legal name, CUIT, and private branch-label mapping are not
 MCP data. Protected plan authorship, the draft, and the dormant install
@@ -483,5 +485,7 @@ route here is an authenticated localhost HTTPS test fixture with a
 recovery-authored local plan, not a sharable link or a hosted signup rollout.
 The exact synthetic HTTP/browser tests cover the intended owner and
 changed session and a persisted exact recovery draft after a fixture
-restart. The packaged MCP check covers an independently scoped
-operational key plus signup denial and an unassigned owner.
+restart. The status tests verify both recorded stages across restart,
+with no reissue, mismatch disclosures or side effects. The packaged
+MCP check covers an independently scoped operational key plus signup
+and status denial and an unassigned owner.

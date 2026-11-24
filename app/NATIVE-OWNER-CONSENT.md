@@ -145,6 +145,23 @@ claimant before acquiring the intent lock. Plans and their approval
 history survive an application restart without a callback, backfill,
 runtime writer, or new registered route.
 
+### Reopening your signup
+
+The original signed-in session may reopen **Revisá el alta**. Gomar
+reads the bound receipt and, if present, the matching dormant install
+for that exact owner. It shows only the approved display labels and
+whether confirmation or preparation was recorded. Neither state
+asserts payment or active access.
+
+This status does not write a preview or reissue consent. It is a
+same-origin, CSRF-checked native read that takes no owner or scope
+selector from the browser. A running original session is required;
+another login with the same account cannot recover the status. An
+ambiguous match, including both a history record and another eligible
+plan in the same session, is refused instead of choosing either. An
+old receipt remains history even if later approval is revoked; it does
+not become permission for a new action.
+
 ### Durable display evidence at the recovery handoff
 
 Migration 042 adds one nullable, immutable version-1 display digest to

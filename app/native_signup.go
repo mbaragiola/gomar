@@ -20,6 +20,18 @@ type nativeSignupHosted struct {
 	Audience string
 }
 
+const (
+	nativeSignupStatusPath  = "/api/v1/alta/estado"
+	nativeSignupReviewPath  = "/api/v1/alta/revisar"
+	nativeSignupConfirmPath = "/api/v1/alta/confirmar"
+)
+
+type nativeSignupStatus struct {
+	State        nativeSignupState `json:"state"`
+	Organization string            `json:"organization,omitempty"`
+	Branches     []string          `json:"branches,omitempty"`
+}
+
 type nativeSignupReview struct {
 	Organization string   `json:"organization"`
 	Branches     []string `json:"branches"`
@@ -74,7 +86,7 @@ func (a *app) canOpenNativeSignup(r *http.Request, cfg *nativeSignupHosted) bool
 		return false
 	}
 	defer tx.Rollback()
-	_, _, err = loadNativeSignupPlan(ctx, tx, browser, cfg.Audience)
+	_, err = loadNativeSignupSelection(ctx, tx, browser, cfg.Audience)
 	return err == nil
 }
 
@@ -142,21 +154,22 @@ func (a *app) registerNativeSignup(mux *http.ServeMux, add func(string, string, 
 		page.URL.Path = "/"
 		frontend.ServeHTTP(w, page)
 	})
-	for path, confirm := range map[string]bool{"/api/v1/alta/revisar": false, "/api/v1/alta/confirmar": true} {
+	for _, path := range []string{nativeSignupStatusPath, nativeSignupReviewPath, nativeSignupConfirmPath} {
 		add(path, http.MethodPost, func(w http.ResponseWriter, r *http.Request) {
 			nativeSignupPrivateHeaders(w)
 			if !a.nativeSignupLocal(r, path) {
 				http.NotFound(w, r)
 				return
 			}
-			if err := a.handleNativeSignup(w, r, cfg, confirm); err != nil {
+			if err := a.handleNativeSignup(w, r, cfg, path); err != nil {
 				failure(w, err)
 			}
 		})
 	}
 }
 
-func (a *app) handleNativeSignup(w http.ResponseWriter, r *http.Request, cfg *nativeSignupHosted, confirm bool) error {
+func (a *app) handleNativeSignup(w http.ResponseWriter, r *http.Request, cfg *nativeSignupHosted, path string) error {
+	confirm := path == nativeSignupConfirmPath
 	session, err := a.nativeOwnerBrowser(r)
 	if err != nil {
 		return err
@@ -171,9 +184,27 @@ func (a *app) handleNativeSignup(w http.ResponseWriter, r *http.Request, cfg *na
 		return err
 	}
 	defer tx.Rollback()
-	plan, d, err := loadNativeSignupPlan(ctx, tx, browser, cfg.Audience)
+	selected, err := loadNativeSignupSelection(ctx, tx, browser, cfg.Audience)
 	if err != nil {
 		return err
+	}
+	plan, d := selected.Plan, selected.Designation
+	if path == nativeSignupStatusPath {
+		status := nativeSignupStatus{State: selected.State}
+		if selected.State != nativeSignupReviewable {
+			status.Organization = plan.Organization
+			for _, branch := range plan.Branches {
+				status.Branches = append(status.Branches, branch.Name)
+			}
+		}
+		if err = tx.Commit(); err != nil {
+			return err
+		}
+		jsonResponse(w, http.StatusOK, status)
+		return nil
+	}
+	if selected.State != nativeSignupReviewable {
+		return nativeOwnerConsentUnavailable
 	}
 	binding := nativeOwnerReviewBinding{Actor: browser.Actor, Target: d.Target,
 		Display: nativeOwnerDisplayDigest(browser.Actor, d.Target, plan.Organization, plan.Branches)}
