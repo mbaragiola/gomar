@@ -17,10 +17,10 @@ the latest epoch is selected before checking its validity. Exactly one
 eligible claim, its complete mapped scope, and a verified interval of
 at most five seconds are required. A disputed, future, expired,
 suspended, or unknown latest claim cannot fall back to prior positives.
-A purported newer positive checked before a recorded suspension or
-unknown result cannot restore discovery. An exact copy is not a new
-record. There is no application writer or claim that these synthetic
-observations have live Billing authority.
+A purported newer positive checked no later than a recorded suspension,
+unknown, or earlier epoch dispute cannot restore discovery. An exact
+copy is not a new record. No writer or observation source is registered
+by the app. These synthetic observations have no live Billing authority.
 
 The same check intersects the mapped, current scope with active local
 outlets and existing actor membership and grants. A paid entity's name
@@ -50,3 +50,38 @@ outlet check and timing receipt are filtered in one SQL statement; loss
 of that paid scope returns the same 404 as an unknown sale, with no
 clock or handoff data. This does not change device-held receipts, other
 POS reads, table finalization, sales, payments, or monthly reports.
+
+## Internal observation application fixture
+
+The app can exercise the append procedure using a verifier injected only
+in the isolated fixture. There is no operator or user action, browser
+endpoint, MCP operation, polling loop, callback, or provider. The
+verifier is responsible for authenticating the source and correlating a
+complete response before the local transaction. The helper checks one
+configured issuer and audience, the dedicated hosted eligibility purpose,
+and an exact opaque business plus ordered, unique complete branch set.
+Owner consent, install history, payment diagnostics, provider revisions,
+and an asserted body do not provide this authority.
+
+The helper verifies outside the transaction, then locks the exact paid
+scope in an explicit Read Committed transaction. It independently checks
+the immutable declared and actual mapped branch sets. A new positive must
+have a higher epoch and checked-at later than all known evidence; its
+original bounded window must still hold after the lock and at the write.
+The helper does not re-stamp or extend a window. Exact replay is history
+only. Authenticated nonfuture adverse or conflicting observations may
+be recorded as history after their original window. A conflict disables
+that epoch. When delayed adverse evidence or a dispute's timestamp is not
+earlier than a higher positive's check, that positive cannot authorize a
+read. A later independently verified positive must be chronologically
+newer. If verification fails, it cannot renew a lease; a previously
+recorded valid lease can still last until expiry or a durable denial.
+This does not guarantee immediate revocation across services.
+
+There is no migration in this slice. The existing history stores exact
+scope, source epoch, state, and original times, but not cryptographic
+proof, verified issuer/audience, receipt provenance, or per-source history.
+The isolated fixture assumes one configured trust source per database.
+Do not rotate or mix sources, trust existing raw rows as authenticated,
+or turn this into a production admission path without a separate durable
+provenance, migration, and transport decision.

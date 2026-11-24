@@ -516,3 +516,10 @@ same-entity unmapped outlet is denied even with its own existing grant.
 The unaffected paid and self-hosted scopes still return their own exact
 receipts. No new tool, device queue access, sale write or monthly report
 behavior is added.
+
+The unregistered synthetic observation writer has no native operator action
+or MCP tool. Only the existing discovery and exact timing reads consume its
+fixture evidence; a tool cannot install, renew, revoke, or import an
+observation. The actual same-database desktop/mobile and packaged MCP
+regression updates fixture evidence through the same internal apply seam,
+including admission, suspension, an out-of-order positive, and expiry.

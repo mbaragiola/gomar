@@ -154,7 +154,8 @@ func TestPostgresHostedDiscoveryRead(t *testing.T) {
 	var now atomic.Int64
 	start := time.Now().UTC().Truncate(time.Microsecond)
 	now.Store(start.UnixMicro())
-	f := newDiscoveryTestServer(t, ctx, db, &hostedDiscoveryReadFixture{now: func() time.Time { return time.UnixMicro(now.Load()) }})
+	mode, source := newEligibilityFixture(func() time.Time { return time.UnixMicro(now.Load()) })
+	f := newDiscoveryTestServer(t, ctx, db, mode)
 	base := newDiscoveryTestServer(t, ctx, db, nil)
 	c, control := f.client(), base.client()
 	f.get(c, fixtureDiscoverySignIn, "", 204)
@@ -307,17 +308,21 @@ func TestPostgresHostedDiscoveryRead(t *testing.T) {
 		t.Fatal("discovery performed writes or changed grants")
 	}
 
+	apply := func(scope, branch string, epoch int64, state string, checked, ends time.Duration, want hostedEligibilityApplyResult) {
+		source.apply(t, ctx, f.app, fixtureHostedEligibility(scope, []string{branch}, epoch, state, start.Add(checked), start.Add(ends)), want)
+	}
 	testHostedScopedChrome(t, ctx, f, base, "GOMAR_QA_DISCOVERY_BROWSER", "GOMAR_QA_DISCOVERY_MCP", "PASS: actual Chrome and packaged MCP hosted discovery", func(step string) {
 		switch step {
 		case "begin":
 			now.Store(start.Add(3 * time.Second).UnixMicro())
-			epoch("paid-alpha", 20, "eligible", start.Add(2*time.Second), start.Add(6*time.Second))
-			epoch("paid-beta", 20, "eligible", start.Add(2*time.Second), start.Add(7*time.Second))
+			apply("paid-alpha", "scope-branch-a", 20, "eligible", 2*time.Second, 6*time.Second, hostedEligibilityRecorded)
+			apply("paid-beta", "scope-branch-b", 20, "eligible", 2*time.Second, 7*time.Second, hostedEligibilityRecorded)
 		case "suspend":
-			epoch("paid-alpha", 21, "suspended", start.Add(3*time.Second), start.Add(7*time.Second))
-			epoch("paid-alpha", 19, "eligible", start.Add(2*time.Second), start.Add(6*time.Second))
+			apply("paid-alpha", "scope-branch-a", 21, "suspended", 3*time.Second, 7*time.Second, hostedEligibilityRecorded)
+			apply("paid-alpha", "scope-branch-a", 19, "eligible", 2*time.Second, 6*time.Second, hostedEligibilityOlderPositive)
 		case "expire":
-			epoch("paid-alpha", 22, "eligible", start.Add(4*time.Second), start.Add(5*time.Second))
+			now.Store(start.Add(4 * time.Second).UnixMicro())
+			apply("paid-alpha", "scope-branch-a", 22, "eligible", 4*time.Second, 5*time.Second, hostedEligibilityRecorded)
 			now.Store(start.Add(5500 * time.Millisecond).UnixMicro())
 		}
 	})

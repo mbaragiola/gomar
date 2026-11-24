@@ -11,7 +11,10 @@ import (
 
 // Only explicitly injected in the disposable composition. This is not a
 // general hosted-mode setting or authorization outside the documented reads.
-type hostedDiscoveryReadFixture struct{ now func() time.Time }
+type hostedDiscoveryReadFixture struct {
+	now               func() time.Time
+	observationSource *hostedEligibilitySource
+}
 
 func (f *hostedDiscoveryReadFixture) clock() time.Time {
 	if f.now != nil {
@@ -59,7 +62,9 @@ granted AS (
                        FROM gomar.discovery_paid_outlet p WHERE p.business_ref=h.business_ref)
       AND NOT EXISTS (SELECT 1 FROM gomar.discovery_scope_epoch previous
           WHERE previous.business_ref=h.business_ref AND previous.epoch<h.epoch
-            AND previous.state<>'eligible' AND previous.verified_at>=h.verified_at))
+          GROUP BY previous.epoch
+          HAVING (COUNT(*)>1 AND MAX(previous.verified_at)>=h.verified_at)
+              OR BOOL_OR(previous.state<>'eligible' AND previous.verified_at>=h.verified_at)))
 ), discovery_admitted AS (
     SELECT g.entity_id,g.outlet_id,COALESCE(g.name,'') AS name
     FROM granted g CROSS JOIN discovery_input i
