@@ -1,9 +1,7 @@
 package main
 
 import (
-	"context"
 	"crypto/sha256"
-	"database/sql"
 	"encoding/json"
 	"errors"
 	"io"
@@ -15,19 +13,11 @@ import (
 )
 
 // Only explicitly injected by the HTTPS loopback test fixture. No flag,
-// environment setting, default resolver or main wiring can enable signup.
+// environment setting, or main wiring can enable signup.
 type nativeSignupHosted struct {
 	Enabled  bool
 	Origin   string
 	Audience string
-	Resolver func(context.Context, int64) (nativeSignupPlan, error)
-}
-
-type nativeSignupPlan struct {
-	Actor        int64
-	Target       nativeOwnerTarget
-	Organization string
-	Branches     []nativeInstallBranch
 }
 
 type nativeSignupReview struct {
@@ -48,7 +38,7 @@ func nativeSignupLoopback(host string) bool {
 
 func (a *app) activeNativeSignup() *nativeSignupHosted {
 	cfg := a.nativeSignup
-	if cfg == nil || !cfg.Enabled || cfg.Resolver == nil || !nativeOwnerOpaqueID(cfg.Audience) ||
+	if cfg == nil || !cfg.Enabled || a.db == nil || !nativeOwnerOpaqueID(cfg.Audience) ||
 		a.providerAuth == nil || a.providerAuth.origin != cfg.Origin || a.providerAuth.host != a.host {
 		return nil
 	}
@@ -72,68 +62,20 @@ func (a *app) nativeSignupLocal(r *http.Request, path string) bool {
 		len(r.Header.Values("Authorization")) == 0
 }
 
-// The browser never supplies an intent, target, scope, role or contact
-// identity. The trusted resolver runs after locking the current provider
-// user and exact session, but outside any transaction.
-func (a *app) resolveNativeSignup(r *http.Request, cfg *nativeSignupHosted, session [32]byte) (nativeSignupPlan, nativeOwnerReviewBinding, error) {
-	ctx := r.Context()
-	tx, err := a.db.BeginTx(ctx, &sql.TxOptions{Isolation: sql.LevelReadCommitted})
-	if err != nil {
-		return nativeSignupPlan{}, nativeOwnerReviewBinding{}, err
-	}
-	defer tx.Rollback()
-	actor, expires, err := lockedNativeOwnerSession(ctx, tx, session)
-	if err != nil || nativeOwnerNow().Unix() >= expires {
-		if err == nil {
-			err = unauthenticated
-		}
-		return nativeSignupPlan{}, nativeOwnerReviewBinding{}, err
-	}
-	if err = tx.Commit(); err != nil {
-		return nativeSignupPlan{}, nativeOwnerReviewBinding{}, err
-	}
-	plan, err := cfg.Resolver(ctx, actor)
-	if err != nil || plan.Actor != actor {
-		return nativeSignupPlan{}, nativeOwnerReviewBinding{}, nativeOwnerConsentUnavailable
-	}
-	target, valid := canonicalNativeOwnerTarget(plan.Target)
-	if !valid || target.Audience != cfg.Audience {
-		return nativeSignupPlan{}, nativeOwnerReviewBinding{}, nativeOwnerConsentUnavailable
-	}
-	branches, valid := canonicalNativeOwnerDisplay(target, plan.Organization, plan.Branches)
-	if !valid {
-		return nativeSignupPlan{}, nativeOwnerReviewBinding{}, nativeOwnerConsentUnavailable
-	}
-	plan.Target, plan.Branches = target, branches
-	return plan, nativeOwnerReviewBinding{
-		Actor: actor, Target: target, Display: nativeOwnerDisplayDigest(actor, target, plan.Organization, branches),
-	}, nil
-}
-
 func (a *app) canOpenNativeSignup(r *http.Request, cfg *nativeSignupHosted) bool {
 	cookies := r.CookiesNamed("sessionid")
 	if len(cookies) != 1 || len(cookies[0].Value) != 32 {
 		return false
 	}
-	session := sha256.Sum256([]byte(cookies[0].Value))
-	plan, _, err := a.resolveNativeSignup(r, cfg, session)
-	if err != nil {
-		return false
-	}
 	ctx := r.Context()
-	tx, err := a.db.BeginTx(ctx, &sql.TxOptions{Isolation: sql.LevelReadCommitted})
+	session := sha256.Sum256([]byte(cookies[0].Value))
+	tx, browser, err := a.beginNativeOwnerBrowser(ctx, session)
 	if err != nil {
 		return false
 	}
 	defer tx.Rollback()
-	actor, expires, err := lockedNativeOwnerSession(ctx, tx, session)
-	if err != nil || actor != plan.Actor {
-		return false
-	}
-	d, err := lockCurrentNativeOwnerDesignation(ctx, tx, plan.Target.Intent)
-	now := nativeOwnerNow()
-	return err == nil && d.Actor == actor && d.approvedAt(now) && now.Unix() < expires &&
-		sameNativeOwnerTarget(d.Target, plan.Target)
+	_, _, err = loadNativeSignupPlan(ctx, tx, browser, cfg.Audience)
+	return err == nil
 }
 
 // Disallow duplicate, unknown, trailing and non-object input without
@@ -223,21 +165,33 @@ func (a *app) handleNativeSignup(w http.ResponseWriter, r *http.Request, cfg *na
 	if err != nil {
 		return err
 	}
-	plan, binding, err := a.resolveNativeSignup(r, cfg, session)
+	ctx := r.Context()
+	tx, browser, err := a.beginNativeOwnerBrowser(ctx, session)
 	if err != nil {
 		return err
 	}
+	defer tx.Rollback()
+	plan, d, err := loadNativeSignupPlan(ctx, tx, browser, cfg.Audience)
+	if err != nil {
+		return err
+	}
+	binding := nativeOwnerReviewBinding{Actor: browser.Actor, Target: d.Target,
+		Display: nativeOwnerDisplayDigest(browser.Actor, d.Target, plan.Organization, plan.Branches)}
 	if confirm {
-		_, err = a.confirmBoundNativeOwnerConsent(r, nativeOwnerConfirmation{
-			Challenge: input.challenge, Target: plan.Target, Accept: true,
-		}, &binding)
-		if err == nil {
-			w.WriteHeader(http.StatusNoContent)
+		if _, err = writeNativeOwnerConfirmation(ctx, tx, browser, d, d.Target, input.challenge, &binding); err != nil {
+			return err
 		}
+		if err = tx.Commit(); err != nil {
+			return err
+		}
+		w.WriteHeader(http.StatusNoContent)
+		return nil
+	}
+	preview, err := writeNativeOwnerPreview(ctx, tx, browser, d, cfg.Audience, &binding)
+	if err != nil {
 		return err
 	}
-	preview, err := a.previewBoundNativeOwnerConsent(r, plan.Target.Intent, plan.Target.Audience, &binding)
-	if err != nil {
+	if err = tx.Commit(); err != nil {
 		return err
 	}
 	visible := nativeSignupReview{Organization: plan.Organization, Challenge: preview.Challenge}

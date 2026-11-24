@@ -64,6 +64,7 @@ var postgresMigrationNames = []string{
 	"040_native_owner_consent.sql",
 	"041_native_owner_dormant_install.sql",
 	"042_native_owner_display_binding.sql",
+	"043_native_signup_plans.sql",
 }
 
 func postgresConfig(dsn string) (*pgx.ConnConfig, error) {

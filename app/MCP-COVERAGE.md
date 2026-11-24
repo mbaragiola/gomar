@@ -463,8 +463,9 @@ or receipts. No MCP listing or cross-register permission is added.
 ### Human signup consent: local HTTPS fixture only
 
 The prospective owner opens **Revisá el alta** in the isolated loopback
-fixture using the exact ordinary provider account and original session
-selected by the fixture's trusted resolver. They can review the intended
+fixture using the exact ordinary provider account and original session.
+Gomar resolves the single eligible plan from PostgreSQL for that account
+and the configured audience. They can review the intended
 organization and branches and explicitly confirm in Gomar. This is
 native-only: a human must see and accept the exact display, not send a
 bearer credential, an email, a private business identifier or a link with
@@ -474,12 +475,12 @@ cannot discover, review or approve signup or receive private signup
 references. It keeps only its prior authorized scope. The exact approved
 display also stays in native consent and the protected recovery draft;
 the digest, legal name, CUIT, and private branch-label mapping are not
-MCP data. The draft and dormant install remain unregistered native
-operations, not MCP actions or handoffs.
+MCP data. Protected plan authorship, the draft, and the dormant install
+remain unregistered native operations, not MCP actions or handoffs.
 
 The default app has no signup page, API or MCP handoff. The only opt-in
-route here is an authenticated localhost HTTPS test fixture with its
-server-owned resolver, not a sharable link or a hosted signup rollout.
+route here is an authenticated localhost HTTPS test fixture with a
+recovery-authored local plan, not a sharable link or a hosted signup rollout.
 The exact synthetic HTTP/browser tests cover the intended owner and
 changed session and a persisted exact recovery draft after a fixture
 restart. The packaged MCP check covers an independently scoped
