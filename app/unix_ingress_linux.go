@@ -3,13 +3,16 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net"
 	"net/http"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"strconv"
 	"strings"
 	"syscall"
+	"time"
 )
 
 const (
@@ -17,6 +20,8 @@ const (
 	linuxOPath    = 0x200000
 	procFSMagic   = 0x9fa0
 )
+
+const protectedUnixShutdownGrace = 20 * time.Second
 
 type unixIngress struct {
 	listener *net.UnixListener
@@ -172,6 +177,36 @@ func listenProtectedUnix(path string) (*unixIngress, error) {
 	}
 	ready = true
 	return &unixIngress{listener: listener, uid: uid}, nil
+}
+
+// serve closes the listener without unlinking its path. The runtime directory
+// and its cleanup belong to the service manager.
+func (i *unixIngress) serve(server *http.Server, grace time.Duration, ready func()) error {
+	stop, stopSignals := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stopSignals()
+	ready()
+	return serveHTTPUntilStop(stop, server, i.listener, grace)
+}
+
+func serveHTTPUntilStop(stop context.Context, server *http.Server, listener net.Listener, grace time.Duration) error {
+	served := make(chan error, 1)
+	go func() { served <- server.Serve(listener) }()
+	select {
+	case err := <-served:
+		return err
+	case <-stop.Done():
+	}
+
+	// Closing the signal context must not cancel active request contexts.
+	drain, cancel := context.WithTimeout(context.Background(), grace)
+	defer cancel()
+	if err := server.Shutdown(drain); err != nil {
+		return errors.Join(fmt.Errorf("drain protected Unix HTTP requests: %w", err), server.Close())
+	}
+	if err := <-served; !errors.Is(err, http.ErrServerClosed) {
+		return err
+	}
+	return nil
 }
 
 func (i *unixIngress) baseContext(listener net.Listener) context.Context {

@@ -211,13 +211,11 @@ func main() {
 	application := &app{db: db, reservationContacts: *reservationContacts, employeeOnboarding: *employeeOnboarding, providerEmployee: *providerEmployee, providerAuth: providerAuth, adminRecovery: *enableAdminRecovery, providerOnly: *providerOnly, privateRoot: privateRoot, publicReservations: *publicReservations, enableMCPReservationConfirmProposals: *enableReservationConfirmProposals, enableMCPReservationTableAddProposals: *enableReservationTableAddProposals, enableMCPReservationSlotAddProposals: *enableReservationSlotAddProposals, enableMCPReservationPolicyNoticeProposals: *enableReservationPolicyNoticeProposals, enableMCPOutletDisplayLabelProposals: *enableOutletDisplayLabelProposals, enableMCPReservationCancelProposals: *enableReservationCancelProposals, enableMCPPOSCreateProposals: *enablePOSCreateProposals, enableMCPStockMinimumProposals: *enableStockMinimumProposals, enableMCPStockTrackingProposals: *enableStockTrackingProposals, enableMCPStockProductSetupProposals: *enableStockProductSetupProposals, enableMCPSupplierNameProposals: *enableSupplierNameProposals, enablePOS: *enablePOS, enablePOSTableChecks: *enablePOSTableChecks, enablePOSManualTender: *enablePOSManualTender, enablePOSTableFinalization: *enablePOSTableFinalization,
 		enableDelivery: *enableDelivery, enableStock: *enableStock, enableMCP: *enableMCP, enableMCPWikiProposals: *enableWikiProposals, enableMCPDocumentProposals: *enableDocumentProposals, enableMCPWikiEditProposals: *enableWikiEditProposals, enableMCPStockReceiptProposals: *enableStockReceiptProposals, enableMCPProposalSessions: *enableProposalSessions, enableMCPDocumentReviewProposals: *enableDocumentReviewProposals, enableMCPDocumentEditProposals: *enableDocumentEditProposals, enableMCPDocumentNumberProposals: *enableDocumentNumberProposals, enableMCPDocumentPointOfSaleProposals: *enableDocumentPointOfSaleProposals, enableMCPPOSCatalogProposals: *enablePOSCatalogProposals, enableMCPStockAdjustmentProposals: *enableStockAdjustmentProposals, enableMCPReconciliationDraftProposals: *enableReconciliationDraftProposals}
 	if ingress != nil {
-		listener = ingress.listener
 		server.DisableGeneralOptionsHandler = true
 		server.BaseContext = ingress.baseContext
 		server.ConnContext = ingress.connContext
 		application.host = *unixAuthority
 		server.Handler = ingress.wrapHTTPS(*unixAuthority, application.routes())
-		fmt.Printf("unix://%s\n", *unixPath)
 	} else {
 		listener, err = net.Listen("tcp", addr.String())
 		if err != nil {
@@ -230,5 +228,13 @@ func main() {
 	pruneContext, stopPruning := context.WithCancel(context.Background())
 	defer stopPruning()
 	go application.pruneWikiProposalsLoop(pruneContext)
+	if ingress != nil {
+		if err := ingress.serve(server, protectedUnixShutdownGrace, func() {
+			fmt.Printf("unix://%s\n", *unixPath)
+		}); err != nil {
+			log.Fatal(err)
+		}
+		return
+	}
 	log.Fatal(server.Serve(listener))
 }
