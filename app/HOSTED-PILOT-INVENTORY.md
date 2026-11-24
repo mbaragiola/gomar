@@ -42,3 +42,21 @@ refresh must clear prior inbox data. Confirm that excluded UI, background
 work, and direct HTTP requests do not fall through, and run the same existing
 workflows on self-hosted Gomar to verify it still behaves as before. This
 inventory does not prove any of those controls by itself.
+
+## Isolated paired test
+
+The PostgreSQL delivery test runs a second, test-only HTTP listener. It has
+only discovery and inbox GET routes and does not use the app router, Vue shell,
+static assets or setup endpoints. A separate synthetic setup listener issues
+an ordinary provider-session cookie and scoped bearer keys beforehand. This
+does not test the main router's provider-only or managed employee request
+policy. No operational write route is exposed; authentication can still
+revoke a stale session. The test connects an actual Go SDK client to a
+four-tool SDK catalog using the same registrations as the packaged client,
+and those tools call the isolated HTTP listener. Direct calls to unlisted tools
+and HTTP routes are denied, and one expired paid scope does not block another.
+
+This proves the paired read path in a fixture, not a hosted pilot binary or
+browser screen. Existing Chrome and packaged MCP checks still cover the
+unchanged app and package. There is no production startup option for this
+fixture, and it does not replace the acceptance checks above.
