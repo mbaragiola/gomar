@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -294,16 +295,16 @@ func TestPostgresProviderLoginSynthetic(t *testing.T) {
 		}
 		return attempt{q, cookies[0]}
 	}
-	callback := func(flow, code string, v attempt, cookie *http.Cookie, change func(map[string]any)) *httptest.ResponseRecorder {
+	callback := func(flow, code string, v attempt, cookie *http.Cookie, change func(map[string]any), browserCookies ...*http.Cookie) *httptest.ResponseRecorder {
 		t.Helper()
 		e := config.providers[flow].endpoints
 		mu.Lock()
 		codes[code] = registeredCode{e, v.query, change}
 		mu.Unlock()
 		form := url.Values{"code": {code}, "state": {v.query.Get("state")}, "user": {`{"email":"never-use-browser-content@example.invalid"}`}}
-		var cookies []*http.Cookie
+		cookies := slices.Clone(browserCookies)
 		if cookie != nil {
-			cookies = []*http.Cookie{cookie}
+			cookies = append(cookies, cookie)
 		}
 		if e.FormPost {
 			return request(router, "POST", prefix+flow+"/callback", form.Encode(), "https://appleid.apple.com", cookies)
@@ -326,6 +327,7 @@ func TestPostgresProviderLoginSynthetic(t *testing.T) {
 		t.Fatal("invalid state reached provider transport")
 	}
 	var sessions []*http.Cookie
+	var browsers [][]*http.Cookie
 	for _, flow := range []string{"google", "microsoft", "microsoft-work"} {
 		v := start(flow)
 		expected := callback(flow, "valid-"+flow, v, v.cookie, nil)
@@ -333,6 +335,7 @@ func TestPostgresProviderLoginSynthetic(t *testing.T) {
 		if expected.Header().Get("Location") != "/" || expected.Header().Get("Referrer-Policy") != "no-referrer" {
 			t.Fatal(expected.Header())
 		}
+		browsers = append(browsers, expected.Result().Cookies())
 		for _, c := range expected.Result().Cookies() {
 			if c.Name == "sessionid" {
 				sessions = append(sessions, c)
@@ -357,7 +360,14 @@ func TestPostgresProviderLoginSynthetic(t *testing.T) {
 		t.Fatal("provider session not ordinary", err)
 	}
 	existing := start("google")
-	expect(callback("google", "existing-identity", existing, existing.cookie, nil), 303)
+	sameActor := callback("google", "existing-identity", existing, existing.cookie, nil)
+	expect(sameActor, 303)
+	t.Run("native_owner_consent", func(t *testing.T) {
+		attempt := start("google")
+		checkNativeOwnerConsent(t, a, ctx, db, browsers[0], browsers[1], sameActor.Result().Cookies(), func() *httptest.ResponseRecorder {
+			return callback("google", "owner-session-rotation", attempt, attempt.cookie, nil, browsers[0]...)
+		})
+	})
 	for i, change := range []func(map[string]any){
 		func(m map[string]any) { m["iss"] = "https://foreign.invalid" },
 		func(m map[string]any) { m["aud"] = "foreign-client" },
