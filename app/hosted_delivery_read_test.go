@@ -143,6 +143,7 @@ func TestPostgresHostedDeliveryReads(t *testing.T) {
 	apply("paid-beta", bBranches, 1, "eligible", -time.Second, 4*time.Second, hostedEligibilityRecorded)
 	pilot := exerciseDeliveryPilot(t, ctx, hosted.app, browser, hosted.server.URL, aPin, bRoot)
 	pilot(true)
+	exerciseDeliveryPilotRequestAuth(t, ctx, hosted.app, hosted.server.URL, browser, employee, aPin)
 
 	native := func(e, o int64) string { return fmt.Sprintf("/api/v1/entities/%d/outlets/%d/delivery/orders", e, o) }
 	packaged := func(e, o int64) [2]string {

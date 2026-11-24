@@ -47,11 +47,12 @@ inventory does not prove any of those controls by itself.
 
 The PostgreSQL delivery test runs a second, test-only HTTP listener. It has
 only discovery and inbox GET routes and does not use the app router, Vue shell,
-static assets or setup endpoints. A separate synthetic setup listener issues
-an ordinary provider-session cookie and scoped bearer keys beforehand. This
-does not test the main router's provider-only or managed employee request
-policy. No operational write route is exposed; authentication can still
-revoke a stale session. The test connects an actual Go SDK client to a
+static assets or setup endpoints. It applies the same request authentication
+policy as the app router. The test uses synthetic provider, classic, and
+managed-employee sessions and scoped bearer keys issued separately. It checks
+read access under each request policy, not production startup, a sign-in
+page, or provider callbacks. No operational write route is exposed;
+authentication can still revoke a stale session. The test connects an actual Go SDK client to a
 four-tool SDK catalog using the same registrations as the packaged client,
 and those tools call the isolated HTTP listener. Direct calls to unlisted tools
 and HTTP routes are denied, and one expired paid scope does not block another.
