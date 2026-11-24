@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"os"
 	"path"
 	"slices"
 	"strings"
@@ -71,29 +72,35 @@ var deliveryPilotToolNames = []string{
 	"gomar_delivery_status_summary", "gomar_list_entities", "gomar_list_outlets", "gomar_list_recent_delivery",
 }
 
-// The in-memory connection exercises the Go SDK's actual list and call
-// dispatch with the same tool registrations as the packaged program.
+// Both transports exercise actual SDK list and call dispatch against the
+// restricted fixture. The opt-in stdio path uses a separately compiled test
+// process; ordinary PostgreSQL runs retain the in-memory transport.
 func newDeliveryPilotSDKSession(t *testing.T, ctx context.Context, origin, token string) *mcp.ClientSession {
 	t.Helper()
-	backend, err := mcpclient.New(origin, token)
-	if err != nil {
-		t.Fatal(err)
-	}
-	server := mcp.NewServer(&mcp.Implementation{Name: "isolated-delivery-test", Version: "0"}, nil)
-	gomarmcp.AddDiscoveryTools(server, backend)
-	gomarmcp.AddDeliveryTools(server, backend)
-	serverWire, clientWire := mcp.NewInMemoryTransports()
-	ss, err := server.Connect(ctx, serverWire, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = ss.Close() })
 	client := mcp.NewClient(&mcp.Implementation{Name: "isolated-test", Version: "0"}, nil)
-	cs, err := client.Connect(ctx, clientWire, nil)
-	if err != nil {
-		t.Fatal(err)
+	var cs *mcp.ClientSession
+	if binary := os.Getenv("GOMAR_QA_HOSTED_DELIVERY_STDIO"); binary != "" {
+		cs = openDeliveryPilotStdio(t, ctx, binary, origin, token, client)
+	} else {
+		backend, err := mcpclient.New(origin, token)
+		if err != nil {
+			t.Fatal(err)
+		}
+		server := mcp.NewServer(&mcp.Implementation{Name: "isolated-delivery-test", Version: "0"}, nil)
+		gomarmcp.AddDiscoveryTools(server, backend)
+		gomarmcp.AddDeliveryTools(server, backend)
+		serverWire, clientWire := mcp.NewInMemoryTransports()
+		ss, err := server.Connect(ctx, serverWire, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { _ = ss.Close() })
+		cs, err = client.Connect(ctx, clientWire, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { _ = cs.Close() })
 	}
-	t.Cleanup(func() { _ = cs.Close() })
 	listed, err := cs.ListTools(ctx, &mcp.ListToolsParams{})
 	if err != nil {
 		t.Fatal(err)
