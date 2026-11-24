@@ -1,12 +1,16 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref } from 'vue'
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { ApiError, request } from '../api'
 import ManualTender from './ManualTender.vue'
-import type { Context, Line } from './model'
+import { isTableCheck, type TableCheck } from './tableSave'
+import type { Context } from './model'
 
 const props = defineProps<{
   scope: Context
-  cart: ReadonlyArray<Line>
+  cartReady: boolean
+  cartEmpty: boolean
+  pendingTable?: number
+  save: (table: number) => Promise<TableCheck | undefined>
   online: boolean
   allowed: () => boolean
   formatMoney: (amount: number) => string
@@ -14,28 +18,19 @@ const props = defineProps<{
   allowFinalization: boolean
 }>()
 
-interface Check {
-  id_cuenta: string
-  estado: "sin_cobro" | "retirada" | "con_registros" | "finalizada"
-  mesa: number
-  total_centavos: number
-  items: Line[]
-}
-
 const number = ref('')
-const loaded = ref<Check | null>(null)
+const loaded = ref<TableCheck | null>(null)
 const error = ref('')
 const retiring = ref(false)
 const reason = ref('')
 const busy = ref(false)
 let controller: AbortController | undefined
-let retry: { payload: string; id: string } | undefined
 let active = true
 const table = computed(() => /^[1-9][0-9]{0,3}$/.test(number.value) ? Number(number.value) : 0)
 
 function linkTable() {
   const m = /^#entity=([1-9][0-9]*)&outlet=([1-9][0-9]*)&table=([1-9][0-9]{0,3})$/.exec(window.location.hash)
-  if (!m || !props.allowed() || Number(m[1]) !== props.scope.entity || Number(m[2]) !== props.scope.outlet) return
+  if (busy.value || props.pendingTable || !m || !props.allowed() || Number(m[1]) !== props.scope.entity || Number(m[2]) !== props.scope.outlet) return
   controller?.abort()
   number.value = m[3]
   error.value = ''
@@ -57,33 +52,34 @@ async function act(action: "save" | "read" | "retire") {
   const reviewed = loaded.value
   const motive = reason.value
   if (retire && (!retiring.value || reviewed?.estado !== "sin_cobro" || !motive)) return
-  if (!active || !props.allowed() || !props.online || !table.value || busy.value || save && !props.cart.length) return
-  const picked = table.value
-  const path = `/entities/${props.scope.entity}/outlets/${props.scope.outlet}/pos/table-checks`
-  const data = { mesa: picked, items: props.cart.map(({ producto_id, revision, cantidad }) => ({ producto_id, revision, cantidad })) }
-  const payload = JSON.stringify(data)
-  const next = new AbortController()
-  controller = next
+  if (!active || !props.online || busy.value) return
+  const picked = props.pendingTable ?? table.value
+  if (!picked || (save ? !props.pendingTable && (!props.allowed() || !props.cartReady) : !props.allowed())) return
   busy.value = true
   loaded.value = null
   retiring.value = false
   reason.value = ''
   error.value = ''
+  if (save) {
+    try {
+      const response = await props.save(picked)
+      if (active && response && table.value === picked) loaded.value = response
+    } finally {
+      busy.value = false
+    }
+    return
+  }
+  const path = `/entities/${props.scope.entity}/outlets/${props.scope.outlet}/pos/table-checks/${picked}`
+  const next = new AbortController()
+  controller = next
   try {
-    if (save && retry?.payload !== payload) retry = { payload, id: crypto.randomUUID() }
-    const response = await request<Check>(save ? path : path + '/' + picked + (retire ? '/retire' : ''), {
-      ...(save ? { method: 'POST', body: JSON.stringify({ ...data, id_solicitud: retry?.id }) }
-        : retire ? { method: 'POST', body: JSON.stringify({ id_cuenta: reviewed?.id_cuenta, motivo: motive }) } : {}),
+    const response = await request<TableCheck>(path + (retire ? '/retire' : ''), {
+      ...(retire ? { method: 'POST', body: JSON.stringify({ id_cuenta: reviewed?.id_cuenta, motivo: motive }) } : {}),
       cache: 'no-store', signal: AbortSignal.any([next.signal, AbortSignal.timeout(8000)]),
     })
     if (!active || next.signal.aborted || !props.allowed() || table.value !== picked) return
-    if (response.mesa !== picked || !Number.isSafeInteger(response.total_centavos) || response.total_centavos < 1
-      || typeof response.id_cuenta !== 'string' || !/^[1-9][0-9]{0,18}$/.test(response.id_cuenta) || !['sin_cobro', 'retirada', 'con_registros', 'finalizada'].includes(response.estado)
-      || retire && (response.id_cuenta !== reviewed?.id_cuenta || response.estado !== 'retirada')
-      || !Array.isArray(response.items) || !response.items.length) throw new Error('Respuesta no válida')
-    // A confirmed retirement ends the old save intent. A later deliberate
-    // click can save the same cart for the next use of this table.
-    if ((save || retire) && ['retirada', 'finalizada'].includes(response.estado)) retry = undefined
+    if (!isTableCheck(response, picked)
+      || retire && (response.id_cuenta !== reviewed?.id_cuenta || response.estado !== 'retirada')) throw new Error('Respuesta no válida')
     loaded.value = response
   } catch (err) {
     if (!active || next.signal.aborted || !props.allowed() || table.value !== picked) return
@@ -95,6 +91,13 @@ async function act(action: "save" | "read" | "retire") {
     }
   }
 }
+
+watch(() => props.pendingTable, (pending) => {
+  if (pending) {
+    number.value = String(pending)
+    changeTable()
+  }
+}, { immediate: true })
 
 onMounted(() => {
   linkTable()
@@ -110,15 +113,17 @@ onUnmounted(() => {
 <template>
   <section class="card gomar-feature" aria-labelledby="saved-table-check-heading">
     <h2 id="saved-table-check-heading">Cuentas guardadas de mesa</h2>
-    <p>Guardá los productos de esta pestaña para consultar la cuenta en otra caja del mismo local. No queda registrada como venta ni como pago.</p>
+    <p>Al guardar, los productos pasan del carrito a la cuenta de mesa. Podés consultarla en otra caja del mismo local. No se registra una venta ni un pago.</p>
     <p>Podés retirar una cuenta guardada por error o cancelada. Eso libera la mesa sin cobrar ni facturar.</p>
     <p v-if="!online">Conectate para guardar o consultar cuentas.</p>
     <label>Número de mesa
-      <input v-model="number" type="text" inputmode="numeric" pattern="[1-9][0-9]{0,3}" maxlength="4" :disabled="!online || busy" @input="changeTable" />
+      <input v-model="number" type="text" inputmode="numeric" pattern="[1-9][0-9]{0,3}" maxlength="4" :disabled="!online || busy || !!pendingTable" @input="changeTable" />
     </label>
     <div class="gomar-feature-actions">
-      <button type="button" :disabled="!online || busy || !table" @click="act('read')">Consultar mesa</button>
-      <button type="button" :disabled="!online || busy || !table || !cart.length" @click="act('save')">Guardar cuenta sin cobro</button>
+      <button type="button" :disabled="!online || busy || !!pendingTable || !table" @click="act('read')">Consultar mesa</button>
+      <button type="button" :disabled="!online || busy || (!pendingTable && (!table || !cartReady))" @click="act('save')">
+        {{ pendingTable && !busy ? 'Reintentar guardar la misma cuenta' : 'Guardar cuenta sin cobro' }}
+      </button>
     </div>
     <p v-if="error" role="alert" class="error">{{ error }}</p>
     <div v-if="loaded && online" aria-live="polite">
@@ -134,9 +139,9 @@ onUnmounted(() => {
         v-if="allowTender && (loaded.estado === 'sin_cobro' || loaded.estado === 'con_registros')"
         :key="loaded.id_cuenta" :scope="scope" :table="loaded.mesa" :check="loaded.id_cuenta"
         :total="loaded.total_centavos" :allowed="allowed" :format-money="formatMoney"
-        :allow-finalization="allowFinalization" :cart-empty="cart.length === 0"
+        :allow-finalization="allowFinalization" :cart-empty="cartEmpty"
         @has-history="loaded.estado = 'con_registros'"
-        @finalized="loaded.estado = 'finalizada'; retry = undefined"
+        @finalized="loaded.estado = 'finalizada'"
       />
       <p v-if="loaded.estado === 'finalizada'" role="status">La mesa quedó libre. Esta acción no emite una factura.</p>
       <p v-if="loaded.estado === 'con_registros'">No se puede retirar una cuenta con registros de pago.</p>

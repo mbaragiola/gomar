@@ -8,7 +8,7 @@ function cookie(name: string): string {
   return value ? decodeURIComponent(value.split('=').slice(1).join('=')) : ''
 }
 
-export async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
+export async function request<T>(path: string, options: RequestInit = {}, captureError?: (body: unknown) => void): Promise<T> {
   const headers = new Headers(options.headers)
   if (!(options.body instanceof FormData) && options.body && !headers.has('Content-Type')) {
     headers.set('Content-Type', 'application/json')
@@ -20,8 +20,9 @@ export async function request<T>(path: string, options: RequestInit = {}): Promi
   if (!response.ok) {
     let message = 'No se pudo completar la operación.'
     try {
-      const payload = await response.json() as { detail?: string }
-      message = payload.detail ?? message
+      const payload = await response.json() as { detail?: unknown } | null
+      captureError?.(payload)
+      if (typeof payload?.detail === 'string') message = payload.detail
     } catch {
       // Se conserva el mensaje en español para respuestas no JSON.
     }

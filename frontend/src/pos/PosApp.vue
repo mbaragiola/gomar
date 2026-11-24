@@ -8,7 +8,9 @@ import { localDateTime, money } from '../format'
 import { maxLines, maxQuantity, normalizedProducts, positive, sameContext, saleRequest, grantLifetime, quoteCart,
   isPaymentMethod, matchesPaymentMethod, paymentLabels, productByBarcode,
   type Context, type Grant, type PaymentMethod, type Product, type Sale } from './model'
-import { arm, broadcastPOSLock, disarm, enqueue, forgetLease, localLease, lockOfflinePOS, posLockEvent, readGrant, recordOutcome, rememberLease, salesFor } from './storage'
+import { acknowledgeTableRecovery, arm, beginTableSave, broadcastPOSLock, disarm, enqueue, finishTableSave, forgetLease,
+  localLease, lockOfflinePOS, posLockEvent, readGrant, readTableState, recordOutcome, rememberLease, salesFor } from './storage'
+import { matchesTableSave, matchesTableSaveRejection, tableSaveRequest, type TableCheck, type TableSave } from './tableSave'
 
 interface Entity { id: number; nombre: string; rol: string; capacidades: string[] }
 interface Outlet { id: number; nombre: string }
@@ -23,6 +25,13 @@ const verifying = ref(false)
 const changing = ref(false)
 const syncing = ref(false)
 const saving = ref(false)
+const tableSaveWork = ref<symbol>()
+const savingTable = computed(() => !!tableSaveWork.value)
+const tableSave = ref<TableSave>()
+const tableRecovery = ref<TableSave>()
+let basketSaveID: string | undefined
+const tableCartLocked = computed(() => savingTable.value || !!tableSave.value)
+const cartControlsLocked = computed(() => saving.value || verifying.value || needsConfirm.value || tableCartLocked.value)
 const auth = ref(false)
 const entities = ref<Entity[]>([])
 const outlets = ref<Outlet[]>([])
@@ -50,6 +59,11 @@ const basketLines = computed(() => [...basket.value.entries()].flatMap(([id, qua
   const row = grant.value?.catalog.find((item) => item.id === id)
   return row ? [{ row, quantity }] : []
 }))
+const pendingLines = computed(() => tableSave.value?.items.map((item) => ({
+  id: item.producto_id,
+  quantity: item.cantidad,
+  label: item.nombre,
+})))
 const total = computed(() => basketLines.value.reduce((sum, { row, quantity }) => sum + row.precio_centavos * quantity, 0))
 const pending = computed(() => recorded.value.filter((sale) => sale.status === 'pending').length)
 const fmt = (amount: number) => money(`${Math.trunc(amount / 100)}.${String(amount % 100).padStart(2, '0')}`, 'ARS')
@@ -79,13 +93,41 @@ function clearView() {
   epoch++
   grant.value = null
   recorded.value = []
+  tableSaveWork.value = undefined
+  tableSave.value = undefined
+  tableRecovery.value = undefined
+  resetCart()
+  notice.value = ''
+}
+
+function resetCart() {
+  basketSaveID = undefined
   basket.value = new Map()
   barcode.value = ''
   scanError.value = ''
   payment.value = ''
   needsConfirm.value = false
   prebillOpen.value = false
-  notice.value = ''
+}
+
+function restoreTableSave(pending: TableSave | undefined) {
+  if (pending?.id === tableSave.value?.id) return
+  // A disappeared hold in another tab is not permission to sell our old
+  // cart. A recovered hold is displayed apart from the new local cart.
+  if (basketSaveID && tableSave.value?.id === basketSaveID) resetCart()
+  tableSave.value = pending
+}
+
+function recoverableQuantities(current: Grant, intent: TableSave) {
+  if (basket.value.size) return
+  const quantities = new Map(intent.items.map((item) => [item.producto_id, item.cantidad]))
+  try {
+    const quote = quoteCart(current, quantities, Date.now())
+    if (quote.total !== intent.total || quote.lines.some((line, index) => line.revision !== intent.items[index].revision)) return
+    return quantities
+  } catch {
+    return
+  }
 }
 
 function tell(errorValue: unknown, fallback: string) {
@@ -99,6 +141,10 @@ async function locked(message = '', broadcast = false) {
   clearView()
   error.value = message
   try { await disarm(lease) } catch { /* UI remains locked; the local lease is gone. */ }
+}
+
+function endShift(message: string, broadcast = false) {
+  void locked(message, broadcast).then(refresh)
 }
 
 async function scopedCatalog(s: Pick<Context, 'entity' | 'outlet'>): Promise<Catalog> {
@@ -129,15 +175,17 @@ async function openCached(current: Grant | undefined, token: number) {
   entities.value = []
   outlets.value = []
   if (!current) return
-  const sales = await salesFor(current)
+  const [sales, tableState] = await Promise.all([salesFor(current), readTableState(current)])
   if (token === epoch && localLease() === current.lease && Date.now() < current.expires) {
+    restoreTableSave(tableState.pending)
+    tableRecovery.value = tableState.recovery
     grant.value = current
     recorded.value = sales
   }
 }
 
 async function refresh() {
-  if (verifying.value || changing.value || saving.value) return
+  if (verifying.value || changing.value || saving.value || savingTable.value) return
   const token = epoch
   verifying.value = true
   navigatorOnline.value = navigator.onLine
@@ -174,8 +222,10 @@ async function refresh() {
         await locked('Cambió la cuenta. Las ventas de la otra cuenta se conservan sin sincronizar.')
         return
       }
-      const sales = await salesFor(current)
+      const [sales, tableState] = await Promise.all([salesFor(current), readTableState(current)])
       if (token !== epoch || localLease() !== current.lease) return
+      restoreTableSave(tableState.pending)
+      tableRecovery.value = tableState.recovery
       grant.value = { ...current, tableChecks: catalog.cuentas_mesa === true, manualTender: catalog.registro_medios_pago === true, tableFinalization: catalog.finalizacion_mesa === true }
       recorded.value = sales
     } else {
@@ -221,8 +271,10 @@ async function enable() {
     }
     rememberLease(next.lease)
     broadcastPOSLock()
-    const sales = await salesFor(next)
-    if (token !== epoch) return
+    const [sales, tableState] = await Promise.all([salesFor(next), readTableState(next)])
+    if (token !== epoch || localLease() !== next.lease) return
+    restoreTableSave(tableState.pending)
+    tableRecovery.value = tableState.recovery
     grant.value = next
     recorded.value = sales
     notice.value = 'Caja habilitada en esta pestaña por hasta 8 horas.'
@@ -235,7 +287,7 @@ async function enable() {
 }
 
 function quantity(id: number, step: number) {
-  if (!grant.value || saving.value || needsConfirm.value) return
+  if (!grant.value || cartControlsLocked.value || localLease() !== grant.value.lease) return
   const next = (basket.value.get(id) ?? 0) + step
   if (next > maxQuantity || (next > 0 && !basket.value.has(id) && basket.value.size >= maxLines)) return
   prebillOpen.value = false
@@ -249,9 +301,96 @@ function currentRegisterOnline() {
     && localLease() === current.lease && Date.now() < current.expires)
 }
 
+function canInspectTable() {
+  return currentRegisterOnline() && !tableCartLocked.value
+}
+
+async function acknowledgeRecovery() {
+  const scope = grant.value
+  const recovery = tableRecovery.value
+  if (!scope || !recovery || verifying.value || localLease() !== scope.lease || Date.now() >= scope.expires) return
+  const token = epoch
+  try {
+    if (await acknowledgeTableRecovery(scope, recovery.id) && token === epoch && tableRecovery.value?.id === recovery.id) {
+      tableRecovery.value = undefined
+    }
+  } catch {
+    if (token === epoch) error.value = 'No se pudo marcar la lista como revisada. Volvé a intentar.'
+  }
+}
+
+async function saveTable(table: number): Promise<TableCheck | undefined> {
+  const current = grant.value
+  const replay = tableSave.value
+  if (!current || !currentRegisterOnline() || savingTable.value || (replay ? replay.table !== table : !prebill.value || !!tableRecovery.value)) return
+  const token = epoch
+  const live = () => token === epoch && grant.value?.lease === current.lease && localLease() === current.lease && Date.now() < current.expires
+  const quantities = new Map(basket.value)
+  const work = Symbol()
+  tableSaveWork.value = work
+  prebillOpen.value = false
+  notice.value = ''
+  error.value = ''
+  try {
+    const stored = replay ? await readTableState(current) : undefined
+    const intent = replay ? stored?.pending : await beginTableSave(current, quantities, table, crypto.randomUUID(), Date.now())
+    if (!live()) return
+    if (!intent || (replay && intent.id !== replay.id)) {
+      restoreTableSave(intent)
+      tableRecovery.value = stored?.recovery
+      return
+    }
+    tableSave.value = intent
+    if (!replay) basketSaveID = intent.id
+    if (!navigator.onLine) return
+    let confirmed: TableCheck
+    let rejection: unknown
+    try {
+      const response = await request<TableCheck>(`${endpoint(current)}/table-checks`, {
+        method: 'POST', body: JSON.stringify(tableSaveRequest(intent)), cache: 'no-store', signal: AbortSignal.timeout(8000),
+      }, (body) => { rejection = body })
+      if (!matchesTableSave(intent, response)) throw new Error('Respuesta no válida')
+      confirmed = response
+    } catch (err) {
+      // Only a committed refusal for this exact intent rules out a delayed
+      // copy of the request. HTTP status or a missing table alone don't.
+      if (live() && err instanceof ApiError && err.status === 409 && matchesTableSaveRejection(intent, rejection)) {
+        const keepCart = basketSaveID === intent.id
+        const recovered = keepCart ? undefined : recoverableQuantities(current, intent)
+        const keepSummary = !keepCart && !recovered
+        await finishTableSave(current, intent, keepSummary)
+        if (live()) {
+          if (keepCart) basketSaveID = undefined
+          if (recovered) basket.value = recovered
+          if (keepSummary) tableRecovery.value = intent
+          tableSave.value = undefined
+          error.value = err.message + (keepSummary ? ' No se restauró el carrito anterior. Revisá la lista de productos.' : '')
+        }
+      }
+      return
+    }
+    if (!live()) return
+    // The snapshot is no longer sellable, even if somebody else already
+    // retired or finalized it. Resolve before allowing a different sale.
+    await finishTableSave(current, intent)
+    if (!live()) return
+    if (basketSaveID === intent.id) resetCart()
+    tableSave.value = undefined
+    notice.value = 'Los productos pasaron del carrito a la cuenta de mesa.'
+    return confirmed
+  } catch {
+    if (live() && !tableSave.value) error.value = 'No se pudo preparar la cuenta de mesa. Revisá la caja y volvé a intentar.'
+  } finally {
+    if (tableSaveWork.value === work) {
+      tableSaveWork.value = undefined
+      if (token === epoch && navigator.onLine && !online.value) void refresh()
+    }
+  }
+}
+
 function canPrintPrebill() {
   const current = grant.value
-  return !!(prebillOpen.value && prebill.value && current && !saving.value && !verifying.value && !needsConfirm.value
+  return !!(prebillOpen.value && prebill.value && current && !cartControlsLocked.value
     && localLease() === current.lease && Date.now() < current.expires)
 }
 
@@ -261,6 +400,7 @@ function beforePrint() {
 }
 
 async function togglePrebill() {
+  if (cartControlsLocked.value) return
   prebillOpen.value = !prebillOpen.value
   await nextTick()
   if (prebillOpen.value) prebillHeading.value?.focus()
@@ -272,15 +412,17 @@ function printPrebill() {
 }
 
 function confirmSale() {
+  const current = grant.value
+  if (cartControlsLocked.value || !current || localLease() !== current.lease || !basketLines.value.length || !isPaymentMethod(payment.value)) return
   prebillOpen.value = false
   needsConfirm.value = true
 }
 
 function scanBarcode() {
   const current = grant.value
-  if (!current || saving.value || verifying.value || needsConfirm.value || localLease() !== current.lease) return
+  if (!current || cartControlsLocked.value || localLease() !== current.lease) return
   if (Date.now() >= current.expires) {
-    void locked('Venció el turno local. Las ventas guardadas se conservan.')
+    endShift('Venció el turno local. Las ventas guardadas se conservan.')
     return
   }
   const code = barcode.value
@@ -299,7 +441,7 @@ function scanBarcode() {
 async function complete() {
   const current = grant.value
   const method = payment.value
-  if (!current || !isPaymentMethod(method) || !needsConfirm.value || saving.value || verifying.value || localLease() !== current.lease) return
+  if (!current || !isPaymentMethod(method) || !needsConfirm.value || saving.value || verifying.value || tableCartLocked.value || localLease() !== current.lease) return
   saving.value = true
   error.value = ''
   notice.value = ''
@@ -308,9 +450,7 @@ async function complete() {
     const sale = await enqueue(current, new Map(basket.value), crypto.randomUUID(), Date.now(), method)
     if (token !== epoch) return
     recorded.value = [...recorded.value, sale]
-    basket.value = new Map()
-    payment.value = ''
-    needsConfirm.value = false
+    resetCart()
     notice.value = 'Venta guardada en este dispositivo. No es un comprobante fiscal.'
   } catch (err) {
     tell(err, 'No se guardó la venta. Revisá la caja y volvé a intentar.')
@@ -398,7 +538,7 @@ onMounted(async () => {
   window.addEventListener('storage', otherTab)
   document.addEventListener('visibilitychange', visibility)
   refreshTimer = setInterval(() => {
-    if (grant.value && Date.now() >= grant.value.expires) void locked('Venció el turno local. Las ventas guardadas se conservan.')
+    if (grant.value && Date.now() >= grant.value.expires) endShift('Venció el turno local. Las ventas guardadas se conservan.')
     else if (grant.value && !online.value && navigator.onLine && document.visibilityState === 'visible') void refresh()
   }, 15000)
   void refresh()
@@ -413,6 +553,7 @@ onMounted(async () => {
 })
 
 onUnmounted(() => {
+  epoch++
   window.removeEventListener('beforeprint', beforePrint)
   window.removeEventListener('online', connection)
   window.removeEventListener('offline', connection)
@@ -460,48 +601,57 @@ onUnmounted(() => {
     </section>
     <template v-else>
       <section class="card gomar-feature">
-        <div class="section-heading"><h2>{{ grant.label }}</h2><button type="button" @click="locked('Caja bloqueada.', true)">Bloquear caja</button></div>
+        <div class="section-heading"><h2>{{ grant.label }}</h2><button type="button" @click="endShift('Caja bloqueada.', true)">Bloquear caja</button></div>
         <p>{{ pending }} ventas pendientes · Catálogo guardado al habilitar la caja.</p>
         <p v-if="verifying" role="status">Verificando la cuenta…</p>
         <form class="gomar-feature-actions" aria-label="Agregar producto por código" @submit.prevent="scanBarcode">
           <label>Código de barras
-            <input v-model="barcode" type="text" autocomplete="off" autocapitalize="off" spellcheck="false" :disabled="saving || verifying || needsConfirm" />
+            <input v-model="barcode" type="text" autocomplete="off" autocapitalize="off" spellcheck="false" :disabled="cartControlsLocked" />
           </label>
-          <button type="submit" :disabled="!barcode || saving || verifying || needsConfirm">Agregar por código</button>
+          <button type="submit" :disabled="!barcode || cartControlsLocked">Agregar por código</button>
         </form>
         <p v-if="scanError" class="error" role="alert">{{ scanError }}</p>
         <ul class="gomar-feature-list" aria-label="Catálogo">
           <li v-for="item in grant.catalog" :key="item.id" class="pos-catalog-row">
             <span>{{ item.nombre }} <small>{{ fmt(item.precio_centavos) }}</small></span>
-            <button type="button" :aria-label="`Agregar ${item.nombre}`" :disabled="saving || verifying || needsConfirm" @click="quantity(item.id, 1)">Agregar</button>
+            <button type="button" :aria-label="`Agregar ${item.nombre}`" :disabled="cartControlsLocked" @click="quantity(item.id, 1)">Agregar</button>
           </li>
         </ul>
         <p v-if="!grant.catalog.length">No hay productos activos en el catálogo de este local.</p>
       </section>
       <section class="card gomar-feature">
         <h2>Venta actual</h2>
-        <p v-if="!basketLines.length">Agregá productos para empezar.</p>
+        <p v-if="savingTable" role="status">Guardando la cuenta de mesa…</p>
+        <p v-else-if="tableSave" class="error" role="alert">
+          No se pudo verificar la cuenta de la mesa {{ tableSave.table }}.
+          {{ grant.tableChecks ? 'Reintentá el mismo guardado cuando haya conexión.' : 'Esta caja ya no puede guardar cuentas de mesa.' }}
+          No vuelvas a cargar estos productos sin revisar la mesa.
+        </p>
+        <ul v-if="pendingLines" class="gomar-feature-list" aria-label="Productos del guardado pendiente">
+          <li v-for="line in pendingLines" :key="line.id">{{ line.label }} × {{ line.quantity }}</li>
+        </ul>
+        <p v-else-if="!basketLines.length">Agregá productos para empezar.</p>
         <ul v-else class="gomar-feature-list">
           <li v-for="{ row, quantity: count } in basketLines" :key="row.id" class="pos-catalog-row">
             <span>{{ row.nombre }} × {{ count }}</span>
-            <button type="button" :aria-label="`Quitar ${row.nombre}`" :disabled="saving || verifying || needsConfirm" @click="quantity(row.id, -1)">Quitar uno</button>
+            <button type="button" :aria-label="`Quitar ${row.nombre}`" :disabled="cartControlsLocked" @click="quantity(row.id, -1)">Quitar uno</button>
           </li>
         </ul>
-        <strong>Total: {{ fmt(total) }}</strong>
+        <strong>Total: {{ fmt(tableSave?.total ?? total) }}</strong>
         <button
-          v-if="!needsConfirm" ref="prebillToggle" type="button" :disabled="saving || verifying || !prebill"
+          v-if="!needsConfirm" ref="prebillToggle" type="button" :disabled="cartControlsLocked || !prebill"
           :aria-expanded="prebillOpen" @click="togglePrebill"
         >{{ prebillOpen ? 'Cerrar cuenta de mesa' : 'Ver cuenta de mesa' }}</button>
         <label>Medio de pago
-          <select v-model="payment" :disabled="saving || verifying || needsConfirm">
+          <select v-model="payment" :disabled="cartControlsLocked">
             <option value="" disabled>Elegí un medio de pago</option>
             <option v-for="(label, method) in paymentLabels" :key="method" :value="method">{{ label }}</option>
           </select>
         </label>
-        <button v-if="!needsConfirm" class="primary" type="button" :disabled="saving || verifying || !basketLines.length || !payment" @click="confirmSale">Registrar venta</button>
+        <button v-if="!needsConfirm" class="primary" type="button" :disabled="cartControlsLocked || !basketLines.length || !payment" @click="confirmSale">Registrar venta</button>
         <div v-else class="gomar-feature-actions">
           <span v-if="payment">Medio de pago elegido: {{ paymentLabels[payment] }}.</span>
-          <button class="primary" type="button" :disabled="saving || verifying" @click="complete">Confirmar y guardar venta</button>
+          <button class="primary" type="button" :disabled="saving || verifying || tableCartLocked" @click="complete">Confirmar y guardar venta</button>
           <button type="button" :disabled="saving" @click="needsConfirm = false">Volver sin guardar</button>
         </div>
         <small>Cobrá por fuera de Gomar. Este registro no verifica ni procesa pagos ni emite un comprobante fiscal.</small>
@@ -521,14 +671,23 @@ onUnmounted(() => {
         </div>
         <div class="pos-prebill-controls">
           <p>Imprimir esta cuenta no registra una venta ni un pago.</p>
-          <button type="button" :disabled="saving || verifying" @click="printPrebill">Imprimir cuenta de mesa</button>
+          <button type="button" :disabled="cartControlsLocked" @click="printPrebill">Imprimir cuenta de mesa</button>
           <button type="button" @click="togglePrebill">Volver a la venta</button>
         </div>
       </section>
       <SavedTableCheck
-        v-if="grant.tableChecks && !needsConfirm && !saving" :key="grant.lease" :scope="grant" :cart="prebill?.lines ?? []"
-        :online="online" :allowed="currentRegisterOnline" :format-money="fmt" :allow-tender="grant.manualTender === true" :allow-finalization="grant.tableFinalization === true"
+        v-if="grant.tableChecks && !needsConfirm && !saving" :key="grant.lease" :scope="grant" :cart-ready="!!prebill && !tableRecovery" :cart-empty="!tableCartLocked && basket.size === 0"
+        :online="online" :allowed="canInspectTable" :save="saveTable" :pending-table="tableSave?.table"
+        :format-money="fmt" :allow-tender="grant.manualTender === true" :allow-finalization="grant.tableFinalization === true"
       />
+      <section v-if="tableRecovery" class="card gomar-feature" aria-labelledby="table-recovery-heading">
+        <h2 id="table-recovery-heading">Productos de la mesa {{ tableRecovery.table }} que no se guardaron</h2>
+        <p>Esta lista no está en el carrito. Revisá los productos y los precios vigentes antes de volver a cargarlos. Marcá la lista como revisada antes de guardar otra cuenta.</p>
+        <ul class="gomar-feature-list" aria-label="Productos del carrito anterior">
+          <li v-for="item in tableRecovery.items" :key="item.producto_id">{{ item.nombre }} × {{ item.cantidad }}</li>
+        </ul>
+        <button type="button" :disabled="verifying" @click="acknowledgeRecovery">Marcar lista como revisada</button>
+      </section>
       <section class="card gomar-feature">
         <div class="section-heading"><h2>Ventas de esta caja</h2>
           <button type="button" :disabled="!online || syncing || verifying || !pending" @click="sync">Sincronizar pendientes</button>

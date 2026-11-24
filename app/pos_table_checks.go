@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -19,11 +20,32 @@ var (
 )
 
 type posTableCheck struct {
-	ID    string        `json:"id_cuenta"`
-	State string        `json:"estado"`
-	Table int64         `json:"mesa"`
-	Total int64         `json:"total_centavos"`
-	Items []posSaleItem `json:"items"`
+	ID        string        `json:"id_cuenta"`
+	RequestID string        `json:"id_solicitud,omitempty"`
+	State     string        `json:"estado"`
+	Table     int64         `json:"mesa"`
+	Total     int64         `json:"total_centavos"`
+	Items     []posSaleItem `json:"items"`
+}
+
+const (
+	tableSaveOccupied = "mesa_ocupada"
+	tableSaveCatalog  = "catalogo_cambio"
+)
+
+type posTableSaveRejection struct {
+	RequestID string `json:"id_solicitud"`
+	Table     int64  `json:"mesa"`
+	Reason    string `json:"rechazo"`
+	Detail    string `json:"detail"`
+}
+
+func rejectedTableSave(intent tablecheck.Intent, reason string) (int, any, error) {
+	detail := posTableCheckOccupied.detail
+	if reason == tableSaveCatalog {
+		detail = posChangedCatalog.detail
+	}
+	return http.StatusConflict, posTableSaveRejection{intent.ID(), intent.Table(), reason, detail}, nil
 }
 
 func posSellingRole(role string) bool {
@@ -105,12 +127,24 @@ func (a *app) savePOSTableCheck(r *http.Request, tx *sql.Tx, m entityMembership,
 		return 0, nil, badInput
 	}
 	var input struct {
-		RequestID string    `json:"id_solicitud"`
-		Table     int64     `json:"mesa"`
-		Items     []posLine `json:"items"`
+		RequestID string          `json:"id_solicitud"`
+		Actor     json.RawMessage `json:"actor_id"`
+		Table     int64           `json:"mesa"`
+		Items     []posLine       `json:"items"`
 	}
-	if err := decodePayables(raw, &input, "id_solicitud", "mesa", "items"); err != nil {
+	if err := decodePayables(raw, &input, "id_solicitud", "actor_id", "mesa", "items"); err != nil {
 		return 0, nil, err
+	}
+	// New registers bind retries to the actor who owns the local lease.
+	// Older cached POS shells did not send an actor.
+	if input.Actor != nil {
+		var actor int64
+		if err := json.Unmarshal(input.Actor, &actor); err != nil || actor < 1 {
+			return 0, nil, badInput
+		}
+		if actor != m.userID {
+			return 0, nil, problem{403, "La cuenta de mesa está asociada a otra sesión de usuario."}
+		}
 	}
 	items := make([]tablecheck.Item, 0, len(input.Items))
 	for _, line := range input.Items {
@@ -131,10 +165,40 @@ func (a *app) savePOSTableCheck(r *http.Request, tx *sql.Tx, m entityMembership,
 			return 0, nil, posConflict
 		}
 		result, reread := loadPOSTableCheck(ctx, tx, outlet, priorNumber, priorID)
+		result.RequestID = i.ID()
 		return http.StatusOK, result, reread
 	}
 	if !errors.Is(err, sql.ErrNoRows) {
 		return 0, nil, err
+	}
+
+	// The outlet transaction lock covers both this lookup and the insert
+	// below. A refusal settles this exact UUID before a delayed POST can
+	// run, even if the table or catalog later changes.
+	var refused string
+	err = tx.QueryRowContext(ctx, `SELECT table_number,request_fingerprint,reason FROM pos_table_check_save_rejections
+ WHERE outlet_id=$1 AND actor_id=$2 AND request_id=$3`, outlet, m.userID, i.ID()).Scan(&priorNumber, &priorFP, &refused)
+	if err == nil {
+		if priorNumber != i.Table() || !bytes.Equal(priorFP, fp[:]) {
+			return 0, nil, posConflict
+		}
+		return rejectedTableSave(i, refused)
+	}
+	if !errors.Is(err, sql.ErrNoRows) {
+		return 0, nil, err
+	}
+	reject := func(reason string, legacy problem) (int, any, error) {
+		if input.Actor == nil {
+			return 0, nil, legacy
+		}
+		if _, err := tx.ExecContext(ctx, `INSERT INTO pos_table_check_save_rejections
+ (outlet_id,actor_id,request_id,request_fingerprint,table_number,reason) VALUES($1,$2,$3,$4,$5,$6)`,
+			outlet, m.userID, i.ID(), fp[:], i.Table(), reason); err != nil {
+			return 0, nil, err
+		}
+		// scopedRequest commits whenever the handler has no Go error,
+		// including this typed 409. A commit failure sends no receipt.
+		return rejectedTableSave(i, reason)
 	}
 
 	var exists bool
@@ -143,7 +207,7 @@ func (a *app) savePOSTableCheck(r *http.Request, tx *sql.Tx, m entityMembership,
 		return 0, nil, err
 	}
 	if exists {
-		return 0, nil, posTableCheckOccupied
+		return reject(tableSaveOccupied, posTableCheckOccupied)
 	}
 	ids := make([]int64, 0, len(items))
 	for _, line := range i.Items() {
@@ -155,7 +219,7 @@ func (a *app) savePOSTableCheck(r *http.Request, tx *sql.Tx, m entityMembership,
 	}
 	lines, total, err := tablecheck.Snapshot(i, outlet, catalog)
 	if err != nil {
-		return 0, nil, posChangedCatalog
+		return reject(tableSaveCatalog, posChangedCatalog)
 	}
 	var id int64
 	err = tx.QueryRowContext(ctx, `INSERT INTO pos_table_checks(outlet_id,table_number,actor_id,request_id,request_fingerprint,total_minor)
@@ -168,7 +232,7 @@ func (a *app) savePOSTableCheck(r *http.Request, tx *sql.Tx, m entityMembership,
  VALUES($1,$2,$3)`, id, outlet, i.Table()); err != nil {
 		return 0, nil, err
 	}
-	result := posTableCheck{ID: strconv.FormatInt(id, 10), State: "sin_cobro", Table: i.Table(), Total: total, Items: make([]posSaleItem, 0, len(lines))}
+	result := posTableCheck{ID: strconv.FormatInt(id, 10), RequestID: i.ID(), State: "sin_cobro", Table: i.Table(), Total: total, Items: make([]posSaleItem, 0, len(lines))}
 	for _, line := range lines {
 		if _, err := tx.ExecContext(ctx, `INSERT INTO pos_table_check_items(check_id,outlet_id,product_id,revision,quantity)
  VALUES($1,$2,$3,$4,$5)`, id, outlet, line.ProductID, line.Revision, line.Quantity); err != nil {

@@ -42,12 +42,18 @@ def check_saved_table(browser, login, origin, psql, issue, connection):
     panel = desktop.get_by_role("region", name="Cuentas guardadas de mesa")
     expect(panel.get_by_role("button", name="Guardar cuenta sin cobro")).to_be_disabled()
     desktop.get_by_role("button", name="Agregar QA Pan de campo").click()
+    desktop.get_by_label("Medio de pago").select_option("efectivo")
+    expect(desktop.get_by_role("button", name="Registrar venta", exact=True)).to_be_enabled()
     panel.get_by_label("Número de mesa").fill("7")
     panel.get_by_role("button", name="Guardar cuenta sin cobro").click()
     expect(panel.get_by_role("heading", name="Cuenta guardada: mesa 7")).to_be_visible()
     expect(panel.get_by_text("1 × QA Pan de campo", exact=False)).to_be_visible()
+    expect(desktop.get_by_text("Agregá productos para empezar.")).to_be_visible()
+    expect(desktop.get_by_label("Medio de pago")).to_have_value("")
+    expect(desktop.get_by_role("button", name="Registrar venta", exact=True)).to_be_disabled()
+    expect(panel.get_by_role("button", name="Guardar cuenta sin cobro")).to_be_disabled()
     assert short_snapshot(psql) == unchanged
-    stale_panel = panel
+    original_panel = panel
 
     with connection(owner_key) as call:
         compatible = call(tool, target)
@@ -70,26 +76,40 @@ def check_saved_table(browser, login, origin, psql, issue, connection):
     expect(panel.get_by_role("heading", name="Cuenta guardada: mesa 7")).to_be_visible()
     expect(panel.get_by_text("1 × QA Pan de campo", exact=False)).to_be_visible()
     assert accesses == ["GET"], accesses
+
+    # A definitive rejection cannot consume this separate local cart.
+    linked.get_by_role("button", name="Agregar QA Pan de campo").click()
+    linked.get_by_label("Medio de pago").select_option("efectivo")
+    panel.get_by_role("button", name="Guardar cuenta sin cobro").click()
+    expect(linked.get_by_role("alert")).to_contain_text("Esta mesa ya tiene una cuenta guardada.")
+    expect(linked.get_by_text("QA Pan de campo × 1", exact=True)).to_be_visible()
+    expect(linked.get_by_label("Medio de pago")).to_have_value("efectivo")
+    expect(linked.get_by_role("button", name="Registrar venta", exact=True)).to_be_enabled()
+    assert short_snapshot(psql) == unchanged
+    linked.get_by_role("button", name="Quitar QA Pan de campo").click()
+    panel.get_by_role("button", name="Consultar mesa").click()
+    expect(panel.get_by_role("heading", name="Cuenta guardada: mesa 7")).to_be_visible()
+    assert accesses == ["GET", "POST", "GET"], accesses
     panel.get_by_role("button", name="Retirar cuenta sin cobro").click()
     expect(panel.get_by_role("button", name="Confirmar retiro")).to_be_disabled()
     panel.get_by_label("Motivo del retiro").select_option("cancelled")
     panel.get_by_role("button", name="Volver").click()
-    assert accesses == ["GET"], accesses
+    assert accesses == ["GET", "POST", "GET"], accesses
     panel.get_by_role("button", name="Retirar cuenta sin cobro").click()
     panel.get_by_label("Motivo del retiro").select_option("cancelled")
     panel.get_by_role("button", name="Confirmar retiro").click()
     expect(panel.get_by_role("heading", name="Cuenta retirada: mesa 7")).to_be_visible()
-    assert accesses == ["GET", "POST"], accesses
+    assert accesses == ["GET", "POST", "GET", "POST"], accesses
     assert short_snapshot(psql) == "|".join(["1", "1", "0", "1", *before[4:]])
     with connection(owner_key) as call:
         call(tool, target, denied=True)
     linked.context.close()
 
-    stale_panel.get_by_role("button", name="Guardar cuenta sin cobro").click()
-    expect(stale_panel.get_by_role("heading", name="Cuenta retirada: mesa 7")).to_be_visible()
+    expect(original_panel.get_by_role("button", name="Guardar cuenta sin cobro")).to_be_disabled()
     assert short_snapshot(psql) == "|".join(["1", "1", "0", "1", *before[4:]])
-    stale_panel.get_by_role("button", name="Guardar cuenta sin cobro").click()
-    expect(stale_panel.get_by_role("heading", name="Cuenta guardada: mesa 7")).to_be_visible()
+    desktop.get_by_role("button", name="Agregar QA Pan de campo").click()
+    original_panel.get_by_role("button", name="Guardar cuenta sin cobro").click()
+    expect(original_panel.get_by_role("heading", name="Cuenta guardada: mesa 7")).to_be_visible()
     assert short_snapshot(psql) == "|".join(["2", "2", "1", "1", *before[4:]])
     with connection(owner_key) as call:
         assert call(tool, target) == compatible

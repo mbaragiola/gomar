@@ -1,6 +1,9 @@
-import { draft, sameContext, scopeKey, type Context, type Grant, type PaymentMethod, type Sale } from './model'
+import { draft, quoteCart, sameContext, scopeKey, type Context, type Grant, type PaymentMethod, type Sale } from './model'
+import type { TableSave } from './tableSave'
 
 const dbName = 'gomar-pos-v1'
+const tableSaveKey = (context: Context) => `table-save:${scopeKey(context)}`
+const tableRecoveryKey = (context: Context) => `table-save-recovery:${scopeKey(context)}`
 const leaseName = 'gomar-pos-active-lease'
 export const posLockEvent = 'gomar-pos-lock'
 
@@ -89,7 +92,67 @@ export function arm(grant: Grant) {
 export function disarm(lease: string) {
   if (!lease) return Promise.resolve()
   return transact(['meta'], 'readwrite', async (tx) => {
-    if ((await armed(tx))?.lease === lease) await result(tx.objectStore('meta').delete('active'))
+    if ((await armed(tx))?.lease !== lease) return
+    await result(tx.objectStore('meta').delete('active'))
+  })
+}
+
+function tableSave(tx: IDBTransaction, context: Context): Promise<TableSave | undefined> {
+  return result(tx.objectStore('meta').get(tableSaveKey(context)))
+}
+
+function tableRecovery(tx: IDBTransaction, context: Context): Promise<TableSave | undefined> {
+  return result(tx.objectStore('meta').get(tableRecoveryKey(context)))
+}
+
+function sameRegister(grant: Context & { lease: string }, current: Grant | undefined) {
+  return current?.lease === grant.lease && sameContext(current, grant)
+}
+
+export function readTableState(grant: Grant) {
+  return transact(['meta'], 'readonly', async (tx) => {
+    if (!sameRegister(grant, await armed(tx))) return {}
+    const [pending, recovery] = await Promise.all([tableSave(tx, grant), tableRecovery(tx, grant)])
+    return {
+      pending: pending && sameContext(grant, pending) ? pending : undefined,
+      recovery: recovery && sameContext(grant, recovery) ? recovery : undefined,
+    }
+  })
+}
+
+export function beginTableSave(grant: Grant, quantities: ReadonlyMap<number, number>, table: number, id: string, now: number) {
+  return transact(['meta'], 'readwrite', async (tx) => {
+    const current = await armed(tx)
+    if (!current || !sameRegister(grant, current)) throw new Error('La caja se bloqueó.')
+    if (await tableSave(tx, grant) || await tableRecovery(tx, grant)) throw new Error('Hay una cuenta pendiente de revisión.')
+    const { actor, entity, outlet } = current
+    const { lines, total } = quoteCart(current, quantities, now)
+    const items = lines.map(({ producto_id, revision, cantidad, nombre }) => ({ producto_id, revision, cantidad, nombre }))
+    const pending = { actor, entity, outlet, id, table, items, total }
+    await result(tx.objectStore('meta').add(pending, tableSaveKey(grant)))
+    return pending
+  })
+}
+
+export function finishTableSave(grant: Grant, intent: TableSave, retainForReview = false) {
+  return transact(['meta'], 'readwrite', async (tx) => {
+    const stored = await tableSave(tx, grant)
+    if (!sameContext(grant, intent) || !sameRegister(grant, await armed(tx)) || stored?.id !== intent.id) {
+      throw new Error('La cuenta o la caja cambió.')
+    }
+    const meta = tx.objectStore('meta')
+    // Never overwrite an unacknowledged summary or release the hold
+    // without durably keeping the original snapshot.
+    if (retainForReview) await result(meta.add(stored, tableRecoveryKey(grant)))
+    await result(meta.delete(tableSaveKey(grant)))
+  })
+}
+
+export function acknowledgeTableRecovery(grant: Grant, id: string) {
+  return transact(['meta'], 'readwrite', async (tx) => {
+    if (!sameRegister(grant, await armed(tx)) || (await tableRecovery(tx, grant))?.id !== id) return false
+    await result(tx.objectStore('meta').delete(tableRecoveryKey(grant)))
+    return true
   })
 }
 
@@ -100,7 +163,8 @@ export function salesFor(context: Context) {
 export function enqueue(grant: Grant, quantities: ReadonlyMap<number, number>, id: string, now: number, paymentMethod: PaymentMethod) {
   return transact(['meta', 'sales'], 'readwrite', async (tx) => {
     const current = await armed(tx)
-    if (!current || current.lease !== grant.lease || !sameContext(current, grant)) throw new Error('La caja se bloqueó.')
+    if (!current || !sameRegister(grant, current)) throw new Error('La caja se bloqueó.')
+    if (await tableSave(tx, grant)) throw new Error('Hay una cuenta sin verificar.')
     const sale = draft(current, quantities, id, now, paymentMethod)
     await result(tx.objectStore('sales').add(sale))
     return sale
