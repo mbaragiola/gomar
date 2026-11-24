@@ -107,16 +107,16 @@ cross-store atomicity.
 
 ## Native customer review in the isolated fixture
 
-The local HTTPS fixture can explicitly configure **Revisá el alta** and
-inject a trusted server-owned resolver. With no configuration, a bare
-enable bit, no resolver, non-loopback authority, or an unassigned
-provider account, there is no customer signup workflow. No command-line
-flag, environment setting, or default app wiring installs the resolver.
+The local HTTPS fixture can explicitly configure **Revisá el alta** with
+an exact loopback origin and hosted audience. With no configuration,
+a bare enable bit, non-loopback authority, or no single current plan for
+the provider account and audience, there is no customer signup workflow.
+No command-line flag, environment setting, or default app wiring enables it.
 
 The browser supplies no actor, intent, business, branch scope, payer
-email, role, or private request reference. The resolver selects an exact
-native designation and a safe display projection, after the user's
-ordinary verified provider session has been checked. The immutable
+email, role, or private request reference. PostgreSQL resolves one exact
+native designation and recovery-authored display after checking the
+user's ordinary verified provider session. The immutable
 designation and freshly resolved labels are bound to a separate hash
 domain on the actual 040 preview. A stale scope or changed label cannot
 use the old challenge, and a new session needs a new review. Only a
@@ -125,6 +125,25 @@ session records the 040 receipt. Questions about payment, access and
 activation stay separate. Reviewing, canceling, or confirming here
 never creates a 041 approved draft, dormant install, operational role
 or MCP credential.
+
+### Protected source of the display
+
+Migration 043 starts with no authored plans. The unregistered recovery
+operation can record one immutable organization display and exact
+branch-label set for an active approved designation revision, through
+the existing protected recovery session. It never infers a match by
+email or CUIT or writes legal data. Changing the display requires a
+new applicable designation revision and recovery approval before
+consent; an accepted intent cannot be reused.
+
+At review or confirmation, SQL starts from the verified provider actor
+and the configured audience. Zero or multiple eligible plans are denied;
+expired, revoked, superseded, or consumed plans are not alternatives.
+The actor/session and selected intent stay pinned through the preview
+or confirmation transaction. A competing author waits on the same
+claimant before acquiring the intent lock. Plans and their approval
+history survive an application restart without a callback, backfill,
+runtime writer, or new registered route.
 
 ### Durable display evidence at the recovery handoff
 
@@ -150,5 +169,5 @@ the native operation. Neither a draft nor pending history grants access.
 
 The synthetic fixture proves real local HTTP and browser behavior, not
 a live provider, public signup, payment, entitlement,
-deployment, or operational access. Live display sources would need
-their own verified mapping and readiness decisions.
+deployment, or operational access. Any live rollout still needs an
+approved source and mapping for real customer plans.

@@ -187,6 +187,26 @@ func lockedNativeOwnerSession(ctx context.Context, tx *sql.Tx, session [32]byte)
 	return actor, expires, nil
 }
 
+// All browser callers pin the ordinary actor and its exact session before
+// any intent. An open transaction is the boundary for scope and consent.
+type nativeOwnerBrowserState struct {
+	Actor, Expires int64
+	Session        [32]byte
+}
+
+func (a *app) beginNativeOwnerBrowser(ctx context.Context, session [32]byte) (*sql.Tx, nativeOwnerBrowserState, error) {
+	tx, err := a.db.BeginTx(ctx, &sql.TxOptions{Isolation: sql.LevelReadCommitted})
+	if err != nil {
+		return nil, nativeOwnerBrowserState{}, err
+	}
+	actor, expires, err := lockedNativeOwnerSession(ctx, tx, session)
+	if err != nil {
+		tx.Rollback()
+		return nil, nativeOwnerBrowserState{}, err
+	}
+	return tx, nativeOwnerBrowserState{Actor: actor, Expires: expires, Session: session}, nil
+}
+
 // The browser adapter also binds the precise reviewed labels. It has a
 // separate hash domain so the same challenge cannot be used on a path
 // which did not verify that display. No raw token or label storage here.
@@ -224,38 +244,43 @@ func (a *app) previewBoundNativeOwnerConsent(r *http.Request, intent, audience s
 		return nativeOwnerPreview{}, err
 	}
 	ctx := r.Context()
-	tx, err := a.db.BeginTx(ctx, &sql.TxOptions{Isolation: sql.LevelReadCommitted})
+	tx, browser, err := a.beginNativeOwnerBrowser(ctx, session)
 	if err != nil {
 		return nativeOwnerPreview{}, err
 	}
 	defer tx.Rollback()
-	actor, sessionExpiry, err := lockedNativeOwnerSession(ctx, tx, session)
-	if err != nil {
-		return nativeOwnerPreview{}, err
-	}
 	d, err := lockCurrentNativeOwnerDesignation(ctx, tx, intent)
 	if err != nil {
 		return nativeOwnerPreview{}, nativeOwnerUnavailable(err)
 	}
+	preview, err := writeNativeOwnerPreview(ctx, tx, browser, d, audience, review)
+	if err != nil {
+		return nativeOwnerPreview{}, err
+	}
+	if err = tx.Commit(); err != nil {
+		return nativeOwnerPreview{}, err
+	}
+	return preview, nil
+}
+
+// Requires the existing actor/session/intent locks in this transaction.
+func writeNativeOwnerPreview(ctx context.Context, tx *sql.Tx, browser nativeOwnerBrowserState, d nativeOwnerDesignation, audience string, review *nativeOwnerReviewBinding) (nativeOwnerPreview, error) {
 	now := nativeOwnerNow()
-	if d.Actor != actor || d.Target.Audience != audience || now.Unix() >= sessionExpiry || !d.approvedAt(now) ||
-		(review != nil && (actor != review.Actor || !sameNativeOwnerTarget(d.Target, review.Target))) {
+	if d.Actor != browser.Actor || d.Target.Audience != audience || now.Unix() >= browser.Expires || !d.approvedAt(now) ||
+		(review != nil && (browser.Actor != review.Actor || !sameNativeOwnerTarget(d.Target, review.Target))) {
 		return nativeOwnerPreview{}, nativeOwnerConsentUnavailable
 	}
 	challenge := newProviderRandom()
 	key := nativeOwnerChallengeHash(challenge, review)
-	expires := nativeOwnerDeadline(now.Add(nativeOwnerConsentLifetime), d.Expires, d.ApprovalExpires.Time, time.Unix(sessionExpiry, 0))
+	expires := nativeOwnerDeadline(now.Add(nativeOwnerConsentLifetime), d.Expires, d.ApprovalExpires.Time, time.Unix(browser.Expires, 0))
 	var inserted int
-	err = tx.QueryRowContext(ctx, `INSERT INTO gomar.native_owner_previews
+	err := tx.QueryRowContext(ctx, `INSERT INTO gomar.native_owner_previews
 		(challenge_hash,session_hash,intent,revision,approval_ref,previewed_at,expires_at)
 		SELECT $1,$2,$3,$4,$5,$6,$7 WHERE NOT EXISTS (
 			SELECT 1 FROM gomar.native_owner_receipts WHERE intent=$3)
-		RETURNING 1`, key[:], session[:], intent, d.Target.Revision, d.ApprovalRef.String, now, expires).Scan(&inserted)
+		RETURNING 1`, key[:], browser.Session[:], d.Target.Intent, d.Target.Revision, d.ApprovalRef.String, now, expires).Scan(&inserted)
 	if err != nil {
 		return nativeOwnerPreview{}, nativeOwnerUnavailable(err)
-	}
-	if err = tx.Commit(); err != nil {
-		return nativeOwnerPreview{}, err
 	}
 	return nativeOwnerPreview{Challenge: challenge, Target: d.Target}, nil
 }
@@ -274,38 +299,49 @@ func (a *app) confirmBoundNativeOwnerConsent(r *http.Request, c nativeOwnerConfi
 		return nativeOwnerReceipt{}, err
 	}
 	ctx := r.Context()
-	tx, err := a.db.BeginTx(ctx, &sql.TxOptions{Isolation: sql.LevelReadCommitted})
+	tx, browser, err := a.beginNativeOwnerBrowser(ctx, session)
 	if err != nil {
 		return nativeOwnerReceipt{}, err
 	}
 	defer tx.Rollback()
-	actor, sessionExpiry, err := lockedNativeOwnerSession(ctx, tx, session)
-	if err != nil {
-		return nativeOwnerReceipt{}, err
-	}
 	d, err := lockCurrentNativeOwnerDesignation(ctx, tx, target.Intent)
 	if err != nil {
 		return nativeOwnerReceipt{}, nativeOwnerUnavailable(err)
 	}
-	if d.Actor != actor || !sameNativeOwnerTarget(d.Target, target) || !d.ApprovalRef.Valid || (review != nil && review.Actor != actor) {
+	receipt, err := writeNativeOwnerConfirmation(ctx, tx, browser, d, target, c.Challenge, review)
+	if err != nil {
+		return nativeOwnerReceipt{}, err
+	}
+	if err = tx.Commit(); err != nil {
+		return nativeOwnerReceipt{}, err
+	}
+	return receipt, nil
+}
+
+// Requires the existing actor/session/intent locks, and a caller which
+// has validated explicit consent and the challenge's canonical encoding.
+func writeNativeOwnerConfirmation(ctx context.Context, tx *sql.Tx, browser nativeOwnerBrowserState, d nativeOwnerDesignation,
+	target nativeOwnerTarget, challenge string, review *nativeOwnerReviewBinding) (nativeOwnerReceipt, error) {
+	if d.Actor != browser.Actor || !sameNativeOwnerTarget(d.Target, target) || !d.ApprovalRef.Valid ||
+		(review != nil && (review.Actor != browser.Actor || !sameNativeOwnerTarget(target, review.Target))) {
 		return nativeOwnerReceipt{}, nativeOwnerConsentUnavailable
 	}
-	key := nativeOwnerChallengeHash(c.Challenge, review)
+	key := nativeOwnerChallengeHash(challenge, review)
 	var boundSession []byte
 	var previewExpiry time.Time
-	err = tx.QueryRowContext(ctx, `SELECT session_hash,expires_at FROM gomar.native_owner_previews
+	err := tx.QueryRowContext(ctx, `SELECT session_hash,expires_at FROM gomar.native_owner_previews
 		WHERE challenge_hash=$1 AND intent=$2 AND revision=$3 AND approval_ref=$4 FOR UPDATE`,
 		key[:], target.Intent, target.Revision, d.ApprovalRef.String).Scan(&boundSession, &previewExpiry)
 	if err != nil {
 		return nativeOwnerReceipt{}, nativeOwnerUnavailable(err)
 	}
 	now := nativeOwnerNow()
-	if subtle.ConstantTimeCompare(boundSession, session[:]) != 1 || now.Unix() >= sessionExpiry ||
+	if subtle.ConstantTimeCompare(boundSession, browser.Session[:]) != 1 || now.Unix() >= browser.Expires ||
 		!now.Before(previewExpiry) || !d.approvedAt(now) {
 		return nativeOwnerReceipt{}, nativeOwnerConsentUnavailable
 	}
 	ref := "accept-" + newProviderRandom()
-	expires := nativeOwnerDeadline(now.Add(nativeOwnerConsentLifetime), previewExpiry, d.Expires, d.ApprovalExpires.Time, time.Unix(sessionExpiry, 0))
+	expires := nativeOwnerDeadline(now.Add(nativeOwnerConsentLifetime), previewExpiry, d.Expires, d.ApprovalExpires.Time, time.Unix(browser.Expires, 0))
 	var accepted int
 	var display any // SQL NULL for the existing unbound internal path.
 	if review != nil {
@@ -317,9 +353,6 @@ func (a *app) confirmBoundNativeOwnerConsent(r *http.Request, c nativeOwnerConfi
 		ref, key[:], target.Intent, target.Revision, d.ApprovalRef.String, now, expires, display).Scan(&accepted)
 	if err != nil {
 		return nativeOwnerReceipt{}, nativeOwnerUnavailable(err)
-	}
-	if err = tx.Commit(); err != nil {
-		return nativeOwnerReceipt{}, err
 	}
 	return nativeOwnerReceipt{Ref: ref, Target: target, ApprovalRef: d.ApprovalRef.String, AcceptedAt: now, ExpiresAt: expires}, nil
 }

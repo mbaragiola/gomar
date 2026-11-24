@@ -6,7 +6,6 @@ import (
 	"database/sql"
 	"encoding/json"
 	"encoding/pem"
-	"errors"
 	"io"
 	"net/http"
 	"net/http/cookiejar"
@@ -22,12 +21,9 @@ import (
 
 func TestNativeSignupDefaultsAndStrictJSON(t *testing.T) {
 	const host = "127.0.0.1:8443"
-	enabled := func() *nativeSignupHosted {
-		return &nativeSignupHosted{Enabled: true, Origin: "https://" + host, Audience: "fixture-hosted",
-			Resolver: func(context.Context, int64) (nativeSignupPlan, error) { return nativeSignupPlan{}, nil }}
-	}
-	a := &app{host: host, providerAuth: &hostedProviderAuth{host: host, origin: "https://" + host}}
-	for _, disabled := range []*nativeSignupHosted{nil, {Enabled: true}, {Enabled: true, Origin: "https://" + host, Audience: "fixture-hosted"}} {
+	enabled := &nativeSignupHosted{Enabled: true, Origin: "https://" + host, Audience: "fixture-hosted"}
+	a := &app{host: host, db: new(sql.DB), providerAuth: &hostedProviderAuth{host: host, origin: "https://" + host}}
+	for _, disabled := range []*nativeSignupHosted{nil, {Enabled: true}, {Enabled: true, Origin: "https://" + host}} {
 		a.nativeSignup = disabled
 		for _, path := range []string{"/alta", "/api/v1/alta/revisar", "/api/v1/alta/confirmar"} {
 			r := httptest.NewRequest("GET", "https://"+host+path, nil)
@@ -38,9 +34,9 @@ func TestNativeSignupDefaultsAndStrictJSON(t *testing.T) {
 			}
 		}
 	}
-	a.nativeSignup = enabled()
+	a.nativeSignup = enabled
 	if a.activeNativeSignup() == nil {
-		t.Fatal("explicit loopback configuration with resolver was refused")
+		t.Fatal("explicit loopback configuration was refused")
 	}
 	a.host, a.providerAuth.host, a.nativeSignup.Origin, a.providerAuth.origin =
 		"example.invalid:8443", "example.invalid:8443", "https://example.invalid:8443", "https://example.invalid:8443"
@@ -81,6 +77,9 @@ type signupTestPeer struct {
 	ctx         context.Context
 	db          *sql.DB
 	application *app
+	ops         *app
+	actors      map[string]int64
+	configure   func(*sql.DB) *app
 	server      *httptest.Server
 	recovery    func(string) *http.Request
 	owner       func(string, string) *http.Request
@@ -89,7 +88,10 @@ type signupTestPeer struct {
 func signupFixture(t *testing.T, ctx context.Context, db *sql.DB) signupTestPeer {
 	t.Helper()
 	var router http.Handler
+	var routerLock sync.RWMutex
 	server := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		routerLock.RLock()
+		defer routerLock.RUnlock()
 		router.ServeHTTP(w, r)
 	}))
 	t.Cleanup(server.Close)
@@ -139,7 +141,6 @@ func signupFixture(t *testing.T, ctx context.Context, db *sql.DB) signupTestPeer
 		return r
 	}
 	const audience = "signup-fixture-hosted"
-	plans := map[int64]nativeSignupPlan{}
 	for _, name := range []string{"primary", "changed", "desk", "mobile", "legacy"} {
 		target := signupFixtureTarget(name)
 		if err := ops.designateNativeOwner(recoveryRequest("/admin/__signup-fixture-designate"), target, actors[name]); err != nil {
@@ -148,64 +149,52 @@ func signupFixture(t *testing.T, ctx context.Context, db *sql.DB) signupTestPeer
 		if _, err := ops.approveNativeOwnerDesignation(recoveryRequest("/admin/__signup-fixture-approve"), target); err != nil {
 			t.Fatal(err)
 		}
-		plans[actors[name]] = nativeSignupPlan{Actor: actors[name], Target: target, Organization: "QA Organización  " + name,
-			Branches: []nativeInstallBranch{{Ref: "outlet-b", Name: "Norte"}, {Ref: "outlet-a", Name: "Local  Centro"}}}
+		if name != "legacy" {
+			if err := ops.recordNativeSignupPlan(recoveryRequest("/admin/__signup-fixture-plan"), target, signupFixtureDisplay(name)); err != nil {
+				t.Fatal(err)
+			}
+		}
 	}
 	var lock sync.RWMutex
 	original := map[string][]*http.Cookie{}
-	a.nativeSignup = &nativeSignupHosted{Enabled: true, Origin: origin, Audience: audience,
-		Resolver: func(_ context.Context, actor int64) (nativeSignupPlan, error) {
-			lock.RLock()
-			defer lock.RUnlock()
-			p, ok := plans[actor]
-			if !ok {
-				return nativeSignupPlan{}, errors.New("unknown synthetic actor")
+	configure := func(pool *sql.DB) *app {
+		a := &app{host: host, db: pool, providerAuth: &hostedProviderAuth{host: host, origin: origin}, enableMCP: true,
+			nativeSignup: &nativeSignupHosted{Enabled: true, Origin: origin, Audience: audience}}
+		disabled := (&app{host: host, db: pool, providerAuth: a.providerAuth, enableMCP: true}).routes()
+		mux := http.NewServeMux()
+		mux.Handle("/", a.routes())
+		mux.HandleFunc("GET /__signup-fixture-sign-in/{preset}", func(w http.ResponseWriter, r *http.Request) {
+			name := r.PathValue("preset")
+			id, ok := presets[name]
+			if !ok || !a.nativeSignupLocal(r, r.URL.Path) {
+				http.NotFound(w, r)
+				return
 			}
-			return p, nil
-		}}
-	configured := a.routes()
-	disabled := (&app{host: host, db: db, providerAuth: a.providerAuth, enableMCP: true}).routes()
-	mux := http.NewServeMux()
-	mux.Handle("/", configured)
-	mux.HandleFunc("GET /__signup-fixture-sign-in/{preset}", func(w http.ResponseWriter, r *http.Request) {
-		name := r.PathValue("preset")
-		id, ok := presets[name]
-		if !ok || !a.nativeSignupLocal(r, r.URL.Path) {
-			http.NotFound(w, r)
-			return
-		}
-		nativeSignupPrivateHeaders(w)
-		if err := a.startVerifiedProviderSession(w, r, id); err != nil {
-			failure(w, err)
-			return
-		}
-		lock.Lock()
-		if original[name] == nil {
-			// Keep the first synthetic session in memory only so the new
-			// fixture app can prove it uses the actual browser's session.
-			original[name] = (&http.Response{Header: w.Header()}).Cookies()
-		}
-		lock.Unlock()
-		w.WriteHeader(204)
-	})
-	mux.HandleFunc("GET /__signup-fixture-change-label", func(w http.ResponseWriter, r *http.Request) {
-		if !a.nativeSignupLocal(r, r.URL.Path) {
-			http.NotFound(w, r)
-			return
-		}
-		lock.Lock()
-		p := plans[actors["changed"]]
-		p.Organization = "QA Etiqueta nueva"
-		plans[p.Actor] = p
-		lock.Unlock()
-		w.WriteHeader(204)
-	})
-	mux.HandleFunc("GET /__signup-fixture-disabled", func(w http.ResponseWriter, r *http.Request) {
-		r = r.Clone(r.Context())
-		r.URL.Path = "/alta"
-		disabled.ServeHTTP(w, r)
-	})
-	router = mux
+			nativeSignupPrivateHeaders(w)
+			if err := a.startVerifiedProviderSession(w, r, id); err != nil {
+				failure(w, err)
+				return
+			}
+			lock.Lock()
+			if original[name] == nil {
+				// Keep the first synthetic session in memory only so a new
+				// fixture app can prove it uses that browser's exact session.
+				original[name] = (&http.Response{Header: w.Header()}).Cookies()
+			}
+			lock.Unlock()
+			w.WriteHeader(204)
+		})
+		mux.HandleFunc("GET /__signup-fixture-disabled", func(w http.ResponseWriter, r *http.Request) {
+			r = r.Clone(r.Context())
+			r.URL.Path = "/alta"
+			disabled.ServeHTTP(w, r)
+		})
+		routerLock.Lock()
+		router = mux
+		routerLock.Unlock()
+		return a
+	}
+	a = configure(db)
 	server.StartTLS()
 	ownerRequest := func(name, path string) *http.Request {
 		r := httptest.NewRequest("POST", origin+path, nil).WithContext(ctx)
@@ -220,7 +209,40 @@ func signupFixture(t *testing.T, ctx context.Context, db *sql.DB) signupTestPeer
 		}
 		return r
 	}
-	return signupTestPeer{t: t, ctx: ctx, db: db, application: a, server: server, recovery: recoveryRequest, owner: ownerRequest}
+	return signupTestPeer{t: t, ctx: ctx, db: db, application: a, ops: ops, actors: actors,
+		configure: configure, server: server, recovery: recoveryRequest, owner: ownerRequest}
+}
+
+func (f *signupTestPeer) restartApp() {
+	f.t.Helper()
+	db, err := connectPostgres(f.ctx, os.Getenv("GOMAR_LOCAL_POSTGRES_TEST_DSN"))
+	if err != nil {
+		f.t.Fatal(err)
+	}
+	f.t.Cleanup(func() { db.Close() })
+	f.application = f.configure(db)
+	f.ops = &app{host: f.application.host, db: db, adminRecovery: true}
+	if err = f.db.Close(); err != nil {
+		f.t.Fatal(err)
+	}
+	f.db = db
+}
+
+func signupFixtureDisplay(name string) nativeSignupPlan {
+	return nativeSignupPlan{Organization: "QA Organización  " + name,
+		Branches: []nativeInstallBranch{{Ref: "outlet-b", Name: "Norte"}, {Ref: "outlet-a", Name: "Local  Centro"}}}
+}
+
+func (f signupTestPeer) designateAndApprove(name string, target nativeOwnerTarget) string {
+	f.t.Helper()
+	if err := f.ops.designateNativeOwner(f.recovery("/admin/__signup-fixture-designate"), target, f.actors[name]); err != nil {
+		f.t.Fatal(err)
+	}
+	ref, err := f.ops.approveNativeOwnerDesignation(f.recovery("/admin/__signup-fixture-approve"), target)
+	if err != nil {
+		f.t.Fatal(err)
+	}
+	return ref
 }
 
 func signupFixtureTarget(name string) nativeOwnerTarget {
@@ -319,6 +341,13 @@ func TestPostgresNativeSignup(t *testing.T) {
 		return got
 	}
 	primary := review(main)
+	f.restartApp()
+	db = f.db
+	get(main, "/alta", 200)
+	if restarted := review(main); restarted.Organization != primary.Organization || restarted.Challenge == primary.Challenge {
+		t.Fatal("protected display did not survive the SQL-backed fixture restart")
+	}
+	t.Log("persisted recovery plan and original challenge survived application/pool restart")
 	confirm := func(challenge string) string { return `{"challenge":"` + challenge + `","confirm":true}` }
 	other := f.client()
 	login(other, "other")
@@ -331,7 +360,17 @@ func TestPostgresNativeSignup(t *testing.T) {
 	changed := f.client()
 	login(changed, "changed")
 	oldProjection := review(changed)
-	get(changed, "/__signup-fixture-change-label", 204)
+	supersession := signupFixtureTarget("changed")
+	supersession.Revision++
+	supersession.RequestRef += "-next"
+	f.designateAndApprove("changed", supersession)
+	get(changed, "/alta", 404) // never fall back to the older authored plan
+	post(changed, "confirmar", confirm(oldProjection.Challenge), 404)
+	changedDisplay := signupFixtureDisplay("changed")
+	changedDisplay.Organization = "QA Etiqueta nueva"
+	if err := f.ops.recordNativeSignupPlan(f.recovery("/admin/__signup-fixture-plan"), supersession, changedDisplay); err != nil {
+		t.Fatal(err)
+	}
 	post(changed, "confirmar", confirm(oldProjection.Challenge), 404)
 	if updated := review(changed); updated.Organization != "QA Etiqueta nueva" {
 		t.Fatal("fixture label did not change")
@@ -339,6 +378,8 @@ func TestPostgresNativeSignup(t *testing.T) {
 	post(main, "confirmar", `{"challenge":"`+primary.Challenge+`","confirm":false,"confirm":true}`, 400)
 	post(main, "confirmar", confirm(primary.Challenge)+`{}`, 400)
 	post(main, "confirmar", confirm(primary.Challenge), 204)
+	get(main, "/alta", 404)
+	post(main, "revisar", "{}", 404)
 	post(main, "confirmar", confirm(primary.Challenge), 404)
 	var confirmations, drafts, pending, memberships int
 	err := db.QueryRowContext(ctx, `SELECT (SELECT count(*) FROM gomar.native_owner_receipts),
