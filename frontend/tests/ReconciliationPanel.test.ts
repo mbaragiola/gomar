@@ -1,5 +1,5 @@
 import { flushPromises, mount } from '@vue/test-utils'
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import ReconciliationPanel from '../src/components/ReconciliationPanel.vue'
 
 function response(value: unknown, status = 200) {
@@ -14,6 +14,27 @@ const draftRun = {
 const reviewRun = {
   ...draftRun,
   state: 'review',
+  counts: { ...draftRun.counts, rows: 2 },
+}
+
+const closedRun = {
+  ...reviewRun,
+  state: 'closed',
+  revision: 2,
+  unresolved_count: 2,
+}
+
+function auditEvent(action: string, run_revision: number) {
+  return { action, run_revision, occurred_at: '2026-11-01T10:00:00Z' }
+}
+
+function deferredResponse() {
+  let resolve!: (value: Response) => void
+  const promise = new Promise<Response>((done) => { resolve = done })
+  return {
+    promise,
+    async respond(value: unknown, status = 200) { resolve(await response(value, status)) },
+  }
 }
 
 const paymentRow = {
@@ -61,6 +82,257 @@ async function chooseFile(wrapper: ReturnType<typeof mount>, name: string) {
 }
 
 describe('conciliación financiera', () => {
+  afterEach(() => { vi.unstubAllGlobals() })
+
+  it('actualiza el estado, el historial paginado y la lista al cerrar una revisión', async () => {
+    const oldPage = deferredResponse()
+    const freshPage = deferredResponse()
+    const longReview = { ...reviewRun, revision: 50 }
+    let closing = false
+    vi.stubGlobal('confirm', vi.fn(() => true))
+    vi.stubGlobal('fetch', vi.fn((url: string) => {
+      if (url.endsWith('/entities/1/reconciliations')) return response([longReview])
+      if (url.endsWith('/entities/1/reconciliations/7')) return response(longReview)
+      if (url.endsWith('/reconciliations/7/close')) {
+        closing = true
+        return response({ ...closedRun, revision: 51 })
+      }
+      if (url.includes('/events?page=1')) return response({ items: [auditEvent('prepare', 1)], total: 50 })
+      if (url.includes('/events?page=2')) return closing ? freshPage.promise : oldPage.promise
+      if (url.includes('/events?page=3')) return response({ items: [auditEvent('close', 51)], total: 51 })
+      if (url.includes('/rows?') || url.includes('/candidates?')) return response({ items: [], total: 0 })
+      return response({ detail: `Ruta inesperada: ${url}` }, 500)
+    }))
+    const wrapper = mount(ReconciliationPanel, { props: { entityId: 1, outlets: [{ id: 10, nombre: 'Centro' }], selectedOutletId: 10 } })
+    await flushPromises()
+    await wrapper.get('.reconciliation-run').trigger('click')
+    await flushPromises()
+    await button(wrapper, 'Eventos siguientes').trigger('click')
+    await button(wrapper, 'Cerrar y conservar pendientes').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.get('.reconciliation-toolbar .status').text()).toBe('closed')
+    expect(wrapper.text()).toContain('Cerrada con 2 filas sin resolver.')
+    expect(wrapper.text()).not.toContain('Cerrar y conservar pendientes')
+    await freshPage.respond({ items: [auditEvent('rejected', 30)], total: 51 })
+    await flushPromises()
+    await oldPage.respond({ items: [auditEvent('historial obsoleto', 30)], total: 50 })
+    await flushPromises()
+    expect(wrapper.text()).toContain('51 eventos')
+    expect(wrapper.text()).toContain('· rejected ·')
+    expect(wrapper.text()).not.toContain('historial obsoleto')
+
+    await button(wrapper, 'Eventos siguientes').trigger('click')
+    await flushPromises()
+    expect(wrapper.text()).toContain('Revisión 51 · close')
+    await button(wrapper, '← Volver').trigger('click')
+    expect(wrapper.get('.reconciliation-run').text()).toContain('#7 · closed')
+    expect(wrapper.get('.reconciliation-run').text()).toContain('2 filas · 2 sin resolver')
+  })
+
+  it('actualiza las decisiones y su evento sin volver a abrir la revisión', async () => {
+    const group = {
+      group_id: 2, kind: 'candidate', payments: [paymentRow], cash_flow: [cashFlowRow],
+      payment_count: 1, cash_flow_count: 1, decisions: [],
+    }
+    let decided = false
+    vi.stubGlobal('fetch', vi.fn((url: string) => {
+      if (url.endsWith('/entities/1/reconciliations')) return response([reviewRun])
+      if (url.endsWith('/entities/1/reconciliations/7')) return response(reviewRun)
+      if (url.endsWith('/reconciliations/7/decisions')) {
+        decided = true
+        return response({ revision: 2 })
+      }
+      if (url.includes('/candidates?')) return response({
+        items: [decided ? {
+          ...group, decisions: [{ payment_row_id: 101, cash_flow_row_id: 201, decision: 'confirmed' }],
+        } : group],
+        total: 1,
+      })
+      if (url.includes('/events?')) {
+        const items = decided ? [auditEvent('prepare', 1), auditEvent('confirmed', 2)] : [auditEvent('prepare', 1)]
+        return response({ items, total: items.length })
+      }
+      if (url.includes('/rows?')) return response({ items: [paymentRow], total: 1 })
+      return response({ detail: `Ruta inesperada: ${url}` }, 500)
+    }))
+    const wrapper = mount(ReconciliationPanel, { props: { entityId: 1, outlets: [{ id: 10, nombre: 'Centro' }], selectedOutletId: 10 } })
+    await flushPromises()
+    await wrapper.get('.reconciliation-run').trigger('click')
+    await flushPromises()
+    await button(wrapper, 'Confirmar par').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.get('.reconciliation-toolbar .status').text()).toBe('review')
+    expect(wrapper.text()).toContain('Par 101/201: confirmed')
+    expect(wrapper.text()).toContain('Revisión 2 · confirmed')
+    expect(wrapper.text()).toContain('2 eventos')
+    expect(wrapper.text()).toContain('pagos.csv')
+  })
+
+  it('actualiza solo la lista si el cierre termina después de abrir otra revisión', async () => {
+    const otherRun = { ...reviewRun, id: 8 }
+    const delayedClose = deferredResponse()
+    let oldHistoryReads = 0
+    vi.stubGlobal('confirm', vi.fn(() => true))
+    vi.stubGlobal('fetch', vi.fn((url: string) => {
+      if (url.endsWith('/entities/1/reconciliations')) return response([reviewRun, otherRun])
+      if (url.endsWith('/entities/1/reconciliations/7')) return response(reviewRun)
+      if (url.endsWith('/entities/1/reconciliations/8')) return response(otherRun)
+      if (url.endsWith('/reconciliations/7/close')) return delayedClose.promise
+      if (url.includes('/reconciliations/7/events?')) {
+        oldHistoryReads += 1
+        return response({ items: [auditEvent('prepare', 1)], total: 1 })
+      }
+      if (url.includes('/reconciliations/8/events?')) return response({ items: [auditEvent('otra revisión', 1)], total: 1 })
+      if (url.includes('/rows?') || url.includes('/candidates?')) return response({ items: [], total: 0 })
+      return response({ detail: `Ruta inesperada: ${url}` }, 500)
+    }))
+    const wrapper = mount(ReconciliationPanel, { props: { entityId: 1, outlets: [{ id: 10, nombre: 'Centro' }], selectedOutletId: 10 } })
+    await flushPromises()
+    await wrapper.findAll('.reconciliation-run')[0].trigger('click')
+    await flushPromises()
+    await button(wrapper, 'Cerrar y conservar pendientes').trigger('click')
+    await button(wrapper, '← Volver').trigger('click')
+    await wrapper.findAll('.reconciliation-run')[1].trigger('click')
+    await flushPromises()
+
+    await delayedClose.respond(closedRun)
+    await flushPromises()
+    expect(wrapper.text()).toContain('Conciliación #8')
+    expect(wrapper.text()).toContain('otra revisión')
+    expect(wrapper.text()).not.toContain('· close ·')
+    expect(oldHistoryReads).toBe(1)
+    await button(wrapper, '← Volver').trigger('click')
+    expect(wrapper.findAll('.reconciliation-run').map((run) => run.get('strong').text())).toEqual(['#7 · closed', '#8 · review'])
+  })
+
+  it.each([true, false])('conserva el cierre al reabrir la misma revisión con detalle anterior (primero el cierre: %s)', async (closeFirst) => {
+    const delayedClose = deferredResponse()
+    const delayedDetail = deferredResponse()
+    let detailReads = 0
+    let closed = false
+    vi.stubGlobal('confirm', vi.fn(() => true))
+    vi.stubGlobal('fetch', vi.fn((url: string) => {
+      if (url.endsWith('/entities/1/reconciliations')) return response([reviewRun])
+      if (url.endsWith('/entities/1/reconciliations/7')) {
+        detailReads += 1
+        return detailReads === 1 ? response(reviewRun) : delayedDetail.promise
+      }
+      if (url.endsWith('/reconciliations/7/close')) return delayedClose.promise
+      if (url.includes('/events?')) {
+        const items = closed ? [auditEvent('prepare', 1), auditEvent('close', 2)] : [auditEvent('prepare', 1)]
+        return response({ items, total: items.length })
+      }
+      if (url.includes('/rows?') || url.includes('/candidates?')) return response({ items: [], total: 0 })
+      return response({ detail: `Ruta inesperada: ${url}` }, 500)
+    }))
+    const wrapper = mount(ReconciliationPanel, { props: { entityId: 1, outlets: [{ id: 10, nombre: 'Centro' }], selectedOutletId: 10 } })
+    await flushPromises()
+    await wrapper.get('.reconciliation-run').trigger('click')
+    await flushPromises()
+    await button(wrapper, 'Cerrar y conservar pendientes').trigger('click')
+    await button(wrapper, '← Volver').trigger('click')
+    await wrapper.get('.reconciliation-run').trigger('click')
+    if (!closeFirst) {
+      await delayedDetail.respond(reviewRun)
+      await flushPromises()
+    }
+
+    closed = true
+    await delayedClose.respond(closedRun)
+    await flushPromises()
+    if (closeFirst) {
+      expect(wrapper.find('.reconciliation-workspace').exists()).toBe(false)
+      await delayedDetail.respond(reviewRun)
+      await flushPromises()
+    }
+    expect(wrapper.get('.reconciliation-toolbar .status').text()).toBe('closed')
+    expect(wrapper.text()).toContain('Revisión 2 · close')
+    expect(wrapper.text()).not.toContain('Cerrar y conservar pendientes')
+  })
+
+  it.each([true, false])('descarta los resultados demorados del cierre al cambiar de local (pendiente el cierre: %s)', async (closePending) => {
+    const delayedClose = deferredResponse()
+    const delayedEvents = deferredResponse()
+    const sharedRun = { ...reviewRun, outlet_ids: [10, 11] }
+    let switched = false
+    let closing = false
+    vi.stubGlobal('confirm', vi.fn(() => true))
+    vi.stubGlobal('fetch', vi.fn((url: string) => {
+      if (url.endsWith('/entities/1/reconciliations')) return response([sharedRun])
+      if (url.endsWith('/entities/1/reconciliations/7')) return response(sharedRun)
+      if (url.endsWith('/reconciliations/7/close')) {
+        closing = true
+        return closePending ? delayedClose.promise : response({ ...closedRun, outlet_ids: sharedRun.outlet_ids })
+      }
+      if (url.includes('/reconciliations/7/events?')) {
+        if (switched) return response({ items: [auditEvent('otro local', 1)], total: 1 })
+        return closing ? delayedEvents.promise : response({ items: [auditEvent('prepare', 1)], total: 1 })
+      }
+      if (url.includes('/rows?') || url.includes('/candidates?')) return response({ items: [], total: 0 })
+      return response({ detail: `Ruta inesperada: ${url}` }, 500)
+    }))
+    const wrapper = mount(ReconciliationPanel, { props: {
+      entityId: 1, outlets: [{ id: 10, nombre: 'Centro' }, { id: 11, nombre: 'Norte' }], selectedOutletId: 10,
+    } })
+    await flushPromises()
+    await wrapper.get('.reconciliation-run').trigger('click')
+    await flushPromises()
+    await button(wrapper, 'Cerrar y conservar pendientes').trigger('click')
+    await flushPromises()
+
+    switched = true
+    await wrapper.setProps({ selectedOutletId: 11 })
+    await flushPromises()
+    await wrapper.get('.reconciliation-run').trigger('click')
+    await flushPromises()
+    if (closePending) await delayedClose.respond({ ...closedRun, outlet_ids: sharedRun.outlet_ids })
+    else await delayedEvents.respond({ items: [auditEvent('close', 2)], total: 2 })
+    await flushPromises()
+
+    expect(wrapper.get('.reconciliation-toolbar .status').text()).toBe('review')
+    expect(wrapper.text()).toContain('otro local')
+    expect(wrapper.text()).not.toContain('· close ·')
+    expect(wrapper.emitted('error')).toBeUndefined()
+    await button(wrapper, '← Volver').trigger('click')
+    expect(wrapper.get('.reconciliation-run').text()).toContain('#7 · review')
+  })
+
+  it('no pierde el estado de cierre ni otras filas al aplicar una lista demorada', async () => {
+    const delayedCreate = deferredResponse()
+    const delayedList = deferredResponse()
+    const newRun = { ...draftRun, id: 8 }
+    let listReads = 0
+    vi.stubGlobal('confirm', vi.fn(() => true))
+    vi.stubGlobal('fetch', vi.fn((url: string, options?: RequestInit) => {
+      if (url.endsWith('/entities/1/reconciliations')) {
+        if (options?.method === 'POST') return delayedCreate.promise
+        listReads += 1
+        return listReads === 1 ? response([reviewRun]) : delayedList.promise
+      }
+      if (url.endsWith('/entities/1/reconciliations/7')) return response(reviewRun)
+      if (url.endsWith('/reconciliations/7/close')) return response(closedRun)
+      if (url.includes('/rows?') || url.includes('/candidates?') || url.includes('/events?')) return response({ items: [], total: 0 })
+      return response({ detail: `Ruta inesperada: ${url}` }, 500)
+    }))
+    const wrapper = mount(ReconciliationPanel, { props: { entityId: 1, outlets: [{ id: 10, nombre: 'Centro' }], selectedOutletId: 10 } })
+    await flushPromises()
+    await button(wrapper, 'Crear conciliación').trigger('click')
+    await wrapper.get('.reconciliation-run').trigger('click')
+    await flushPromises()
+    await delayedCreate.respond(newRun, 201)
+    await flushPromises()
+    expect(listReads).toBe(2)
+    await button(wrapper, 'Cerrar y conservar pendientes').trigger('click')
+    await flushPromises()
+
+    await delayedList.respond([newRun, reviewRun])
+    await flushPromises()
+    await button(wrapper, '← Volver').trigger('click')
+    expect(wrapper.findAll('.reconciliation-run').map((run) => run.get('strong').text())).toEqual(['#8 · draft', '#7 · closed'])
+  })
+
   it('no ofrece confirmar un grupo ambiguo y conserva el rechazo del par elegido', async () => {
     const wrapper = await mountReview([{
       group_id: 1, kind: 'ambiguous', payments: [paymentRow], cash_flow: [cashFlowRow],
