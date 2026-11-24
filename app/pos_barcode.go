@@ -70,8 +70,12 @@ func applyPOSBarcodeChange(ctx context.Context, tx *sql.Tx, outlet int64, p posP
 	return p, err
 }
 
-func savePOSBarcode(r *http.Request, tx *sql.Tx, m entityMembership, raw []byte) (int, any, error) {
+func (a *app) savePOSBarcode(r *http.Request, tx *sql.Tx, m entityMembership, raw []byte) (int, any, error) {
 	outlet, err := posOutlet(r, tx, m)
+	if err != nil {
+		return 0, nil, err
+	}
+	lease, err := a.lockHostedPOSBarcode(r.Context(), tx, posRenameScope{m.userID, m.ID, outlet})
 	if err != nil {
 		return 0, nil, err
 	}
@@ -94,6 +98,9 @@ func savePOSBarcode(r *http.Request, tx *sql.Tx, m entityMembership, raw []byte)
 		return 0, nil, err
 	}
 	result, err := applyPOSBarcodeChange(r.Context(), tx, outlet, current, *wire.Barcode)
+	if err == nil {
+		err = lease.recheck(r.Context(), tx)
+	}
 	return http.StatusOK, result, err
 }
 

@@ -180,7 +180,7 @@ func (a *app) acceptPOSCatalogProposal(w http.ResponseWriter, r *http.Request, o
 	}
 
 	ctx := r.Context()
-	tx, err := a.db.BeginTx(ctx, nil)
+	tx, err := a.db.BeginTx(ctx, a.hostedPOSCatalogTxOptions(op))
 	if err != nil {
 		return err
 	}
@@ -191,6 +191,10 @@ func (a *app) acceptPOSCatalogProposal(w http.ResponseWriter, r *http.Request, o
 	}
 	s := posRenameScopeFrom(scope)
 	if _, err = a.lockPOSRenameScope(ctx, tx, s); err != nil {
+		return err
+	}
+	lease, err := a.hostedPOSCatalogLease(ctx, tx, s, op)
+	if err != nil {
 		return err
 	}
 	inputDigest := posCatalogDigest(op.action(), struct {
@@ -283,7 +287,7 @@ func (a *app) acceptPOSCatalogProposal(w http.ResponseWriter, r *http.Request, o
 	default:
 		return err
 	}
-	if err = tx.Commit(); err != nil {
+	if err = lease.commit(r.Context(), tx); err != nil {
 		return err
 	}
 	p.ProductID, p.ProductRevision = nil, nil
@@ -292,11 +296,15 @@ func (a *app) acceptPOSCatalogProposal(w http.ResponseWriter, r *http.Request, o
 }
 
 func (a *app) listPOSCatalogProposals(w http.ResponseWriter, r *http.Request, u user, op posCatalogOperation) error {
-	tx, s, login, err := a.beginPOSCatalogReview(r, u)
+	tx, s, login, err := a.beginPOSCatalogOperationReview(r, u, op)
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback()
+	lease, err := a.hostedPOSCatalogLease(r.Context(), tx, posRenameScopeFrom(s), op)
+	if err != nil {
+		return err
+	}
 	now := a.tokenTime()
 	rows, err := tx.QueryContext(r.Context(), `SELECT p.id,
 		CASE WHEN p.status='pending' AND p.expires_at<=$4 THEN 'expired'
@@ -323,7 +331,7 @@ func (a *app) listPOSCatalogProposals(w http.ResponseWriter, r *http.Request, u 
 	if err = rows.Err(); err != nil {
 		return err
 	}
-	if err = tx.Commit(); err != nil {
+	if err = lease.commit(r.Context(), tx); err != nil {
 		return err
 	}
 	jsonResponse(w, http.StatusOK, map[string]any{"proposals": items})
@@ -354,11 +362,15 @@ func (p posCatalogWireRow) validatedPOSCatalog(s wikiProposalScope, op posCatalo
 }
 
 func (a *app) viewPOSCatalogProposal(w http.ResponseWriter, r *http.Request, u user, op posCatalogOperation) error {
-	tx, s, login, err := a.beginPOSCatalogReview(r, u)
+	tx, s, login, err := a.beginPOSCatalogOperationReview(r, u, op)
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback()
+	lease, err := a.hostedPOSCatalogLease(r.Context(), tx, posRenameScopeFrom(s), op)
+	if err != nil {
+		return err
+	}
 	p, err := lookupPOSCatalogProposal(r, tx, s, login, op)
 	if err != nil {
 		return err
@@ -379,7 +391,7 @@ func (a *app) viewPOSCatalogProposal(w http.ResponseWriter, r *http.Request, u u
 		result.Change = &draft
 		result.Digest = hex.EncodeToString(p.changeDigest)
 	}
-	if err = tx.Commit(); err != nil {
+	if err = lease.commit(r.Context(), tx); err != nil {
 		return err
 	}
 	jsonResponse(w, http.StatusOK, result)
@@ -412,11 +424,15 @@ func (a *app) decidePOSCatalogProposal(w http.ResponseWriter, r *http.Request, u
 	if _, err = hex.Decode(confirmed[:], []byte(input.Digest)); err != nil {
 		return badInput
 	}
-	tx, s, login, err := a.beginPOSCatalogReview(r, u)
+	tx, s, login, err := a.beginPOSCatalogOperationReview(r, u, op)
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback()
+	lease, err := a.hostedPOSCatalogLease(r.Context(), tx, posRenameScopeFrom(s), op)
+	if err != nil {
+		return err
+	}
 	p, err := lookupPOSCatalogProposal(r, tx, s, login, op)
 	if err != nil {
 		return err
@@ -439,7 +455,7 @@ func (a *app) decidePOSCatalogProposal(w http.ResponseWriter, r *http.Request, u
 		if err = setPOSCatalogProposalTerminal(ctx, tx, p.ID, state, a.tokenTime().Unix(), nil, nil); err != nil {
 			return err
 		}
-		if err = tx.Commit(); err != nil {
+		if err = lease.commit(r.Context(), tx); err != nil {
 			return err
 		}
 		return wikiProposalUnavailable
@@ -495,7 +511,7 @@ func (a *app) decidePOSCatalogProposal(w http.ResponseWriter, r *http.Request, u
 	if err = setPOSCatalogProposalTerminal(ctx, tx, p.ID, p.Status, now, p.ProductID, p.ProductRevision); err != nil {
 		return err
 	}
-	if err = tx.Commit(); err != nil {
+	if err = lease.commit(r.Context(), tx); err != nil {
 		return err
 	}
 	jsonResponse(w, http.StatusOK, p.posCatalogWireReceipt)
@@ -503,13 +519,17 @@ func (a *app) decidePOSCatalogProposal(w http.ResponseWriter, r *http.Request, u
 }
 
 func (a *app) beginPOSCatalogReview(r *http.Request, u user) (*sql.Tx, wikiProposalScope, [32]byte, error) {
+	return a.beginPOSCatalogOperationReview(r, u, 0)
+}
+
+func (a *app) beginPOSCatalogOperationReview(r *http.Request, u user, op posCatalogOperation) (*sql.Tx, wikiProposalScope, [32]byte, error) {
 	var zero [32]byte
 	s, err := wikiProposalPath(r)
 	if err != nil {
 		return nil, s, zero, err
 	}
 	s.actor = u.id
-	tx, err := a.db.BeginTx(r.Context(), nil)
+	tx, err := a.db.BeginTx(r.Context(), a.hostedPOSCatalogTxOptions(op))
 	if err != nil {
 		return nil, s, zero, err
 	}

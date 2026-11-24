@@ -53,7 +53,7 @@ granted AS (
     FROM gomar.discovery_scope_epoch h JOIN relevant b USING(business_ref)
     GROUP BY h.business_ref
 ), eligible AS (
-    SELECT n.business_ref
+    SELECT n.business_ref,MIN(h.verified_at) AS verified_at,MIN(h.valid_until) AS valid_until
     FROM newest n JOIN gomar.discovery_scope_epoch h ON (h.business_ref,h.epoch)=(n.business_ref,n.epoch)
     CROSS JOIN discovery_input i
     GROUP BY n.business_ref

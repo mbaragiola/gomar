@@ -523,3 +523,13 @@ fixture evidence; a tool cannot install, renew, revoke, or import an
 observation. The actual same-database desktop/mobile and packaged MCP
 regression updates fixture evidence through the same internal apply seam,
 including admission, suspension, an out-of-order positive, and expiry.
+
+Only the existing `gomar_propose_pos_barcode` and its native review and
+approval share the isolated test fixture's barcode-write gate. An exact
+barcode proposal key still cannot approve. The same original authorized
+browser shows and confirms the existing change; a stale human view or
+already issued key cannot bypass suspension or expiry for that branch.
+Tests cover exact scope, allowed native set and human-approved clear,
+expired and suspended generic denial with no receipt, and unchanged
+revision history, sale and stock on denial. Other proposal lanes and
+barcode lookup remain outside this proof.

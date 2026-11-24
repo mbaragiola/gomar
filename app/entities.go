@@ -88,6 +88,10 @@ func scopedMembership(tx *sql.Tx, userID, entityID int64, capability string) (en
 }
 
 func (a *app) scopedRequest(capability string, next scopedHandler, readBody bool) http.HandlerFunc {
+	return a.scopedRequestPrelock(capability, next, readBody, nil)
+}
+
+func (a *app) scopedRequestPrelock(capability string, next scopedHandler, readBody bool, prelock func(*http.Request, *sql.Tx, user) error) http.HandlerFunc {
 	return a.protected(func(w http.ResponseWriter, r *http.Request, u user) error {
 		id, err := pathID(r, "entity")
 		if err != nil {
@@ -98,11 +102,23 @@ func (a *app) scopedRequest(capability string, next scopedHandler, readBody bool
 		if readBody {
 			requestBody, bodyErr = readJSONBody(w, r)
 		}
-		tx, err := a.beginEmployeeCheckedWrite(r, u)
+		var tx *sql.Tx
+		if prelock != nil && !u.employee {
+			// The hosted scope recheck must see observations committed
+			// while waiting on the scope row, regardless of server defaults.
+			tx, err = a.db.BeginTx(r.Context(), &sql.TxOptions{Isolation: sql.LevelReadCommitted})
+		} else {
+			tx, err = a.beginEmployeeCheckedWrite(r, u)
+		}
 		if err != nil {
 			return err
 		}
 		defer tx.Rollback()
+		if prelock != nil {
+			if err := prelock(r, tx, u); err != nil {
+				return err
+			}
+		}
 		m, err := scopedMembership(tx, u.id, id, capability)
 		if err != nil {
 			return err

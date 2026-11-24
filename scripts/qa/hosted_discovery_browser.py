@@ -60,7 +60,7 @@ def advance(phase):
 
 
 @contextmanager
-def mcp_session(page, number, outlet, *, raw=False):
+def mcp_session(page, number, outlet, *, raw=False, proposal_action=None):
     status, issued = request(page, "/api/v1/auth/mcp-token", {"entity_id": number, "outlet_id": outlet})
     assert status == 201
     token = Path(scratch) / f"fixture-token-{number}-{outlet}"
@@ -68,10 +68,20 @@ def mcp_session(page, number, outlet, *, raw=False):
         stream.write(issued["token"] + "\n")
     environ = {key: val for key, val in os.environ.items() if key in ("PATH", "HOME", "LANG", "LD_LIBRARY_PATH")}
     environ["SSL_CERT_FILE"] = certificate
+    args = [binary, "--origin", origin, "--token-file", str(token)]
+    proposal_token = None
     try:
-        with subprocess.Popen([binary, "--origin", origin, "--token-file", str(token)], env=environ,
-                              stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
-                              text=True) as peer:
+        if proposal_action is not None:
+            status, issued = request(page, "/api/v1/auth/mcp-proposal-sessions", {
+                "entity_id": number, "outlet_id": outlet, "actions": [proposal_action],
+            })
+            assert status == 201
+            proposal_token = Path(scratch) / f"fixture-proposal-{number}-{outlet}"
+            with os.fdopen(os.open(proposal_token, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600), "w") as stream:
+                stream.write(issued["token"] + "\n")
+            args.extend(["--proposal-session-token-file", str(proposal_token), "--proposal-session-action", proposal_action])
+        with subprocess.Popen(args, env=environ, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                              stderr=subprocess.DEVNULL, text=True) as peer:
             count = 0
 
             def rpc(method, params, notification=False):
@@ -114,6 +124,8 @@ def mcp_session(page, number, outlet, *, raw=False):
                     peer.kill()
                     peer.wait()
     finally:
+        if proposal_token is not None:
+            proposal_token.unlink(missing_ok=True)
         token.unlink()
 
 
