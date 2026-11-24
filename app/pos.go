@@ -84,7 +84,11 @@ func (a *app) registerPOS(add func(string, string, http.HandlerFunc)) {
 	}
 	add(posPath+"/catalog", "POST", manage(savePOSProduct))
 	add(posPath+"/catalog/{product}", "PUT", manage(savePOSProduct))
-	add(posPath+"/catalog/{product}/barcode", "PUT", manage(savePOSBarcode))
+	barcode := manage(a.savePOSBarcode)
+	if a.hostedDiscoveryRead != nil {
+		barcode = a.scopedRequestPrelock("manage_entity_access", lockPOSWriteScope("manage_entity_access", false, a.savePOSBarcode), true, lockHostedNativeBarcodeBrowser)
+	}
+	add(posPath+"/catalog/{product}/barcode", "PUT", barcode)
 	add(posPath+"/sales", "POST", sell(func(r *http.Request, tx *sql.Tx, m entityMembership, raw []byte) (int, any, error) {
 		return postPOSSale(r, tx, m, raw, a.enableStock, a.posTime)
 	}))

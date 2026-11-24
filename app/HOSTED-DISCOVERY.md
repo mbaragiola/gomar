@@ -1,6 +1,6 @@
-# Isolated hosted entity and outlet discovery
+# Isolated hosted discovery, timing and barcode proof
 
-This is only an explicitly injected, narrow read fixture. There is no
+This is only an explicitly injected, narrow hosted fixture. There is no
 startup flag, producer, live eligibility connection, or deployment
 setting. Existing and self-hosted apps keep their normal behavior when
 the discovery fixture is absent.
@@ -34,12 +34,12 @@ Discovery neither creates capabilities nor admits a proposal-only
 membership to outlet or MCP reads. No opaque paid references or
 verification details are returned.
 
-Only the existing native entity/outlet lists, exact own Caja sale timing,
-and their corresponding packaged MCP reads are covered. This is not a hosted access or
-revocation guarantee for POS writes, other MCP tools, proposals, admin,
-public menus/reservations, background work, branch expansion, or
-offline Caja. The fixture is not safe to turn on as a shared production
-mode.
+The read portion covers only the existing native entity/outlet lists,
+exact own Caja sale timing, and their corresponding packaged MCP reads.
+The barcode lane below is its sole write exception. There is no shared
+production mode or hosted access guarantee for other POS operations,
+MCP tools, proposal types, administration, public menus/reservations,
+background work, branch expansion, or offline Caja.
 
 The existing exact Caja sale-time lookup is also included. Both the
 native **Horarios de la venta de Caja** handoff and
@@ -85,3 +85,28 @@ The isolated fixture assumes one configured trust source per database.
 Do not rotate or mix sources, trust existing raw rows as authenticated,
 or turn this into a production admission path without a separate durable
 provenance, migration, and transport decision.
+
+## Existing product barcode only
+
+The injected fixture can set or clear one existing product's barcode
+using the current native endpoint or the existing barcode proposal and
+human browser decision. It does not grant either path a new right. The
+native transaction pins its existing authenticated actor and exact
+ordinary login first. All paths keep existing entity, role, outlet,
+credential, proposal-session, digest and CSRF checks. Only the barcode
+lane adds a lock on its exact mapped paid scope, after its operational
+locks. It uses `FOR SHARE`, conflicting with the observation appender's
+`FOR UPDATE`; the appender never takes operational locks. Read Committed
+rechecks #044 eligibility and the full map after the lock, then checks
+the same lease's original deadline again before commit or receipt.
+
+A suspended, unmapped or expired paid scope returns a generic denial
+for native save and barcode proposal preparation, replay, review and
+decision. A failed transaction leaves the old barcode, product revision,
+proposal and receipt intact. A writer already holding the scope can
+finish before the subsequent observed suspension if its lease is still
+current; this is not a cross-service or instant revocation claim.
+Explicit self-host and the unconfigured app retain their existing
+policy. Other catalog actions, barcode lookup, named key issue/revoke,
+background pruning, payment, sales, stock and offline paths are not
+changed. No real transport, permissions, rollout or new schema is added.

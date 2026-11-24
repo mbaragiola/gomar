@@ -37,6 +37,11 @@ func newDiscoveryTestServer(t *testing.T, ctx context.Context, db *sql.DB, mode 
 
 func newDiscoveryTestServerForSubject(t *testing.T, ctx context.Context, db *sql.DB, mode *hostedDiscoveryReadFixture, subject string) discoveryTestServer {
 	t.Helper()
+	return newDiscoveryTestServerConfigured(t, ctx, db, mode, subject, nil)
+}
+
+func newDiscoveryTestServerConfigured(t *testing.T, ctx context.Context, db *sql.DB, mode *hostedDiscoveryReadFixture, subject string, configure func(*app)) discoveryTestServer {
+	t.Helper()
 	var routes http.Handler
 	server := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { routes.ServeHTTP(w, r) }))
 	t.Cleanup(server.Close)
@@ -44,6 +49,9 @@ func newDiscoveryTestServerForSubject(t *testing.T, ctx context.Context, db *sql
 	a := &app{db: db, host: host, enableMCP: true, hostedDiscoveryRead: mode,
 		enablePOS: true, enableMCPProposalSessions: true,
 		providerAuth: &hostedProviderAuth{host: host, origin: "https://" + host}}
+	if configure != nil {
+		configure(a)
+	}
 	mux := http.NewServeMux()
 	mux.Handle("/", a.routes())
 	mux.HandleFunc("GET "+fixtureDiscoverySignIn, func(w http.ResponseWriter, r *http.Request) {
