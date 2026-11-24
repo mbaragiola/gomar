@@ -1,4 +1,4 @@
-# Isolated hosted discovery, timing and barcode proof
+# Isolated hosted discovery and scoped operations proof
 
 This is only an explicitly injected, narrow hosted fixture. There is no
 startup flag, producer, live eligibility connection, or deployment
@@ -36,7 +36,7 @@ verification details are returned.
 
 The read portion covers only the existing native entity/outlet lists,
 exact own Caja sale timing, their corresponding packaged MCP reads, and
-the packaged monthly sales summary.
+the packaged monthly sales summary, and the existing protected stock reads.
 The barcode lane below is its sole write exception. There is no shared
 production mode or hosted access guarantee for other POS operations,
 MCP tools, proposal types, administration, public menus/reservations,
@@ -130,3 +130,23 @@ Aires month still uses the immutable Gomar registration time, not device
 clock claims; legacy receipts and an exact offline retry stay accounted
 as before. No browser view, sale writer, stock, payment, role, or default
 query changes.
+
+## Existing stock reads only
+
+Inside the same injected fixture, the native stock panel and its
+protected product movement GET and the five existing packaged stock
+operations require the original stock role and exact active outlet grant.
+MCP also keeps its existing credential/entity/outlet pin checks. Adding
+the current mapped #044 outlet check returns the usual generic 404
+for an unmapped, suspended, or expired paid outlet, before any stock
+data is read. Paid admission and stock data share one read-only
+repeatable-read snapshot; a newer request takes a fresh snapshot. The
+browser's existing authentication and employee organization checks
+still apply. The default app keeps its original transactions and
+explicit self-host keeps its existing permissions and data.
+
+An admitted empty or disabled stock configuration is not the same as
+a denied outlet. Existing tracked, disabled, negative, low and healthy
+stock, list/filter cursors, and the Buenos Aires movement period and
+detail are unchanged. This covers no settings, movement or sale writer,
+stock proposal, catalog read, public route, worker or offline behavior.

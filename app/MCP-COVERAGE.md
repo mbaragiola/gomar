@@ -543,3 +543,17 @@ returns zero, and denial exposes no names, amounts or binding data.
 The Buenos Aires registration month, original offline replay, stock,
 self-hosted empty root, and default behavior are unchanged. There is no
 corresponding browser endpoint or new tool.
+
+The isolated hosted fixture covers the existing protected stock panel
+and product movement GET alongside `gomar_list_stock` (including alert
+filters and cursors), `gomar_read_stock_product`,
+`gomar_stock_alert_summary`, `gomar_stock_movements`, and
+`gomar_list_stock_movements`. Each read checks the original role and
+outlet grant (plus MCP credential scope) and current #044 exact outlet
+before any stock data. The browser stock and admission queries share a
+read-only repeatable-read transaction, as do the packaged reads.
+Not-found has no counts, product labels, movements or paid references.
+Allowed empty/disabled stock, stock and sale history, self-host and
+default behavior are unchanged. The local browser and packaged
+permission checks reuse already-issued access across suspension and
+expiry; no tool, write or production admission was added.

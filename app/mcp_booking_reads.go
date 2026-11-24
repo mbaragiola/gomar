@@ -23,7 +23,7 @@ func (a *app) registerMCPBookingReads(add func(string, string, http.HandlerFunc)
 		add(mcpWorkspaceBase+"/pos-catalog", http.MethodGet, a.mcpRead(mcpPOSCatalog))
 		add(mcpWorkspaceBase+"/pos-catalog/{product}", http.MethodGet, a.mcpRead(mcpPOSCatalogProduct))
 		if a.enableStock {
-			add(mcpWorkspaceBase+"/stock/products/{product}/movements-summary", http.MethodGet, a.mcpRead(mcpStockMovements))
+			add(mcpWorkspaceBase+"/stock/products/{product}/movements-summary", http.MethodGet, a.mcpRead(a.mcpStockMovements))
 		}
 	}
 }
@@ -258,11 +258,11 @@ func mcpPOSCatalog(r *http.Request, tx *sql.Tx, s mcpTokenScope) (any, error) {
 	return result, rows.Err()
 }
 
-func mcpStockMovements(r *http.Request, tx *sql.Tx, s mcpTokenScope) (any, error) {
-	if !slices.Contains([]string{"administration", "purchasing", "accounting"}, s.role) {
+func (a *app) mcpStockMovements(r *http.Request, tx *sql.Tx, s mcpTokenScope) (any, error) {
+	if !stockReadRole(s.role) {
 		return nil, forbiddenRole
 	}
-	outlet, err := mcpWorkspaceOutlet(r, tx, s)
+	outlet, err := a.mcpStockReadOutlet(r, tx, s)
 	if err != nil {
 		return nil, err
 	}

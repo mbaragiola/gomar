@@ -20,7 +20,7 @@ func (a *app) registerMCPFinanceStockReads(add func(string, string, http.Handler
 	add(mcpWorkspaceBase+"/recorded-payments", http.MethodGet, a.mcpRead(mcpListRecordedPayments))
 	add(mcpWorkspaceBase+"/recorded-payments/{payment}", http.MethodGet, a.mcpRead(mcpReadRecordedPayment))
 	if a.enablePOS && a.enableStock {
-		add(mcpWorkspaceBase+"/stock/products/{product}/movements", http.MethodGet, a.mcpRead(mcpListStockMovementDetails))
+		add(mcpWorkspaceBase+"/stock/products/{product}/movements", http.MethodGet, a.mcpRead(a.mcpListStockMovementDetails))
 	}
 }
 
@@ -221,11 +221,11 @@ func mcpReadRecordedPayment(r *http.Request, tx *sql.Tx, s mcpTokenScope) (any, 
 	return mcpFinanceRecord(r, tx, s, mcpRecordedPaymentSelect+mcpRecordedPaymentScope, "payment", missingPayment, mcpScanRecordedPayment)
 }
 
-func mcpListStockMovementDetails(r *http.Request, tx *sql.Tx, s mcpTokenScope) (any, error) {
-	if !slices.Contains([]string{"administration", "purchasing", "accounting"}, s.role) {
+func (a *app) mcpListStockMovementDetails(r *http.Request, tx *sql.Tx, s mcpTokenScope) (any, error) {
+	if !stockReadRole(s.role) {
 		return nil, forbiddenRole
 	}
-	outlet, err := mcpWorkspaceOutlet(r, tx, s)
+	outlet, err := a.mcpStockReadOutlet(r, tx, s)
 	if err != nil {
 		return nil, err
 	}

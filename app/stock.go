@@ -43,6 +43,9 @@ func (a *app) registerStock(add func(string, string, http.HandlerFunc), enabled 
 		return
 	}
 	route := func(admin, body bool, next scopedHandler) http.HandlerFunc {
+		if !body && a.hostedDiscoveryRead != nil {
+			return a.hostedNativeStockRead(next)
+		}
 		capability := "read_business_data"
 		if admin {
 			capability = "manage_entity_access"
@@ -62,10 +65,10 @@ func (a *app) registerStock(add func(string, string, http.HandlerFunc), enabled 
 			handler(w, r)
 		}
 	}
-	add(stockPath, "GET", route(false, false, listStock))
+	add(stockPath, "GET", route(false, false, a.listStock))
 	add(stockPath+"/settings", "PUT", route(true, true, saveStockOutlet))
 	add(stockPath+"/products/{product}", "PUT", route(true, true, saveStockProduct))
-	add(stockPath+"/products/{product}/movements", "GET", route(false, false, listStockMovements))
+	add(stockPath+"/products/{product}/movements", "GET", route(false, false, a.listStockMovements))
 	add(stockPath+"/products/{product}/movements", "POST", route(false, true, postStockMovement))
 }
 
@@ -107,9 +110,9 @@ func stockReadRole(role string) bool {
 	return false
 }
 
-func listStock(r *http.Request, tx *sql.Tx, m entityMembership, _ []byte) (int, any, error) {
+func (a *app) listStock(r *http.Request, tx *sql.Tx, m entityMembership, _ []byte) (int, any, error) {
 	ctx := r.Context()
-	outlet, err := posOutlet(r, tx, m)
+	outlet, err := a.nativeStockReadOutlet(r, tx, m)
 	if err != nil {
 		return 0, nil, err
 	}
@@ -197,8 +200,8 @@ func saveStockProduct(r *http.Request, tx *sql.Tx, m entityMembership, raw []byt
 	return 200, input, err
 }
 
-func listStockMovements(r *http.Request, tx *sql.Tx, m entityMembership, _ []byte) (int, any, error) {
-	outlet, err := posOutlet(r, tx, m)
+func (a *app) listStockMovements(r *http.Request, tx *sql.Tx, m entityMembership, _ []byte) (int, any, error) {
+	outlet, err := a.nativeStockReadOutlet(r, tx, m)
 	if err != nil {
 		return 0, nil, err
 	}
