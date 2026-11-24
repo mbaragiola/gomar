@@ -494,3 +494,15 @@ status and plan-authoring denial and an unassigned owner. The operator
 fixture verifies exact recovery scope, one explicit save and ordinary
 session, stale, changed and replay denials; the owner browser sees only
 the exact authored display.
+
+### Hosted discovery read fixture
+
+The two existing lists, `gomar_list_entities` and `gomar_list_outlets`,
+share the native entity/outlet admission check in the isolated
+[hosted discovery fixture](HOSTED-DISCOVERY.md). The proof keeps one
+ordinary account and its already issued exact credentials across two
+paid scopes in the same disposable database. Suspension and expiration
+hide the affected entity and deny both of its discovery calls without
+disclosing private paid references. The other scope and self-hosted
+control keep their prior grants. There is no new MCP tool or broader
+hosted authorization.

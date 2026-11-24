@@ -23,6 +23,7 @@ type app struct {
 	providerAuth        *hostedProviderAuth
 	nativeSignup        *nativeSignupHosted
 	signupPlanAdmin     *adminSignupPlanFixture
+	hostedDiscoveryRead *hostedDiscoveryReadFixture
 	adminRecovery       bool
 	providerOnly        bool
 	providerEmployee    bool
@@ -297,7 +298,7 @@ func (a *app) routes() http.Handler {
 		return nil
 	}))
 	addAPI("/api/v1/entities", "GET", a.protected(a.entities))
-	addAPI("/api/v1/entities/{entity}/outlets", "GET", a.scoped("read_business_data", listOutlets))
+	addAPI("/api/v1/entities/{entity}/outlets", "GET", a.scoped("read_business_data", a.listDiscoveryOutlets))
 	addAPI("/api/v1/entities/{entity}/suppliers", "GET", a.scoped("read_business_data", listSuppliers))
 	addAPI("/api/v1/entities/{entity}/management", "GET", a.scoped("manage_entity_access", management))
 	addAPI("/api/v1/entities/{entity}", "PUT", a.scopedMutation(updateEntity))

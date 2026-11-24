@@ -141,13 +141,38 @@ func (a *app) entities(w http.ResponseWriter, r *http.Request, u user) error {
 		RoleLabel    string   `json:"rol_nombre"`
 		Capabilities []string `json:"capacidades"`
 	}
-	rows, err := a.db.QueryContext(r.Context(), `SELECT e.id,e.name,e.cuit,m.role,
+	ctx := r.Context()
+	var querier discoveryReadQuerier = a.db
+	var tx *sql.Tx
+	var err error
+	query := `SELECT e.id,e.name,e.cuit,m.role,
 		$2 AND EXISTS(SELECT 1 FROM mcp_proposal_sessions k
 			JOIN sessions s ON s.token_hash=k.login_hash AND s.user_id=k.actor_id AND s.password_digest=k.password_digest
 			WHERE k.actor_id=m.user_id AND k.entity_id=e.id AND k.expires_at>$3 AND k.revoked_at IS NULL AND s.expires>$4)
 		FROM memberships m JOIN entities e ON e.id=m.entity_id
-		WHERE m.user_id=$1 AND m.active=TRUE AND e.active=TRUE AND ($5=0 OR e.id=$5) ORDER BY e.id`,
-		u.id, a.posRenameProposalsEnabled() || a.documentReviewProposalsEnabled() || a.stockAdjustmentProposalsEnabled(), a.tokenTime().Unix(), time.Now().Unix(), u.employeeOrg)
+		WHERE m.user_id=$1 AND m.active=TRUE AND e.active=TRUE AND ($5=0 OR e.id=$5)`
+	args := []any{u.id, a.posRenameProposalsEnabled() || a.documentReviewProposalsEnabled() || a.stockAdjustmentProposalsEnabled(),
+		a.tokenTime().Unix(), time.Now().Unix(), u.employeeOrg}
+	if a.hostedDiscoveryRead != nil {
+		tx, err = a.db.BeginTx(ctx, &sql.TxOptions{Isolation: sql.LevelRepeatableRead, ReadOnly: true})
+		if err != nil {
+			return err
+		}
+		defer tx.Rollback()
+		scopes, err := a.hostedDiscoveryRead.discover(ctx, tx, u.id,
+			sql.NullInt64{Int64: u.employeeOrg, Valid: u.employeeOrg != 0}, sql.NullInt64{}, true)
+		if err != nil {
+			return err
+		}
+		ids := make([]int64, 0, len(scopes))
+		for id := range scopes {
+			ids = append(ids, id)
+		}
+		query += ` AND e.id=ANY($6::bigint[])`
+		args = append(args, ids)
+		querier = tx
+	}
+	rows, err := querier.QueryContext(ctx, query+` ORDER BY e.id`, args...)
 	if err != nil {
 		return err
 	}
@@ -282,6 +307,11 @@ func (a *app) entities(w http.ResponseWriter, r *http.Request, u user) error {
 	}
 	if err := rows.Err(); err != nil {
 		return err
+	}
+	if tx != nil {
+		if err := tx.Commit(); err != nil {
+			return err
+		}
 	}
 	jsonResponse(w, 200, result)
 	return nil
