@@ -84,3 +84,23 @@ Even a reversal after the private check cannot create operational
 access here. No authenticated inter-service transport, cross-database
 atomicity, request mapping in a live system, checkout, public route,
 MCP workflow, or activation mechanism is provided.
+
+### Disposable staged-activation proof
+
+The separate `staged_activation_proof` provider subtest uses real
+operational table constraints in a disposable database. It creates one
+new inactive entity, only the exact approved branches, and one inactive
+administration membership and its exact grants in one transaction with
+an immutable staged receipt. It verifies the exact pending branch
+references **and names** against the approved draft; existing CUITs
+are not adopted. A distinct synthetic, fresh staging authority is
+required, never the first-install observation or an old receipt.
+
+Quarantine triggers and the motion that creates these rows exist
+only in the test binary and its database. An ordinary recovery
+catalog action cannot enable the fixture rows, and regular application
+and MCP credential entry points give them no access. The fixture never
+enables any operational usage. There is no registered staging/activation
+route or migration, runtime hosted authorization gate, proof of packaged
+MCP activation/suspension, tenancy or RLS choice, real provider, or
+cross-store atomicity.
