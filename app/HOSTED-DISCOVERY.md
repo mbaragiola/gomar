@@ -35,7 +35,8 @@ membership to outlet or MCP reads. No opaque paid references or
 verification details are returned.
 
 The read portion covers only the existing native entity/outlet lists,
-exact own Caja sale timing, and their corresponding packaged MCP reads.
+exact own Caja sale timing, their corresponding packaged MCP reads, and
+the packaged monthly sales summary.
 The barcode lane below is its sole write exception. There is no shared
 production mode or hosted access guarantee for other POS operations,
 MCP tools, proposal types, administration, public menus/reservations,
@@ -110,3 +111,22 @@ Explicit self-host and the unconfigured app retain their existing
 policy. Other catalog actions, barcode lookup, named key issue/revoke,
 background pruning, payment, sales, stock and offline paths are not
 changed. No real transport, permissions, rollout or new schema is added.
+
+
+## Existing packaged monthly sales summary
+
+The isolated fixture also narrows `gomar_sales_summary` to current exact
+mapped, active outlets that the credential's actor already has permission
+to read. The same repeatable-read statement both derives that set and
+aggregates its receipts. A pinned credential cannot broaden its outlet;
+a company-level credential may choose a single already admitted outlet.
+Scope that is missing, suspended or expired returns the existing generic
+not-found, without names, counts, amounts or branch references. An
+admitted outlet with no receipts returns zero. An explicitly self-hosted
+company with no active grants keeps the existing empty company report.
+
+Only the existing MCP read changes in this fixture. The half-open Buenos
+Aires month still uses the immutable Gomar registration time, not device
+clock claims; legacy receipts and an exact offline retry stay accounted
+as before. No browser view, sale writer, stock, payment, role, or default
+query changes.

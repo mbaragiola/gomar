@@ -279,6 +279,19 @@ func mcpMonth(now time.Time, period string) (time.Time, time.Time, error) {
 	return from, from.AddDate(0, 1, 0), nil
 }
 
+// Only the opt-in fixture uses this aggregate. Derive the exact outlets
+// and sum their accounted receipts in one repeatable-read statement. A
+// self-hosted root with no grants has a null-outlet sentinel; an admitted
+// active outlet with no receipts remains a real zero-valued row.
+const hostedMonthlySalesSQL = `
+WITH discovery_input(actor_id,entity_id,outlet_id,checked_at,native_entity_list) AS (
+    VALUES ($1::bigint,$2::bigint,$3::bigint,COALESCE($6::timestamptz,statement_timestamp()),FALSE)
+), ` + hostedScopeEligibilitySQL + `
+SELECT d.outlet_id,d.name,COUNT(p.id),COALESCE(SUM(p.total_minor),0)::bigint
+FROM discovery_admitted d
+LEFT JOIN gomar.pos_sales p ON p.outlet_id=d.outlet_id AND p.recorded_at >= $4 AND p.recorded_at < $5
+GROUP BY d.outlet_id,d.name ORDER BY d.outlet_id`
+
 func (a *app) mcpSalesSummary(r *http.Request, tx *sql.Tx, s mcpTokenScope) (any, error) {
 	q, err := url.ParseQuery(r.URL.RawQuery)
 	if err != nil || len(q["period"]) != 1 {
@@ -311,21 +324,40 @@ func (a *app) mcpSalesSummary(r *http.Request, tx *sql.Tx, s mcpTokenScope) (any
 	// The stored UTC string can end immediately in Z or have fractional
 	// seconds. Whole-second prefixes keep both forms on the correct side.
 	const prefix = "2006-01-02T15:04:05"
-	rows, err := tx.QueryContext(r.Context(), `SELECT o.id,o.name,count(p.id),COALESCE(sum(p.total_minor),0)::bigint
+	query := `SELECT o.id,o.name,count(p.id),COALESCE(sum(p.total_minor),0)::bigint
 		FROM outlets o JOIN outlet_grants g ON g.outlet_id=o.id
 		LEFT JOIN pos_sales p ON p.outlet_id=o.id AND p.recorded_at >= $4 AND p.recorded_at < $5
 		WHERE g.membership_id=$1 AND o.entity_id=$2 AND o.active=TRUE AND ($3::bigint IS NULL OR o.id=$3)
-		GROUP BY o.id,o.name ORDER BY o.id`, s.id, s.ID, outlet, from.UTC().Format(prefix), to.UTC().Format(prefix))
+		GROUP BY o.id,o.name ORDER BY o.id`
+	args := []any{s.id, s.ID, outlet, from.UTC().Format(prefix), to.UTC().Format(prefix)}
+	hosted := a.hostedDiscoveryRead
+	if hosted != nil {
+		query = hostedMonthlySalesSQL
+		args[0] = s.userID
+		var clock sql.NullTime
+		if hosted.now != nil {
+			clock = sql.NullTime{Time: hosted.clock(), Valid: true}
+		}
+		args = append(args, clock)
+	}
+	rows, err := tx.QueryContext(r.Context(), query, args...)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 	res := mcpSales{Period: period, Timezone: payablesLocation.String(), From: from.Format(time.RFC3339), To: to.Format(time.RFC3339), Currency: "ARS", Outlets: []mcpSalesOutlet{}}
+	found := false
 	for rows.Next() {
 		var row mcpSalesOutlet
-		if err := rows.Scan(&row.ID, &row.Name, &row.SaleCount, &row.TotalMinor); err != nil {
+		var id sql.NullInt64
+		if err := rows.Scan(&id, &row.Name, &row.SaleCount, &row.TotalMinor); err != nil {
 			return nil, err
 		}
+		found = true
+		if !id.Valid { // Explicit self-host root, no active grants.
+			continue
+		}
+		row.ID = id.Int64
 		if res.SaleCount > (1<<63)-1-row.SaleCount || res.TotalMinor > (1<<63)-1-row.TotalMinor {
 			return nil, errors.New("sales summary exceeds signed 64-bit range")
 		}
@@ -333,5 +365,14 @@ func (a *app) mcpSalesSummary(r *http.Request, tx *sql.Tx, s mcpTokenScope) (any
 		res.TotalMinor += row.TotalMinor
 		res.Outlets = append(res.Outlets, row)
 	}
-	return res, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	if hosted != nil && !found {
+		if outlet.Valid {
+			return nil, missingOutlet
+		}
+		return nil, missingEntity
+	}
+	return res, nil
 }
