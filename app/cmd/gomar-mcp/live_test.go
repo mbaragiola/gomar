@@ -16,10 +16,13 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
+const liveReadToolCount = 42
+
 func TestLiveStdioScopedTools(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	defer cancel()
 	const secret = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+	const saleID = "92000000-0000-4000-8000-000000000001"
 	var requests atomic.Int32
 	web := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		requests.Add(1)
@@ -41,6 +44,13 @@ func TestLiveStdioScopedTools(t *testing.T) {
 				t.Errorf("incorrect sales query: %s", r.URL.RawQuery)
 			}
 			_, _ = io.WriteString(w, `{"period":"this_month","timezone":"America/Argentina/Buenos_Aires","from":"2026-11-01T00:00:00-03:00","to":"2026-12-01T00:00:00-03:00","currency":"ARS","sale_count":1,"total_minor":1050,"outlets":[{"id":10,"name":"Centro","sale_count":1,"total_minor":1050}]}`)
+		case "/api/v1/mcp/entities/20/outlets/10/pos-sale-times/" + saleID:
+			_, _ = io.WriteString(w, `{"request_id":"`+saleID+`","registered_at_utc":"2026-12-01T03:07:00Z","till_reported_at_utc":"2026-12-01T02:58:00Z","till_time_status":"unverified","handoff_url":"/pos#entity=20&outlet=10&venta=`+saleID+`","private":"`+secret+`"}`)
+		case "/api/v1/mcp/entities/20/outlets/11/pos-sale-times/" + saleID,
+			"/api/v1/mcp/entities/21/outlets/10/pos-sale-times/" + saleID,
+			"/api/v1/mcp/entities/20/outlets/12/pos-sale-times/" + saleID:
+			w.WriteHeader(http.StatusNotFound)
+			_, _ = io.WriteString(w, secret)
 		case "/api/v1/mcp/entities/20/outlets/10/knowledge":
 			if r.URL.Query().Get("q") != "turno & cocina" || len(r.URL.Query()) != 1 {
 				t.Errorf("incorrect knowledge query: %s", r.URL.RawQuery)
@@ -192,7 +202,7 @@ func TestLiveStdioScopedTools(t *testing.T) {
 	}
 	defer session.Close()
 	metadata, err := session.ListTools(ctx, &mcp.ListToolsParams{})
-	if err != nil || len(metadata.Tools) != 41 {
+	if err != nil || len(metadata.Tools) != liveReadToolCount {
 		t.Fatal(metadata, err)
 	}
 	for _, tool := range metadata.Tools {
@@ -208,6 +218,11 @@ func TestLiveStdioScopedTools(t *testing.T) {
 	}{
 		{"gomar_current_user", nil, `"username":"prueba"`, false},
 		{"gomar_list_entities", nil, `"id":20`, false},
+		{"gomar_read_pos_sale_time", map[string]any{"entity_id": 20, "outlet_id": 10, "request_id": saleID}, `"till_reported_at_utc":"2026-12-01T02:58:00Z"`, false},
+		{"gomar_read_pos_sale_time", map[string]any{"entity_id": 20, "outlet_id": 11, "request_id": saleID}, "permisos", true},
+		{"gomar_read_pos_sale_time", map[string]any{"entity_id": 21, "outlet_id": 10, "request_id": saleID}, "permisos", true},
+		{"gomar_read_pos_sale_time", map[string]any{"entity_id": 20, "outlet_id": 12, "request_id": saleID}, "permisos", true},
+		{"gomar_read_pos_sale_time", map[string]any{"entity_id": 20, "outlet_id": 10, "request_id": "/wrong"}, "referencia exacta", true},
 		{"gomar_list_outlets", map[string]any{"entity_id": 20}, `"name":"Centro"`, false},
 		{"gomar_sales_summary", map[string]any{"entity_id": 20, "outlet_id": 10, "period": "this_month"}, `"total_minor":1050`, false},
 		{"gomar_sales_summary", map[string]any{"entity_id": 21, "period": "this_month"}, "permisos", true},
@@ -280,7 +295,7 @@ func TestLiveStdioScopedTools(t *testing.T) {
 			t.Fatalf("unexpected result for %s: %s", test.name, wire)
 		}
 	}
-	if requests.Load() != 47 {
+	if requests.Load() != 51 {
 		t.Fatalf("wrong number of requests: %d", requests.Load())
 	}
 	if err := session.Close(); err != nil {

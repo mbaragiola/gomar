@@ -149,8 +149,8 @@ func TestTwoProposalLanesDoNotShareCredentialsOrFallback(t *testing.T) {
 	}
 	defer session.Close()
 	list, err := session.ListTools(ctx, nil)
-	if err != nil || len(list.Tools) != 43 {
-		t.Fatal("expected 41 read tools and two distinct proposal tools", err)
+	if err != nil || len(list.Tools) != liveReadToolCount+2 {
+		t.Fatal("expected base read tools and two distinct proposal tools", err)
 	}
 	for _, tool := range list.Tools {
 		if !tool.Annotations.ReadOnlyHint && tool.Name != "gomar_propose_pos_rename" && tool.Name != "gomar_propose_stock_minimum_change" {

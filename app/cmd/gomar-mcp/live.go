@@ -44,12 +44,13 @@ func liveServer(client *mcpclient.Client) *mcp.Server {
 	readTool(server, "gomar_list_outlets", "Lista las sucursales activas y autorizadas de una empresa. Usá el ID de gomar_list_entities.", func(ctx context.Context, in entityArgs) (mcpclient.Outlets, error) {
 		return client.Outlets(ctx, in.EntityID)
 	})
-	readTool(server, "gomar_sales_summary", "Responde cuánto vendimos este mes o el anterior a partir de ventas registradas en la caja de Gomar. No incluye pedidos de delivery, facturas de proveedores ni ventas no registradas. Los importes total_minor son centavos de la moneda indicada. Confirmá la empresa con gomar_list_entities y no inventes ventas ni IDs.", func(ctx context.Context, in salesArgs) (mcpclient.Sales, error) {
+	readTool(server, "gomar_sales_summary", "Resume las ventas por el mes en que Gomar las registró, según la hora de Buenos Aires, no por la hora informada por la caja. No acredita un pago ni un comprobante fiscal. No incluye pedidos de delivery, facturas de proveedores ni ventas no registradas. Los importes total_minor son centavos de la moneda indicada. Confirmá la empresa con gomar_list_entities y no inventes ventas ni IDs.", func(ctx context.Context, in salesArgs) (mcpclient.Sales, error) {
 		return client.Sales(ctx, in.EntityID, in.OutletID, in.Period)
 	})
 	addWorkspaceTools(server, client)
 	addAccountingReadTools(server, client)
 	addBookingReadTools(server, client)
+	addPOSSaleTimeTool(server, client)
 	addDetailReadTools(server, client)
 	addFinanceStockReadTools(server, client)
 	addReservationQueueTools(server, client)

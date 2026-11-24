@@ -9,7 +9,7 @@ For everyday examples, see the [Spanish prompt guide](MCP-GUIA-DE-CONSULTAS.md).
 | Workflow | Shipped MCP reads and opt-in proposals | Intentionally stays in Gomar or is not built |
 | --- | --- | --- |
 | Identity and business scope | Current user, businesses, and outlets; propose a display-name change for one active outlet | Native only: business and outlet administration beyond that rename, membership and grant management, credentials and provider sign-in. |
-| POS | Recorded sales totals, product catalog with exact barcode lookup, one exact saved table check and native handoff; propose product creation and separate name, price, availability or barcode changes | Native only: scan into the local cart, save a tab-local untendered cart, explicitly retire an inspected untendered check, preview/print an unsaved table check, register sales, checkout and offline sales sync. Not built: editing or settling a saved table check, and shift management. |
+| POS | Recorded sales totals, own sale time evidence by exact reference, product catalog with exact barcode lookup, one exact saved table check and native handoff; propose product creation and separate name, price, availability or barcode changes | Native only: scan into the local cart, save a tab-local untendered cart, explicitly retire an inspected untendered check, preview/print an unsaved table check, register sales, checkout and offline sales sync. Not built: editing or settling a saved table check, and shift management. |
 | Inventory | Tracked balances and thresholds, including an exact configured item by ID, movement history, filtered alert pages and stock alert counts; propose receipts, waste, physical counts, initial disabled product setup, and changes to a product’s minimum or tracking | Native only: branch-wide settings. Not built: bills of materials. |
 | Wiki | Search and read by ID; propose new pages and versioned edits | Not built: deletion. |
 | Delivery | Recent order status with limited fields; status counts for the latest 100 inbox records | No native staff write workflow. Provider calls and credentials are not part of MCP. |
@@ -398,3 +398,33 @@ one POS sale, counts it once in sales summaries, and releases the table.
 The normal optional stock rules apply. No provider charge, refund, fiscal
 document or fiscal cancellation is made. The ordinary single-method
 offline sales contract does not change.
+
+### Time evidence for directly queued Caja sales
+
+Caja records the browser-reported UTC clock once when a new sale is queued
+under a lease that has learned `hora_informada_caja_utc_v1` from the server.
+On reconnection it only sends `hora_informada_caja_utc` if the fresh catalog
+advertises support. Older queue entries and registrations never gain a
+reported timestamp from their prior local storage time or from a replay. A
+replay still matches actor, outlet, items, revisions, quantities and recorded
+payment method. It returns the first registration and evidence (or lack of
+evidence), even if the retry says something different about the clock.
+
+Caja and `gomar_read_pos_sale_time` show the original Gomar registration
+time and the optional, unverified clock evidence separately. The read uses
+the exact sale request reference and the current Caja role, entity, outlet
+grant and actor. MCP also requires a token pinned to the outlet. Employee
+browser sessions can use their existing native Caja access but cannot issue
+MCP tokens. Unauthorized reads provide no timing or handoff. The handoff
+opens an exact lookup that requires the same signed-in operator to explicitly
+request it; it does not arm a shift, replay or create a sale. Malformed
+timing links stay on a read-only error page, not the register.
+
+A claim more than five minutes after registration or more than 24 hours
+before it is marked for review, not rejected. A legitimate backlog can need
+review too. The reported time never proves when a sale or payment occurred.
+Monthly sales totals still use Gomar's registration time in Buenos Aires;
+stock still records once on first registration. Sale capture and offline
+sync stay native-only because they use the operator's browser-local cart,
+clock and trusted, scoped lease. No payment, fiscal issuance, historical
+correction or backdating is provided.

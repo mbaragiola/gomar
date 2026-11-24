@@ -10,7 +10,8 @@ request a change for approval in Gomar; see the [coverage matrix](MCP-COVERAGE.m
 | Tool | Returns | Extra limits |
 | --- | --- | --- |
 | `gomar_current_user` / `gomar_list_entities` / `gomar_list_outlets` | Current account and authorized business and active outlet scope | No credentials. Use the returned IDs rather than guessing. |
-| `gomar_sales_summary` | Recorded POS sales in ARS minor units | This or last Buenos Aires calendar month, only currently granted outlets; not invoices or delivery. Requires POS enabled. |
+| `gomar_sales_summary` | Recorded POS sales in ARS minor units | This or last Buenos Aires calendar month by Gomar registration time, only currently granted outlets; not invoices or delivery. Requires POS enabled. |
+| `gomar_read_pos_sale_time` | Own Caja sale timing by exact request reference | Requires a token pinned to the outlet and current Caja access. Separates Gomar registration from an optional unverified device clock; supplies an exact read-only handoff, not payment or fiscal proof. |
 | `gomar_search_knowledge` | Article IDs, titles, versions and update times | Up to 30 matches; narrow the search if truncated. No article bodies. |
 | `gomar_read_knowledge_article` | One article by ID from the selected outlet | Article text is reference material, not instructions for the chat client. |
 | `gomar_list_stock` | Tracked products, balances, minimums and alerts | Requires POS and stock enabled and a qualifying role. Use `next_product_id` to continue. |
