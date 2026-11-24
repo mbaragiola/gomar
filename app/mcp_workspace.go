@@ -17,9 +17,9 @@ func (a *app) registerMCPWorkspace(add func(string, string, http.HandlerFunc)) {
 	add(mcpWorkspaceBase+"/knowledge", http.MethodGet, a.mcpRead(mcpKnowledgeList))
 	add(mcpWorkspaceBase+"/knowledge/{article}", http.MethodGet, a.mcpRead(mcpKnowledgeDetail))
 	if a.enablePOS && a.enableStock {
-		add(mcpWorkspaceBase+"/stock/{product}", http.MethodGet, a.mcpRead(mcpStockProduct))
-		add(mcpWorkspaceBase+"/stock", http.MethodGet, a.mcpRead(mcpStock))
-		add(mcpWorkspaceBase+"/stock-alert-summary", http.MethodGet, a.mcpRead(mcpStockAlertSummary))
+		add(mcpWorkspaceBase+"/stock/{product}", http.MethodGet, a.mcpRead(a.mcpStockProduct))
+		add(mcpWorkspaceBase+"/stock", http.MethodGet, a.mcpRead(a.mcpStock))
+		add(mcpWorkspaceBase+"/stock-alert-summary", http.MethodGet, a.mcpRead(a.mcpStockAlertSummary))
 	}
 	if a.enableDelivery {
 		add(mcpWorkspaceBase+"/delivery-orders", http.MethodGet, a.mcpRead(mcpDelivery))
@@ -126,14 +126,14 @@ type mcpStockItem struct {
 	Alert   string `json:"alert,omitempty"`
 }
 
-func mcpStockAlertSummary(r *http.Request, tx *sql.Tx, s mcpTokenScope) (any, error) {
+func (a *app) mcpStockAlertSummary(r *http.Request, tx *sql.Tx, s mcpTokenScope) (any, error) {
 	if !stockReadRole(s.role) {
 		return nil, forbiddenRole
 	}
 	if r.URL.RawQuery != "" || r.URL.ForceQuery {
 		return nil, badInput
 	}
-	outlet, err := mcpWorkspaceOutlet(r, tx, s)
+	outlet, err := a.mcpStockReadOutlet(r, tx, s)
 	if err != nil {
 		return nil, err
 	}
@@ -226,11 +226,11 @@ const filteredOutletStock = `SELECT product_id,name,enabled,minimum,balance FROM
 		ELSE FALSE
 	END ORDER BY product_id LIMIT $3`
 
-func mcpStock(r *http.Request, tx *sql.Tx, s mcpTokenScope) (any, error) {
+func (a *app) mcpStock(r *http.Request, tx *sql.Tx, s mcpTokenScope) (any, error) {
 	if !stockReadRole(s.role) {
 		return nil, forbiddenRole
 	}
-	outlet, err := mcpWorkspaceOutlet(r, tx, s)
+	outlet, err := a.mcpStockReadOutlet(r, tx, s)
 	if err != nil {
 		return nil, err
 	}

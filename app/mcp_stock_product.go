@@ -8,11 +8,11 @@ import (
 	"github.com/mbaragiola/gomar/app/internal/mcpclient"
 )
 
-func mcpStockProduct(r *http.Request, tx *sql.Tx, s mcpTokenScope) (any, error) {
+func (a *app) mcpStockProduct(r *http.Request, tx *sql.Tx, s mcpTokenScope) (any, error) {
 	if !stockReadRole(s.role) {
 		return nil, forbiddenRole
 	}
-	outlet, err := mcpWorkspaceOutlet(r, tx, s)
+	outlet, err := a.mcpStockReadOutlet(r, tx, s)
 	if err != nil {
 		return nil, err
 	}
