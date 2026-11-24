@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"github.com/mbaragiola/gomar/app/internal/gomarmcp"
 	"github.com/mbaragiola/gomar/app/internal/mcpclient"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
@@ -48,12 +49,7 @@ func addWorkspaceTools(server *mcp.Server, client *mcpclient.Client) {
 	readTool(server, "gomar_stock_alert_summary", "Contá los productos con control de stock activo en una sucursal autorizada: saldo negativo, saldo no negativo en o debajo del mínimo, y saldo por encima del mínimo. Incluye todo el stock de esa sucursal, no solo la primera página. Si el control del local está desactivado no hay estados que contar. No devuelve productos ni saldos individuales.", func(ctx context.Context, in outletArgs) (mcpclient.StockAlertSummary, error) {
 		return client.StockAlerts(ctx, in.EntityID, in.OutletID)
 	})
-	readTool(server, "gomar_list_recent_delivery", "Consultá los últimos 30 pedidos registrados en Gomar para una sucursal autorizada. Un pedido recibido no está confirmado. No consulta proveedores en vivo ni muestra datos del cliente.", func(ctx context.Context, in outletArgs) (mcpclient.Delivery, error) {
-		return client.Delivery(ctx, in.EntityID, in.OutletID)
-	})
-	readTool(server, "gomar_delivery_status_summary", "Contá los pedidos recibidos, aceptados y cancelados entre los últimos 100 de la bandeja de delivery de una sucursal autorizada. Es el estado actual en Gomar, no todo el historial ni una consulta al proveedor. No muestra pedidos individuales ni datos de clientes.", func(ctx context.Context, in outletArgs) (mcpclient.DeliveryStatusSummary, error) {
-		return client.DeliveryStatus(ctx, in.EntityID, in.OutletID)
-	})
+	gomarmcp.AddDeliveryTools(server, client)
 	readTool(server, "gomar_payables_summary", "Consultá cuánto queda por pagar y cuánto está vencido en una sucursal autorizada. Sólo para roles que pueden registrar pagos. Separa ARS y USD, en centavos; no registra ni realiza pagos.", func(ctx context.Context, in outletArgs) (mcpclient.Payables, error) {
 		return client.Payables(ctx, in.EntityID, in.OutletID)
 	})
