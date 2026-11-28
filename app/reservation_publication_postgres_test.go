@@ -1,6 +1,8 @@
 package main
 
 import (
+	"context"
+	"database/sql"
 	"errors"
 	"testing"
 	"time"
@@ -11,19 +13,7 @@ func TestPostgresPublishedReservationScope(t *testing.T) {
 	if err := migratePostgres(ctx, db); err != nil {
 		t.Fatal(err)
 	}
-	const fixture = `
-	INSERT INTO entities(id,name,cuit,active) VALUES(1,'Fictional Bakery','00000000001',TRUE),(2,'Fictional Cafe','00000000002',TRUE);
-	INSERT INTO outlets(id,entity_id,name,active) VALUES(1,1,'North internal',TRUE),(2,1,'West internal',TRUE),
-		(3,2,'East internal',TRUE),(4,2,'South internal',TRUE);
-	INSERT INTO reservation_venues(outlet_id,slug,display_name,cancellation_policy,enabled)
-	VALUES(1,'fiction-bakery-north','Bakery North','',TRUE),(2,'fiction-bakery-west','Bakery West','',TRUE),
-		(3,'fiction-cafe-east','Cafe East','',TRUE),(4,'fiction-cafe-south','Cafe South','',FALSE);
-	INSERT INTO reservation_tables(outlet_id,label,capacity) VALUES(1,'Mesa 1',4),(2,'Mesa 1',4),(3,'Mesa 1',4),(4,'Mesa 1',4);
-	INSERT INTO reservation_slots(outlet_id,start_at) VALUES(1,'2030-11-20T15:00:00Z'),(2,'2030-11-20T16:30:00Z'),
-		(3,'2030-11-20T18:00:00Z'),(4,'2030-11-20T19:30:00Z');`
-	if _, err := db.ExecContext(ctx, fixture); err != nil {
-		t.Fatal(err)
-	}
+	seedPublishedReservationScope(t, ctx, db)
 	now := time.Date(2030, 11, 19, 12, 0, 0, 0, time.UTC)
 	scope := func(entity, outlet int64, venue string) reservationsService {
 		t.Helper()
@@ -142,5 +132,22 @@ func TestPostgresPublishedReservationScope(t *testing.T) {
 	var rows int
 	if err := db.QueryRowContext(ctx, "SELECT count(*) FROM reservation_requests").Scan(&rows); err != nil || rows != 3 {
 		t.Fatalf("denied requests changed reservations: %d %v", rows, err)
+	}
+}
+
+func seedPublishedReservationScope(t *testing.T, ctx context.Context, db *sql.DB) {
+	t.Helper()
+	const fixture = `
+	INSERT INTO entities(id,name,cuit,active) VALUES(1,'Fictional Bakery','00000000001',TRUE),(2,'Fictional Cafe','00000000002',TRUE);
+	INSERT INTO outlets(id,entity_id,name,active) VALUES(1,1,'North internal',TRUE),(2,1,'West internal',TRUE),
+		(3,2,'East internal',TRUE),(4,2,'South internal',TRUE);
+	INSERT INTO reservation_venues(outlet_id,slug,display_name,cancellation_policy,enabled)
+	VALUES(1,'fiction-bakery-north','Bakery North','',TRUE),(2,'fiction-bakery-west','Bakery West','',TRUE),
+		(3,'fiction-cafe-east','Cafe East','',TRUE),(4,'fiction-cafe-south','Cafe South','',FALSE);
+	INSERT INTO reservation_tables(outlet_id,label,capacity) VALUES(1,'Mesa 1',4),(2,'Mesa 1',4),(3,'Mesa 1',4),(4,'Mesa 1',4);
+	INSERT INTO reservation_slots(outlet_id,start_at) VALUES(1,'2030-11-20T15:00:00Z'),(2,'2030-11-20T16:30:00Z'),
+		(3,'2030-11-20T18:00:00Z'),(4,'2030-11-20T19:30:00Z');`
+	if _, err := db.ExecContext(ctx, fixture); err != nil {
+		t.Fatal(err)
 	}
 }
