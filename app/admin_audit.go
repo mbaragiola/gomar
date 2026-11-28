@@ -24,8 +24,9 @@ type adminAuditPage struct {
 }
 
 const selectAdminAudit = `
-	SELECT a.id,d.document_type,d.letter,d.point_of_sale,d.number,a.action,u.username,a.occurred_at,a.reason
-	FROM document_audit a JOIN documents d ON d.id=a.document_id JOIN users u ON u.id=a.actor_id`
+	SELECT a.id,d.document_type,d.letter,d.point_of_sale,d.number,a.action,COALESCE(e.handle,u.username),a.occurred_at,a.reason
+	FROM document_audit a JOIN documents d ON d.id=a.document_id JOIN users u ON u.id=a.actor_id
+	LEFT JOIN organization_employees e ON e.user_id=u.id AND e.entity_id=d.entity_id`
 
 func scanAdminAudit(scanner interface{ Scan(...any) error }) (adminAuditRow, error) {
 	var row adminAuditRow

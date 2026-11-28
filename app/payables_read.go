@@ -208,8 +208,10 @@ func loadPayableDetail(tx *sql.Tx, m entityMembership, id int64, now time.Time) 
 	if err != nil {
 		return detail, err
 	}
-	rows, err := tx.Query(`SELECT l.id,l.kind,l.delta_minor,l.balance_minor,l.occurred_at,u.username,l.reason,l.payment_id
-		FROM ap_ledger l JOIN users u ON u.id=l.actor_id WHERE l.payable_id=$1 ORDER BY l.occurred_at,l.id`, id)
+	rows, err := tx.Query(`SELECT l.id,l.kind,l.delta_minor,l.balance_minor,l.occurred_at,COALESCE(e.handle,u.username),l.reason,l.payment_id
+		FROM ap_ledger l JOIN users u ON u.id=l.actor_id
+		LEFT JOIN organization_employees e ON e.user_id=u.id AND e.entity_id=$2
+		WHERE l.payable_id=$1 ORDER BY l.occurred_at,l.id`, id, m.ID)
 	if err != nil {
 		return detail, err
 	}
