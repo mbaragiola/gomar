@@ -107,6 +107,21 @@ that an ungranted outlet is absent, and revoke the rehearsal key when done.
 Keep provider login, public reservations and all optional write paths off
 until their own release checks pass.
 
+## Scoped sales export core
+
+The unregistered native export core prepares one CSV of recorded POS sales
+for one active outlet the requester can export. It includes UTC record
+times and ARS minor-unit totals for up to 1,000 sales across at most 31
+Buenos Aires dates. It excludes attachments, customers, staff, line items
+and all other datasets. Current role and outlet scope apply on every retry
+and acknowledgment. The audit retains exact sale IDs and the SHA-256 digest,
+so retries produce the same bytes without storing a second CSV copy.
+
+A separate acknowledgment records the same requester’s confirmation of
+the exact digest. Preparation alone does not establish delivery. There is
+no registered export route, public download link, customer handoff or
+retention action.
+
 ## Drain, back up and restore
 
 1. Stop new traffic to the backend and send `SIGTERM`. The protected server
