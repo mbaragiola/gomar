@@ -76,8 +76,9 @@ type reservationTable struct {
 	Capacity int    `json:"capacity"`
 }
 type reservationsService struct {
-	db          *sql.DB
-	publication reservationPublication
+	db                *sql.DB
+	publication       reservationPublication
+	publishedRevision *reservationPublicationRevision
 }
 
 // Supplied by a trusted publication source, never by the guest.
@@ -114,17 +115,23 @@ func reservationBookableDay(day, now time.Time) bool {
 	today := time.Date(localNow.Year(), localNow.Month(), localNow.Day(), 0, 0, 0, 0, reservationLocation)
 	return !day.Before(today) && !day.After(today.AddDate(0, 0, reservationHorizon))
 }
-func reservationStart(raw string, now time.Time) (string, error) {
+func reservationStartTime(raw string) (time.Time, error) {
 	at, err := time.Parse(time.RFC3339, raw)
-	if err != nil || at.Format(time.RFC3339) != raw || !at.After(now) {
-		return "", badInput
+	if err != nil || at.Format(time.RFC3339) != raw {
+		return time.Time{}, badInput
 	}
 	local := at.In(reservationLocation)
 	if local.Second() != 0 || local.Nanosecond() != 0 || (local.Hour()*60+local.Minute())%reservationMinutes != 0 {
-		return "", badInput
+		return time.Time{}, badInput
 	}
+	return at, nil
+}
+
+func reservationStart(raw string, now time.Time) (string, error) {
+	at, err := reservationStartTime(raw)
+	local := at.In(reservationLocation)
 	day := time.Date(local.Year(), local.Month(), local.Day(), 0, 0, 0, 0, reservationLocation)
-	if !reservationBookableDay(day, now) {
+	if err != nil || !at.After(now) || !reservationBookableDay(day, now) {
 		return "", badInput
 	}
 	return at.UTC().Format(time.RFC3339), nil
@@ -142,6 +149,9 @@ func (s reservationsService) publicVenue(ctx context.Context, tx *sql.Tx, slug s
 		Scan(&outletID, &v.Slug, &v.DisplayName, &v.CancellationPolicy, &v.CollectContact)
 	if errors.Is(err, sql.ErrNoRows) {
 		err = reservationUnavailable
+	}
+	if err == nil && s.publishedRevision != nil {
+		err = s.publishedRevision.check(ctx, tx, s.publication, false)
 	}
 	return outletID, v, err
 }
@@ -163,6 +173,11 @@ func (s reservationsService) lockedVenue(ctx context.Context, tx *sql.Tx, slug s
 	}
 	if current != outlet {
 		return 0, reservationUnavailable
+	}
+	if s.publishedRevision != nil {
+		if err := s.publishedRevision.check(ctx, tx, s.publication, true); err != nil {
+			return 0, err
+		}
 	}
 	return outlet, nil
 }
@@ -241,7 +256,16 @@ func (s reservationsService) request(ctx context.Context, venue string, in reser
 }
 
 func (s reservationsService) requestPublic(ctx context.Context, venue string, in reservationPublicInput, now time.Time, contactsEnabled bool) (reservationResult, error) {
-	start, err := reservationStart(in.StartAt, now)
+	var start string
+	var err error
+	if s.publishedRevision != nil {
+		// An exact retry may arrive after the originally requested slot starts.
+		var at time.Time
+		at, err = reservationStartTime(in.StartAt)
+		start = at.UTC().Format(time.RFC3339)
+	} else {
+		start, err = reservationStart(in.StartAt, now)
+	}
 	name, valid := reservationText(in.GuestName, 1, 80)
 	if err != nil || !valid || in.PartySize < 1 || in.PartySize > 12 {
 		return reservationResult{}, badInput
@@ -289,9 +313,27 @@ func (s reservationsService) requestPublic(ctx context.Context, venue string, in
 	} else if in.Phone != "" || in.Note != "" {
 		return reservationResult{}, badInput
 	}
+	var digest [32]byte
+	if s.publishedRevision != nil {
+		replay, calculated, err := s.publishedRevision.bookingReplay(ctx, tx, outlet, in, start, name)
+		if err != nil || replay.ID != "" {
+			return replay, err
+		}
+		digest = calculated
+		if _, err := reservationStart(in.StartAt, now); err != nil {
+			return reservationResult{}, err
+		}
+	}
 	result, err := requestReservationInTx(ctx, tx, outlet, start, name, in.PartySize, now)
 	if err != nil {
 		return reservationResult{}, err
+	}
+	if s.publishedRevision != nil {
+		if _, err := tx.ExecContext(ctx, `INSERT INTO reservation_public_booking_keys
+			(outlet_id,booking_key,payload_digest,reservation_id) VALUES($1,$2,$3,$4)`,
+			outlet, s.publishedRevision.bookingKey, digest[:], result.ID); err != nil {
+			return reservationResult{}, err
+		}
 	}
 	if collect {
 		if err = reserveCustomerContact(ctx, tx, outlet, result.ID, phone, note); err != nil {
