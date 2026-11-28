@@ -51,6 +51,9 @@ func (a *app) confirmStagedPNG(w http.ResponseWriter, r *http.Request, u user, c
 	if err != nil {
 		return err
 	}
+	if op.status == "expired" {
+		return expiredIntake
+	}
 	if op.live() && op.expires <= time.Now().UnixMicro() {
 		if err := a.finishStagedIntake(r.Context(), tx, op, "expired"); err != nil {
 			return err

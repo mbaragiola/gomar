@@ -16,6 +16,7 @@ import (
 	"os"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
@@ -138,7 +139,9 @@ func TestPostgresDocumentsPrivateAttachmentAndIntake(t *testing.T) {
 		return a.stagedOCRDraft(w, r, u, func(context.Context, []byte, string) ([]byte, error) { return []byte(nativeDocumentOCRAnnotation), nil })
 	}))
 	mux.HandleFunc("POST "+e+"/intake/{operation}/synthetic-confirm", a.protected(func(w http.ResponseWriter, r *http.Request, u user) error {
-		return a.confirmStagedPNG(w, r, u, nil)
+		return a.confirmStagedPNG(w, r, u, func(context.Context, string) error {
+			return errors.New("synthetic deferred intake cleanup")
+		})
 	}))
 	routes := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { r.SetPathValue("entity", "724002"); mux.ServeHTTP(w, r) })
 	cookies := nativeDocumentSession(t, a, routes, actor)
@@ -228,8 +231,9 @@ func TestPostgresDocumentsPrivateAttachmentAndIntake(t *testing.T) {
 	if err := json.Unmarshal(confirmed.Body.Bytes(), &confirmedDoc); err != nil || confirmedDoc.ID == first.ID || confirmedDoc.ID < 1 || len(confirmedDoc.Attachments) != 1 {
 		t.Fatal(confirmedDoc, err)
 	}
-	if _, err := os.Stat(media + "/intake-" + receipt.ID); !errors.Is(err, os.ErrNotExist) {
-		t.Fatal(err)
+	confirmedStage := receipt.ID
+	if _, err := os.Stat(media + "/" + intakeStorage(confirmedStage)); err != nil {
+		t.Fatal("the confirmed staged source was not retained after cleanup failure", err)
 	}
 	var confirmedStatus string
 	if err := db.QueryRowContext(ctx, `SELECT status FROM intake_operations WHERE id=$1`, receipt.ID).Scan(&confirmedStatus); err != nil || confirmedStatus != "confirmed" {
@@ -244,6 +248,87 @@ func TestPostgresDocumentsPrivateAttachmentAndIntake(t *testing.T) {
 	invoke(request("DELETE", stagedURL, ""), true, 200)
 	if _, err := os.Stat(media + "/intake-" + receipt.ID); !errors.Is(err, os.ErrNotExist) {
 		t.Fatal(err)
+	}
+	stage = invoke(nativeDocumentUpload(t, e+"/outlets/724002/intake", "synthetic-expiry.png", png), true, 201)
+	var expired, fresh intakeReceipt
+	if err := json.Unmarshal(stage.Body.Bytes(), &expired); err != nil || expired.ID == "" {
+		t.Fatal(expired, err)
+	}
+	stage = invoke(nativeDocumentUpload(t, e+"/outlets/724002/intake", "synthetic-live.png", png), true, 201)
+	if err := json.Unmarshal(stage.Body.Bytes(), &fresh); err != nil || fresh.ID == "" {
+		t.Fatal(fresh, err)
+	}
+	now := time.Now().UnixMicro()
+	if _, err := db.ExecContext(ctx, `UPDATE intake_operations SET created_at=$2-86400000001,expires_at=$2-1 WHERE id=$1`, expired.ID, now); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.ExecContext(ctx, `
+		DELETE FROM outlet_grants WHERE membership_id=724002 AND outlet_id=724002;
+		CREATE FUNCTION gomar.qa_fail_expired_reference_clear() RETURNS trigger
+		LANGUAGE plpgsql AS $$BEGIN RAISE EXCEPTION 'synthetic interrupted reference clear'; END;$$;
+		CREATE TRIGGER qa_fail_expired_reference_clear BEFORE UPDATE OF storage_name ON intake_operations
+		FOR EACH ROW WHEN (OLD.status='expired' AND NEW.storage_name IS NULL)
+		EXECUTE FUNCTION gomar.qa_fail_expired_reference_clear()`); err != nil {
+		t.Fatal(err)
+	}
+	expiredURL := e + "/intake/" + expired.ID + "/download"
+	invoke(request("GET", expiredURL, ""), true, 404)
+	if _, err := a.sweepStagedIntake(ctx, "", now); err == nil {
+		t.Fatal("expected interruption after file removal")
+	}
+	var status, retained string
+	if err := db.QueryRowContext(ctx, `SELECT status,COALESCE(storage_name,'') FROM intake_operations WHERE id=$1`, expired.ID).
+		Scan(&status, &retained); err != nil || status != "expired" || retained != intakeStorage(expired.ID) {
+		t.Fatalf("expiry transition or cleanup reference lost: %s %q %v", status, retained, err)
+	}
+	for _, operation := range []string{expired.ID, confirmedStage} {
+		if _, err := os.Stat(media + "/" + intakeStorage(operation)); !errors.Is(err, os.ErrNotExist) {
+			t.Fatalf("expected staged source removed: %v", err)
+		}
+	}
+	if _, err := os.Stat(media + "/" + intakeStorage(fresh.ID)); err != nil {
+		t.Fatal("live staged source was touched", err)
+	}
+	if _, err := db.ExecContext(ctx, `
+		DROP TRIGGER qa_fail_expired_reference_clear ON intake_operations;
+		DROP FUNCTION gomar.qa_fail_expired_reference_clear()`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := a.sweepStagedIntake(ctx, "", now); err != nil {
+		t.Fatal("could not retry expiry after missing file", err)
+	}
+	var preserved bool
+	if err := db.QueryRowContext(ctx, `SELECT
+		EXISTS(SELECT 1 FROM intake_operations WHERE id=$1 AND status='expired' AND storage_name IS NULL)
+		AND EXISTS(SELECT 1 FROM intake_operations WHERE id=$2 AND status='confirmed' AND storage_name IS NULL)
+		AND (SELECT count(*) FROM ocr_consent_events WHERE operation_id=$2)=1
+		AND (SELECT count(*) FROM document_audit WHERE document_id=$3)=2`, expired.ID, confirmedStage, confirmedDoc.ID).
+		Scan(&preserved); err != nil || !preserved {
+		t.Fatalf("sweep did not preserve metadata and confirmed audit: %v", err)
+	}
+	if _, err := db.ExecContext(ctx, `INSERT INTO outlet_grants VALUES(724002,724002)`); err != nil {
+		t.Fatal(err)
+	}
+	invoke(request("GET", expiredURL, ""), true, 410)
+	confirmedURL := fmt.Sprintf("%s/documents/%d/attachments/%d", e, confirmedDoc.ID, confirmedDoc.Attachments[0].ID)
+	if got := invoke(request("GET", confirmedURL, ""), true, 200); !bytes.Equal(got.Body.Bytes(), png) {
+		t.Fatal("confirmed attachment was modified during the staged sweep")
+	}
+
+	if _, err := db.ExecContext(ctx, `INSERT INTO intake_operations
+		(id,entity_id,outlet_id,user_id,status,mime_type,size,digest,storage_name,created_at,expires_at)
+		SELECT id,724002,724002,$1,'expired','image/png',1,repeat('0',64),'intake-'||id,1,2 FROM (
+		 SELECT '00001111-0000-4000-8000-'||lpad(i::text,12,'0') AS id FROM generate_series(1,$2::int) i
+		) rows`, actor, intakeEntityFiles-1); err != nil {
+		t.Fatal(err)
+	}
+	beforeFiles, err := os.ReadDir(media)
+	if err != nil {
+		t.Fatal(err)
+	}
+	invoke(nativeDocumentUpload(t, e+"/outlets/724002/intake", "synthetic-over-budget.png", png), true, 409)
+	if afterFiles, err := os.ReadDir(media); err != nil || len(afterFiles) != len(beforeFiles) {
+		t.Fatalf("over-budget upload wrote a private file: %v", err)
 	}
 	var countAudit, countConsent int
 	if err := db.QueryRowContext(ctx, `SELECT (SELECT count(*) FROM document_audit WHERE document_id=$1),(SELECT count(*) FROM ocr_consent_events WHERE operation_id=$2)`, first.ID, receipt.ID).Scan(&countAudit, &countConsent); err != nil || countAudit != 3 || countConsent != 0 {

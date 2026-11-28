@@ -53,7 +53,11 @@ func employeeBrowserScope(r *http.Request, u user) error {
 // Employee writes use the existing domain transaction and hold the same
 // principal lock used by reset/disable. Acquire it before domain locks.
 func (a *app) beginEmployeeCheckedWrite(r *http.Request, u user) (*sql.Tx, error) {
-	tx, err := a.db.BeginTx(r.Context(), nil)
+	return a.beginEmployeeCheckedWriteWithOptions(r, u, nil)
+}
+
+func (a *app) beginEmployeeCheckedWriteWithOptions(r *http.Request, u user, options *sql.TxOptions) (*sql.Tx, error) {
+	tx, err := a.db.BeginTx(r.Context(), options)
 	if err != nil {
 		return nil, err
 	}

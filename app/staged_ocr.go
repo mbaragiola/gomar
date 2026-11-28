@@ -49,6 +49,9 @@ func (a *app) scopedIntakeOCR(r *http.Request, u user, action func(*sql.Tx, inta
 	if err != nil {
 		return err
 	}
+	if op.status == "expired" {
+		return expiredIntake
+	}
 	if op.live() && op.expires <= time.Now().UnixMicro() {
 		if err := a.finishStagedIntake(r.Context(), tx, op, "expired"); err != nil {
 			return err

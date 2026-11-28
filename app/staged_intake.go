@@ -82,7 +82,8 @@ func (a *app) intakeScope(r *http.Request, u user, capability string) (*sql.Tx, 
 	if err != nil {
 		return nil, entityMembership{}, err
 	}
-	tx, err := a.beginEmployeeCheckedWrite(r, u)
+	// Recheck grants and quota against what committed while waiting for locks.
+	tx, err := a.beginEmployeeCheckedWriteWithOptions(r, u, &sql.TxOptions{Isolation: sql.LevelReadCommitted})
 	if err != nil {
 		return nil, entityMembership{}, err
 	}
@@ -167,6 +168,9 @@ func (a *app) uploadStagedIntake(w http.ResponseWriter, r *http.Request, u user)
 	}
 	if a.privateRoot == nil {
 		return errors.New("private intake storage not configured")
+	}
+	if err := requireIntakeCapacity(r.Context(), tx, m.ID, meta.Size); err != nil {
+		return err
 	}
 	id := newIntakeID()
 	name := intakeStorage(id)
@@ -268,6 +272,8 @@ func (a *app) readOrCancelStagedIntake(w http.ResponseWriter, r *http.Request, u
 	var outcome error
 	var terminal string
 	switch {
+	case op.status == "expired":
+		outcome = expiredIntake
 	case !op.live():
 		outcome = missingIntakeFile
 		if cancel {
