@@ -86,8 +86,18 @@ INSERT INTO pos_table_check_items(check_id,outlet_id,product_id,revision,quantit
 			handler = lockPOSWriteScope("read_business_data", true, func(r *http.Request, tx *sql.Tx, m entityMembership, raw []byte) (int, any, error) {
 				return postPOSSale(r, tx, m, raw, false, time.Now)
 			})
+		case "mcp":
+			handler = func(r *http.Request, tx *sql.Tx, m entityMembership, _ []byte) (int, any, error) {
+				result, err := a.mcpPOSTableCheck(r, tx, mcpTokenScope{entityMembership: m, outlet: sql.NullInt64{Int64: 85, Valid: true}})
+				return 200, result, err
+			}
+		case "check":
+			handler = a.readPOSTableCheck
+		case "save":
+			handler = lockPOSWriteScope("read_business_data", true, a.savePOSTableCheck)
+		case "retire-enabled":
+			handler = lockPOSWriteScope("read_business_data", true, a.retirePOSTableCheck)
 		case "retire":
-			off := app{db: db, enablePOS: true, enablePOSTableChecks: true}
 			handler = lockPOSWriteScope("read_business_data", true, off.retirePOSTableCheck)
 		}
 		code, data, err := handler(r, tx, actor, []byte(body))
@@ -133,6 +143,15 @@ INSERT INTO pos_table_check_items(check_id,outlet_id,product_id,revision,quantit
 	if !ok || view.Recorded != 500 || view.Outstanding != 750 || len(view.Events) != 1 {
 		t.Fatalf("bad status: %+v", get)
 	}
+	retirement := fmt.Sprintf(`{"id_cuenta":%q,"motivo":"cancelled"}`, id1)
+	fail(call("retire", reader, 85, 1, retirement), forbiddenRole)
+	fail(call("retire", m, 86, 1, retirement), missingOutlet)
+	for _, route := range []string{"retire", "retire-enabled"} {
+		fail(call(route, m, 85, 1, retirement), posTableTenderBlocksRetirement)
+	}
+	if check := call("check", m, 85, 1, ""); check.err != nil || check.body.(posTableCheck).State != "con_registros" {
+		t.Fatalf("active tender check not marked: %+v", check)
+	}
 	correction := void(id1, 2, view.Events[0].ID, "importe_incorrecto")
 	fail(call("write", m, 85, 2, void(id2, 2, view.Events[0].ID, "importe_incorrecto")), posTableTenderConflict)
 	fixed := call("write", peer, 85, 1, correction)
@@ -150,7 +169,39 @@ INSERT INTO pos_table_check_items(check_id,outlet_id,product_id,revision,quantit
 	if after.Recorded != 0 || after.Outstanding != 1250 || len(after.Events) != 2 {
 		t.Fatalf("correction changed wrong balance: %+v", after)
 	}
-	fail(call("retire", m, 85, 1, fmt.Sprintf(`{"id_cuenta":%q,"motivo":"cancelled"}`, id1)), posTableTenderBlocksRetirement)
+	if check := call("check", m, 85, 1, ""); check.err != nil || check.body.(posTableCheck).State != "sin_cobro" {
+		t.Fatalf("fully corrected check not available for retirement: %+v", check)
+	}
+	mcp := call("mcp", m, 85, 1, "")
+	projected, err := json.Marshal(mcp.body)
+	if mcp.err != nil || err != nil || string(projected) != `{"table_number":1,"total_minor":1250,"state":"manual_records","handoff_url":"/pos#entity=85\u0026outlet=85\u0026table=1"}` {
+		t.Fatalf("unexpected MCP handoff: %s (%v, %v)", projected, mcp.err, err)
+	}
+	fail(call("mcp", reader, 85, 1, ""), forbiddenRole)
+	fail(call("mcp", m, 86, 1, ""), missingOutlet)
+	retired := call("retire", m, 85, 1, retirement)
+	if retired.err != nil || retired.status != 200 || retired.body.(posTableCheck).State != "retirada" {
+		t.Fatalf("retirement with manual tender disabled: %+v", retired)
+	}
+	fail(call("check", m, 85, 1, ""), posTableCheckMissing)
+	fail(call("mcp", m, 85, 1, ""), posTableCheckMissing)
+	replacement := call("save", m, 85, 1, `{"id_solicitud":"00112233-4455-4677-8899-aabbccddff01","actor_id":85,"mesa":1,"items":[{"producto_id":81,"revision":2,"cantidad":1}]}`)
+	if replacement.err != nil || replacement.status != 201 || replacement.body.(posTableCheck).ID == id1 {
+		t.Fatalf("replacement check: %+v", replacement)
+	}
+	if retry := call("retire-enabled", m, 85, 1, retirement); retry.err != nil || !reflect.DeepEqual(retired.body, retry.body) {
+		t.Fatalf("retirement replay with manual tender enabled: %+v", retry)
+	}
+	fail(call("retire", peer, 85, 1, retirement), posTableCheckChanged)
+	if current := findCheck(1); current != replacement.body.(posTableCheck).ID {
+		t.Fatalf("retirement replay changed replacement: %s", current)
+	}
+	var notes, retirements int
+	if err := db.QueryRowContext(ctx, `SELECT
+		(SELECT count(*) FROM pos_table_tender_events WHERE check_id=$1),
+		(SELECT count(*) FROM pos_table_check_retirements WHERE check_id=$1 AND actor_id=85 AND reason='cancelled')`, id1).Scan(&notes, &retirements); err != nil || notes != 2 || retirements != 1 {
+		t.Fatalf("expected two tender notes and one retirement, got %d and %d: %v", notes, retirements, err)
+	}
 	if got := call("retire", m, 85, 2, fmt.Sprintf(`{"id_cuenta":%q,"motivo":"cancelled"}`, id2)); got.err != nil || got.status != 200 {
 		t.Fatalf("untouched branch check should retire: %+v", got)
 	}

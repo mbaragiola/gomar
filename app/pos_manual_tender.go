@@ -16,11 +16,17 @@ import (
 const maxHistoricalTenderRecords = 500 // A correction remains possible for every recorded leg.
 
 var (
-	posTableTenderBlocksRetirement = problem{409, "La cuenta tiene registros de pago. No se puede retirar."}
+	posTableTenderBlocksRetirement = problem{409, "La cuenta tiene registros de pago vigentes. No se puede retirar."}
 	posTableTenderConflict         = problem{409, "El registro cambió o ya existe. Volvé a consultar la cuenta."}
 	posTableTenderOverpay          = problem{422, "El importe supera el saldo de esta cuenta."}
 	posTableTenderLimit            = problem{422, "La cuenta alcanzó el límite de registros de pago."}
 )
+
+// The database permits only one void for a record in the same check.
+const posActiveTender = `EXISTS (
+ SELECT 1 FROM pos_table_tender_events e
+ WHERE e.outlet_id=c.outlet_id AND e.check_id=c.id AND e.kind='record'
+ AND NOT EXISTS (SELECT 1 FROM pos_table_tender_events v WHERE v.target_id=e.id))`
 
 type posTenderTarget struct {
 	scope postender.Scope

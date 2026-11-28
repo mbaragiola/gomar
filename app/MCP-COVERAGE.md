@@ -9,7 +9,7 @@ For everyday examples, see the [Spanish prompt guide](MCP-GUIA-DE-CONSULTAS.md).
 | Workflow | Shipped MCP reads and opt-in proposals | Intentionally stays in Gomar or is not built |
 | --- | --- | --- |
 | Identity and business scope | Current user, businesses, and outlets; propose a display-name change for one active outlet | Native only: business and outlet administration beyond that rename, membership and grant management, credentials and provider sign-in. |
-| POS | Recorded sales totals, own sale time evidence by exact reference, product catalog with exact barcode lookup, one exact saved table check and native handoff; propose product creation and separate name, price, availability or barcode changes | Native only: scan into the local cart, save a tab-local untendered cart, explicitly retire an inspected untendered check, preview/print an unsaved table check, register sales, checkout and offline sales sync. Not built: editing or settling a saved table check, and shift management. |
+| POS | Recorded sales totals, own sale time evidence by exact reference, product catalog with exact barcode lookup, one exact saved table check and native handoff; propose product creation and separate name, price, availability or barcode changes | Native only: scan into the local cart, save a tab-local untendered cart, explicitly retire an inspected check with no active tender, preview/print an unsaved table check, register sales, checkout and offline sales sync. Not built: editing or settling a saved table check, and shift management. |
 | Inventory | Tracked balances and thresholds, including an exact configured item by ID, movement history, filtered alert pages and stock alert counts; propose receipts, waste, physical counts, initial disabled product setup, and changes to a product’s minimum or tracking | Native only: branch-wide settings. Not built: bills of materials. |
 | Wiki | Search and read by ID; propose new pages and versioned edits | Not built: deletion. |
 | Delivery | Recent order status with limited fields; status counts for the latest 100 inbox records | No native staff write workflow. Provider calls and credentials are not part of MCP. |
@@ -370,8 +370,10 @@ clerk can open a saved active table in **Caja** and use **Registro de medios
 de pago** to note an amount already handled outside Gomar or correct an
 earlier note. A correction leaves the original in the history. Neither
 action charges, refunds, posts a sale, releases the table, adjusts stock,
-or issues a fiscal document. A check with any notes cannot be retired,
-even if all notes were corrected or the preview flag is turned off.
+or issues a fiscal document. Active payment notes block retirement even when
+the preview is turned off.
+If every note was corrected, a clerk can retire the check in Caja. The
+original notes and corrections remain in the journal.
 
 `gomar_read_pos_table_check` reports `manual_records` when a saved check
 has tender history unless finalization is enabled and the check is ready for review. This is not evidence of a paid balance. It gives the

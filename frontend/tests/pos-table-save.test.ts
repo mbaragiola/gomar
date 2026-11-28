@@ -1,6 +1,7 @@
 import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import PosApp from '../src/pos/PosApp.vue'
+import SavedTableCheck from '../src/pos/SavedTableCheck.vue'
 import { quoteCart, sameContext, scopeKey, type Grant } from '../src/pos/model'
 import type { TableSave } from '../src/pos/tableSave'
 import { acknowledgeTableRecovery, arm, beginTableSave, enqueue, finishTableSave, forgetLease, localLease, lockOfflinePOS, readGrant, readTableState, rememberLease } from '../src/pos/storage'
@@ -322,4 +323,46 @@ it('retains rejected old-price products read-only across expiry, scope changes a
   expect(sends).toHaveLength(2)
   expect(enqueue).not.toHaveBeenCalled()
   expect(summaries.size).toBe(0)
+})
+
+it('offers retirement only after refreshing a successful tender correction', async () => {
+  const entry = { id_registro: '52', tipo: 'record', medio: 'efectivo', importe_centavos: 500 }
+  let corrected = false
+  vi.stubGlobal('fetch', vi.fn((url: string, options: RequestInit) => {
+    if (url.endsWith('/auth/csrf')) return answer({})
+    if (url.endsWith('/table-checks/17')) return answer(receipt('con_registros'))
+    if (url.endsWith('/table-checks/17/tender')) {
+      if (options.method === 'POST') {
+        corrected = true
+        return answer({ id_registro: '53', id_cuenta: '42' }, 201)
+      }
+      return answer({
+        id_cuenta: '42', registrado_centavos: corrected ? 0 : 500, saldo_centavos: corrected ? 750 : 250,
+        registros: corrected ? [entry, { id_registro: '53', tipo: 'void', registro_original: '52', motivo: 'entrada_incorrecta' }] : [entry],
+      })
+    }
+    if (url.endsWith('/table-checks/17/retire')) {
+      expect(JSON.parse(options.body as string)).toEqual({ id_cuenta: '42', motivo: 'cancelled' })
+      return answer(receipt('retirada'))
+    }
+    throw new Error(`Unexpected request: ${url}`)
+  }))
+  app = mount(SavedTableCheck, { props: {
+    scope: { actor: 3, entity: 1, outlet: 2 }, online: true, allowTender: true, allowFinalization: false,
+    allowed: () => true, formatMoney: String, cartReady: false, cartEmpty: true, save: async () => undefined,
+  } })
+  await table().setValue('17')
+  await button('Consultar mesa').trigger('click')
+  await flushPromises()
+  expect(button('Retirar cuenta sin cobro')).toBeUndefined()
+  await button('Corregir registro').trigger('click')
+  await app.get('form select').setValue('entrada_incorrecta')
+  await app.get('form').trigger('submit')
+  await flushPromises()
+  expect(app.text()).toContain('Corrección: Registro por error')
+  await button('Retirar cuenta sin cobro').trigger('click')
+  await app.get('fieldset select').setValue('cancelled')
+  await button('Confirmar retiro').trigger('click')
+  await flushPromises()
+  expect(app.text()).toContain('Cuenta retirada: mesa 17')
 })
