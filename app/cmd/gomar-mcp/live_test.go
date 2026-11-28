@@ -218,7 +218,7 @@ func TestLiveStdioScopedTools(t *testing.T) {
 	}
 	defer session.Close()
 	instructions := session.InitializeResult().Instructions
-	for _, required := range []string{"gomar_list_entities", "gomar_list_outlets", "pendiente", "conversiones ambiguas", "un producto por vez"} {
+	for _, required := range []string{"gomar_list_entities", "gomar_list_outlets", "pendiente", "antes de crear cualquier propuesta", "un producto por vez", "recepción parcial sin permiso explícito"} {
 		if !strings.Contains(instructions, required) {
 			t.Fatalf("server instructions are missing %q", required)
 		}
