@@ -4,6 +4,7 @@ import ThemeSelect from '../components/ThemeSelect.vue'
 import ManageBarcodes from './ManageBarcodes.vue'
 import SaleClock from './SaleClock.vue'
 import PrecloseSummary from './PrecloseSummary.vue'
+import { compareSaleReceipt } from './sale-review'
 import { receiptClock, saleTimeHandoff } from './sale-time'
 import { computed, nextTick, onMounted, onUnmounted, ref } from 'vue'
 import { ApiError, request } from '../api'
@@ -11,7 +12,7 @@ import { localDateTime, money } from '../format'
 import { maxLines, maxQuantity, normalizedProducts, positive, sameContext, saleRequest, grantLifetime, quoteCart,
   isPaymentMethod, matchesPaymentMethod, paymentLabels, productByBarcode,
   type Context, type Grant, type PaymentMethod, type Product, type Sale } from './model'
-import { acknowledgeTableRecovery, arm, beginTableSave, broadcastPOSLock, disarm, enqueue, finishTableSave, forgetLease,
+import { acceptReviewedSale, acknowledgeTableRecovery, arm, beginTableSave, broadcastPOSLock, disarm, enqueue, finishTableSave, forgetLease,
   localLease, lockOfflinePOS, posLockEvent, readGrant, readTableState, recordOutcome, rememberLease, refreshTillTimeCapability, pendingSalesFor, salesPage, type SalesCursor } from './storage'
 import { matchesTableSave, matchesTableSaveRejection, tableSaveRequest, type TableCheck, type TableSave } from './tableSave'
 
@@ -45,6 +46,8 @@ const recorded = ref<Sale[]>([])
 const historyCursor = ref<SalesCursor>()
 const nextHistoryCursor = ref<SalesCursor>()
 const loadingHistory = ref(false)
+const reviewingSale = ref('')
+const reviewOutcome = ref<{ id: string; state: 'conflict' | 'unresolved' }>()
 const basket = ref(new Map<number, number>())
 const barcode = ref('')
 const scanError = ref('')
@@ -101,6 +104,8 @@ function clearView() {
   recorded.value = []
   historyCursor.value = nextHistoryCursor.value = undefined
   loadingHistory.value = false
+  reviewingSale.value = ''
+  reviewOutcome.value = undefined
   tableSaveWork.value = undefined
   tableSave.value = undefined
   tableRecovery.value = undefined
@@ -200,7 +205,7 @@ async function openCached(current: Grant | undefined, token: number) {
 }
 
 async function refresh() {
-  if (verifying.value || changing.value || saving.value || savingTable.value || loadingHistory.value) return
+  if (verifying.value || changing.value || saving.value || savingTable.value || loadingHistory.value || reviewingSale.value) return
   const token = epoch
   verifying.value = true
   navigatorOnline.value = navigator.onLine
@@ -460,7 +465,7 @@ function scanBarcode() {
 async function complete() {
   const current = grant.value
   const method = payment.value
-  if (!current || !isPaymentMethod(method) || !needsConfirm.value || saving.value || verifying.value || loadingHistory.value || tableCartLocked.value || localLease() !== current.lease) return
+  if (!current || !isPaymentMethod(method) || !needsConfirm.value || saving.value || verifying.value || loadingHistory.value || reviewingSale.value || tableCartLocked.value || localLease() !== current.lease) return
   saving.value = true
   error.value = ''
   notice.value = ''
@@ -481,7 +486,7 @@ async function complete() {
 
 async function changeSalesPage(before?: SalesCursor) {
   const current = grant.value
-  if (!current || loadingHistory.value || syncing.value || verifying.value || saving.value || localLease() !== current.lease) return
+  if (!current || loadingHistory.value || reviewingSale.value || syncing.value || verifying.value || saving.value || localLease() !== current.lease) return
   loadingHistory.value = true
   const token = epoch
   try {
@@ -497,9 +502,43 @@ async function changeSalesPage(before?: SalesCursor) {
   }
 }
 
+async function reviewSale(sale: Sale) {
+  const current = grant.value
+  if (!current || !sameContext(current, sale) || sale.status !== 'attention' || !online.value ||
+    reviewingSale.value || verifying.value || syncing.value || loadingHistory.value || saving.value ||
+    localLease() !== current.lease || Date.now() >= current.expires) return
+  const token = epoch
+  const active = () => token === epoch && localLease() === current.lease && Date.now() < current.expires
+  reviewingSale.value = sale.id
+  reviewOutcome.value = undefined
+  notice.value = ''
+  try {
+    const receipt = await appRequest<unknown>(`${endpoint(current)}/sales/${encodeURIComponent(sale.id)}`)
+    if (!active()) return
+    const comparison = compareSaleReceipt(sale, receipt)
+    if (comparison.state !== 'match') {
+      reviewOutcome.value = { id: sale.id, state: comparison.state }
+      return
+    }
+    if (!await acceptReviewedSale(current, sale.id, comparison.serverId, comparison.clock)) {
+      if (active()) reviewOutcome.value = { id: sale.id, state: 'unresolved' }
+      return
+    }
+    const page = await salesPage(current, historyCursor.value)
+    if (!active()) return
+    recorded.value = page.sales
+    nextHistoryCursor.value = page.next
+    notice.value = `Gomar confirmó la misma venta. Referencia: ${sale.id}.`
+  } catch {
+    if (active()) reviewOutcome.value = { id: sale.id, state: 'unresolved' }
+  } finally {
+    if (token === epoch) reviewingSale.value = ''
+  }
+}
+
 async function sync() {
   const current = grant.value
-  if (!current || syncing.value || verifying.value || loadingHistory.value || !navigator.onLine || localLease() !== current.lease) return
+  if (!current || syncing.value || verifying.value || loadingHistory.value || reviewingSale.value || !navigator.onLine || localLease() !== current.lease) return
   syncing.value = true
   const token = epoch
   try {
@@ -695,7 +734,7 @@ onUnmounted(() => {
         <button v-if="!needsConfirm" class="primary" type="button" :disabled="cartControlsLocked || !basketLines.length || !payment" @click="confirmSale">Registrar venta</button>
         <div v-else class="gomar-feature-actions">
           <span v-if="payment">Medio de pago elegido: {{ paymentLabels[payment] }}.</span>
-          <button class="primary" type="button" :disabled="saving || verifying || loadingHistory || tableCartLocked" @click="complete">Confirmar y guardar venta</button>
+          <button class="primary" type="button" :disabled="saving || verifying || loadingHistory || !!reviewingSale || tableCartLocked" @click="complete">Confirmar y guardar venta</button>
           <button type="button" :disabled="saving" @click="needsConfirm = false">Volver sin guardar</button>
         </div>
         <small>Cobrá por fuera de Gomar. Este registro no verifica ni procesa pagos ni emite un comprobante fiscal.</small>
@@ -735,7 +774,7 @@ onUnmounted(() => {
       <PrecloseSummary :key="grant.lease" :scope="grant" :updating="verifying || saving || syncing" />
       <section class="card gomar-feature">
         <div class="section-heading"><h2>Ventas de esta caja</h2>
-          <button type="button" :disabled="!online || syncing || verifying || loadingHistory || !pending" @click="sync">Sincronizar pendientes</button>
+          <button type="button" :disabled="!online || syncing || verifying || loadingHistory || !!reviewingSale || !pending" @click="sync">Sincronizar pendientes</button>
         </div>
         <p v-if="syncing" role="status">Sincronizando…</p>
         <ul v-if="recorded.length" class="gomar-feature-list">
@@ -749,6 +788,17 @@ onUnmounted(() => {
             <div v-if="sale.status === 'synced' && sale.tillReportedAt && sale.tillReportedAt !== sale.receiptClock?.tillReportedAt">
               Esta hora local no coincide con la informada por el servidor o no quedó registrada allí.
             </div>
+            <div v-if="sale.status === 'attention'">
+              <p>Referencia: {{ sale.id }}. Revisala con administración antes de volver a cargar la venta.</p>
+              <button
+                type="button" :disabled="!online || !!reviewingSale || verifying || syncing || loadingHistory || saving"
+                :aria-label="`Verificar registro de venta ${sale.id}`" @click="reviewSale(sale)"
+              >Verificar registro</button>
+              <p v-if="reviewingSale === sale.id" role="status">Consultando el registro de Gomar…</p>
+              <p v-if="reviewOutcome?.id === sale.id" role="status">
+                {{ reviewOutcome.state === 'conflict' ? 'Gomar registró una venta distinta con esta referencia.' : 'No se pudo confirmar qué registró Gomar.' }}
+              </p>
+            </div>
             <div v-if="sale.status === 'synced' && grant.tillTimeV1">
               Referencia: <a :href="saleTimeHandoff(sale)" target="_blank" rel="noopener">{{ sale.id }}</a>
             </div>
@@ -756,8 +806,8 @@ onUnmounted(() => {
         </ul>
         <p v-else>No hay ventas guardadas para este local.</p>
         <div v-if="historyCursor || nextHistoryCursor" class="gomar-feature-actions">
-          <button v-if="historyCursor" type="button" :disabled="loadingHistory || syncing || verifying || saving" @click="changeSalesPage()">Ventas recientes</button>
-          <button v-if="nextHistoryCursor" type="button" :disabled="loadingHistory || syncing || verifying || saving" @click="changeSalesPage(nextHistoryCursor)">Ventas sincronizadas anteriores</button>
+          <button v-if="historyCursor" type="button" :disabled="loadingHistory || syncing || verifying || saving || !!reviewingSale" @click="changeSalesPage()">Ventas recientes</button>
+          <button v-if="nextHistoryCursor" type="button" :disabled="loadingHistory || syncing || verifying || saving || !!reviewingSale" @click="changeSalesPage(nextHistoryCursor)">Ventas sincronizadas anteriores</button>
         </div>
         <small>Si una venta necesita revisión, no la vuelvas a cargar. El reporte mensual usa la hora de registro de Gomar, no la del dispositivo.</small>
       </section>
