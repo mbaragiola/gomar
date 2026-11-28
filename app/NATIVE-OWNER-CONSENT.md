@@ -85,6 +85,15 @@ access here. No authenticated inter-service transport, cross-database
 atomicity, request mapping in a live system, checkout, public route,
 MCP workflow, or activation mechanism is provided.
 
+### Recheck an existing dormant plan
+
+The unregistered native guard checks one previously recorded plan. It
+requires the original active owner session and current approved consent,
+then requests a new authenticated observation for that exact scope. It
+checks the owner, peer, consent, approved draft and complete branch list
+again under locks, and refuses an occupied operational CUIT. It changes no
+records. The guard result records no approval and grants no access.
+
 ### Disposable staged-activation proof
 
 The separate `staged_activation_proof` provider subtest uses real

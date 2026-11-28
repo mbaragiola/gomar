@@ -143,7 +143,7 @@ func (a *app) approveNativeInstallDraft(r *http.Request, expected nativeInstallD
 
 // Keep the native lock order: owner actor, exact session, then intent and
 // immutable downstream state. All readers and writers serialize on intent.
-func loadNativeInstallState(ctx context.Context, tx *sql.Tx, target nativeOwnerTarget, ref string, session [32]byte, peer nativeInstallPeer) (nativeInstallState, error) {
+func loadNativeInstallState(ctx context.Context, tx *sql.Tx, target nativeOwnerTarget, ref string, session [32]byte, peer nativeInstallPeer, pendingRef string) (nativeInstallState, error) {
 	var state nativeInstallState
 	actor, sessionExpiry, err := lockedNativeOwnerSession(ctx, tx, session)
 	if err != nil {
@@ -182,7 +182,12 @@ func loadNativeInstallState(ctx context.Context, tx *sql.Tx, target nativeOwnerT
 			return nativeInstallState{}, nativeOwnerConsentUnavailable
 		}
 		state.history.RecordedAt, state.history.Dormant = state.history.RecordedAt.UTC(), true
-		return state, nil
+		if pendingRef == "" {
+			return state, nil
+		}
+	}
+	if pendingRef != "" && state.history.Ref != pendingRef {
+		return nativeInstallState{}, nativeOwnerConsentUnavailable
 	}
 	if !d.approvedAt(now) || d.ApprovalRef.String != receipt.ApprovalRef || !now.Before(receipt.ExpiresAt) ||
 		subtle.ConstantTimeCompare(original, session[:]) != 1 {
@@ -234,7 +239,7 @@ func (a *app) installNativeOwnerDormant(r *http.Request, expected nativeOwnerTar
 		return nativeInstallReceipt{}, err
 	}
 	defer initial.Rollback()
-	state, err := loadNativeInstallState(ctx, initial, target, ref, session, peer)
+	state, err := loadNativeInstallState(ctx, initial, target, ref, session, peer, "")
 	if err != nil {
 		return nativeInstallReceipt{}, err
 	}
@@ -244,26 +249,10 @@ func (a *app) installNativeOwnerDormant(r *http.Request, expected nativeOwnerTar
 	if state.history.Ref != "" {
 		return state.history, nil
 	}
-	if verify == nil {
-		return nativeInstallReceipt{}, nativeOwnerConsentUnavailable
+	observation, nonce, final, err := observeNativeInstall(ctx, state, peer, verify)
+	if err != nil {
+		return nativeInstallReceipt{}, err
 	}
-	nonce := newProviderRandom()
-	request := makeNativeInstallRequest(state, peer, nonce)
-	started := nativeOwnerNow()
-	limit := nativeOwnerDeadline(started.Add(nativeInstallWindow), state.validUntil)
-	verifyContext, cancel := context.WithDeadline(ctx, limit)
-	observation, err := verify(verifyContext, request)
-	cancel()
-	// Check the immutable original request, not a verifier-mutated slice.
-	request = makeNativeInstallRequest(state, peer, nonce)
-	now := nativeOwnerNow()
-	if err != nil || !sameNativeInstallRequest(observation.Binding, request) ||
-		observation.CheckedAt.Before(started) || observation.CheckedAt.After(now) ||
-		!now.Before(observation.ExpiresAt) || !now.Before(limit) ||
-		observation.ExpiresAt.After(observation.CheckedAt.Add(nativeInstallWindow)) {
-		return nativeInstallReceipt{}, nativeOwnerConsentUnavailable
-	}
-	final := nativeOwnerDeadline(observation.ExpiresAt, limit)
 	commitContext, stop := context.WithDeadline(ctx, final)
 	defer stop()
 	tx, err := a.db.BeginTx(commitContext, &sql.TxOptions{Isolation: sql.LevelReadCommitted})
@@ -271,7 +260,7 @@ func (a *app) installNativeOwnerDormant(r *http.Request, expected nativeOwnerTar
 		return nativeInstallReceipt{}, err
 	}
 	defer tx.Rollback()
-	current, err := loadNativeInstallState(commitContext, tx, target, ref, session, peer)
+	current, err := loadNativeInstallState(commitContext, tx, target, ref, session, peer, "")
 	if err != nil {
 		return nativeInstallReceipt{}, err
 	}
@@ -287,7 +276,7 @@ func (a *app) installNativeOwnerDormant(r *http.Request, expected nativeOwnerTar
 	if _, err = tx.ExecContext(commitContext, `LOCK TABLE gomar.entities IN SHARE MODE NOWAIT`); err != nil {
 		return nativeInstallReceipt{}, nativeOwnerConsentUnavailable
 	}
-	now = nativeOwnerNow()
+	now := nativeOwnerNow()
 	effective := nativeOwnerDeadline(final, current.validUntil)
 	if !now.Before(effective) {
 		return nativeInstallReceipt{}, nativeOwnerConsentUnavailable
@@ -322,4 +311,28 @@ func (a *app) installNativeOwnerDormant(r *http.Request, expected nativeOwnerTar
 		return nativeInstallReceipt{}, err
 	}
 	return record, nil
+}
+
+// Run the peer operation without holding a native transaction.
+func observeNativeInstall(ctx context.Context, state nativeInstallState, peer nativeInstallPeer, verify nativeInstallVerifier) (nativeInstallObservation, string, time.Time, error) {
+	if verify == nil {
+		return nativeInstallObservation{}, "", time.Time{}, nativeOwnerConsentUnavailable
+	}
+	nonce := newProviderRandom()
+	request := makeNativeInstallRequest(state, peer, nonce)
+	started := nativeOwnerNow()
+	limit := nativeOwnerDeadline(started.Add(nativeInstallWindow), state.validUntil)
+	verifyContext, cancel := context.WithDeadline(ctx, limit)
+	observation, err := verify(verifyContext, request)
+	cancel()
+	// Check the immutable original request, not a verifier-mutated slice.
+	request = makeNativeInstallRequest(state, peer, nonce)
+	now := nativeOwnerNow()
+	if err != nil || !sameNativeInstallRequest(observation.Binding, request) ||
+		observation.CheckedAt.Before(started) || observation.CheckedAt.After(now) ||
+		!now.Before(observation.ExpiresAt) || !now.Before(limit) ||
+		observation.ExpiresAt.After(observation.CheckedAt.Add(nativeInstallWindow)) {
+		return nativeInstallObservation{}, "", time.Time{}, nativeOwnerConsentUnavailable
+	}
+	return observation, nonce, nativeOwnerDeadline(observation.ExpiresAt, limit), nil
 }
