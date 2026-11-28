@@ -1625,7 +1625,7 @@ onBeforeUnmount(() => window.removeEventListener('hashchange', syncAttachmentHan
             <div v-for="outlet in management.locales" :key="outlet.id" class="management-row compact">
               <label>Nombre<input v-model="outlet.nombre" :disabled="!outlet.autorizado" /></label>
               <label class="check"><input v-model="outlet.activa" type="checkbox" :disabled="!outlet.autorizado" /> Activo</label>
-              <button class="secondary" :disabled="!outlet.autorizado" @click="saveOutlet(outlet)">Guardar</button>
+              <button class="secondary" :aria-label="`Guardar local ${outlet.nombre}`" :disabled="!outlet.autorizado" @click="saveOutlet(outlet)">Guardar</button>
               <small v-if="!outlet.autorizado" class="muted">Sin autorización para este local</small>
             </div>
           </div>
@@ -1644,7 +1644,7 @@ onBeforeUnmount(() => window.removeEventListener('hashchange', syncAttachmentHan
               <label>Rol<select v-model="item.rol" :disabled="!item.editable"><option v-for="role in management.roles" :key="role.valor" :value="role.valor">{{ role.nombre }}</option></select></label>
               <label class="check"><input v-model="item.activa" type="checkbox" :disabled="!item.editable" /> Activa</label>
               <fieldset><legend>Locales autorizados</legend><label v-for="outlet in management.locales.filter((value) => value.autorizado)" :key="outlet.id" class="check"><input v-model="item.outlet_ids" type="checkbox" :value="outlet.id" :disabled="!item.editable" /> {{ outlet.nombre }}</label></fieldset>
-              <button class="secondary" :disabled="!item.editable" @click="saveMembership(item)">Guardar acceso</button>
+              <button class="secondary" :aria-label="`Guardar acceso de ${item.usuario}`" :disabled="!item.editable" @click="saveMembership(item)">Guardar acceso</button>
               <small v-if="item.usuario === username" class="muted">Tu propia membresía no se puede cambiar desde acá.</small>
               <small v-else-if="!item.editable" class="muted">Esta membresía incluye una cuenta de plataforma o locales fuera de tu alcance.</small>
             </div>
@@ -1714,7 +1714,12 @@ onBeforeUnmount(() => window.removeEventListener('hashchange', syncAttachmentHan
             <div v-for="payment in payments" :key="payment.id" class="ap-row">
               <span><strong>#{{ payment.id }} · {{ payment.supplier.razon_social }}</strong><small>{{ payment.outlet.nombre }} · {{ payment.metodo_nombre }} · {{ payment.referencia || 'Sin referencia' }}</small></span>
               <span><strong>{{ money(payment.total, payment.moneda) }}</strong><small>{{ payment.tipo === 'reversal' ? `Reversión de #${payment.reversion_de}` : payment.estado_nombre }}</small></span>
-              <span class="row-actions"><button v-if="payment.outlet.id === selectedOutletId" class="text-button" @click="openPayment(payment)">Abrir</button><small v-else>Seleccioná {{ payment.outlet.nombre }} para abrir</small><button v-if="payment.tiene_comprobante" class="text-button" @click="downloadPaymentReceipt(payment)">Comprobante</button><button v-if="canReversePayments && payment.estado === 'posted' && payment.tipo === 'payment'" class="danger" @click="reverseSupplierPayment(payment)">Revertir</button></span>
+              <span class="row-actions">
+                <button v-if="payment.outlet.id === selectedOutletId" class="text-button" :aria-label="`Abrir pago #${payment.id} de ${payment.supplier.razon_social}`" @click="openPayment(payment)">Abrir</button>
+                <small v-else>Seleccioná {{ payment.outlet.nombre }} para abrir</small>
+                <button v-if="payment.tiene_comprobante" class="text-button" :aria-label="`Comprobante del pago #${payment.id} de ${payment.supplier.razon_social}`" @click="downloadPaymentReceipt(payment)">Comprobante</button>
+                <button v-if="canReversePayments && payment.estado === 'posted' && payment.tipo === 'payment'" class="danger" :aria-label="`Revertir pago #${payment.id} de ${payment.supplier.razon_social}`" @click="reverseSupplierPayment(payment)">Revertir</button>
+              </span>
             </div>
             <p v-if="!payments.length" class="empty">Todavía no hay pagos.</p>
           </div>
@@ -1725,7 +1730,7 @@ onBeforeUnmount(() => window.removeEventListener('hashchange', syncAttachmentHan
           <div v-for="supplier in suppliers" :key="supplier.id" class="management-row compact">
             <label>Razón social<input v-model="supplier.razon_social" /></label>
             <label>CUIT<input v-model="supplier.cuit" maxlength="14" /></label>
-            <button class="secondary" @click="saveSupplier(supplier)">Guardar</button>
+            <button class="secondary" :aria-label="`Guardar proveedor ${supplier.razon_social}, CUIT ${supplier.cuit}`" @click="saveSupplier(supplier)">Guardar</button>
           </div>
           <p v-if="!suppliers.length" class="empty">No hay proveedores para administrar.</p>
         </section>
@@ -1891,7 +1896,7 @@ onBeforeUnmount(() => window.removeEventListener('hashchange', syncAttachmentHan
                 <ul v-if="visibleAttachments.length" class="attachment-list">
                   <li v-for="attachment in visibleAttachments" :key="attachment.id">
                     <span>{{ attachment.nombre }}<small>{{ Math.ceil(attachment.tamano / 1024) }} KB</small></span>
-                    <button v-if="canDownloadVisibleAttachment" class="secondary" @click="downloadAttachment(attachment.id, attachment.nombre)">Descargar</button>
+                    <button v-if="canDownloadVisibleAttachment" class="secondary" :aria-label="`Descargar ${attachment.nombre} (adjunto ${attachment.id})`" @click="downloadAttachment(attachment.id, attachment.nombre)">Descargar</button>
                   </li>
                 </ul>
                 <p v-else class="muted">Sin archivos adjuntos.</p>

@@ -214,8 +214,57 @@ describe('aplicación', () => {
     const editable = cards.find((card) => card.text().includes('editable'))!
     expect(outside.find('select').attributes('disabled')).toBeDefined()
     expect(outside.text()).toContain('locales fuera de tu alcance')
+    expect(outside.get('button').attributes('aria-label')).toBe('Guardar acceso de fuera-de-alcance')
     expect(editable.find('select').attributes('disabled')).toBeUndefined()
     expect(editable.find('button').attributes('disabled')).toBeUndefined()
+    expect(editable.get('button').attributes('aria-label')).toBe('Guardar acceso de editable')
+    expect(wrapper.get('[aria-label="Guardar local Centro"]').text()).toBe('Guardar')
+    expect(wrapper.get('[aria-label="Guardar local Norte"]').attributes('disabled')).toBeDefined()
+  })
+
+  it('distingue los botones repetidos de proveedores, pagos y adjuntos', async () => {
+    const suppliers = [document.supplier, { ...document.supplier, id: 21, cuit: '30722222220' }]
+    const payments = [51, 52].map(id => ({
+      id, supplier: document.supplier, outlet: document.outlet, moneda: 'ARS', total: '121.12',
+      metodo_nombre: 'Efectivo', estado: 'posted', estado_nombre: 'Registrado',
+      tipo: 'payment', tiene_comprobante: true,
+    }))
+    const detail = { ...document, adjuntos: [7, 8].map(id => ({ id, nombre: 'factura.pdf', tamano: 24 })) }
+    vi.stubGlobal('fetch', appFetch((url) => {
+      if (url.endsWith('/suppliers')) return response(suppliers)
+      if (url.endsWith('/payments')) return response(payments)
+      if (url.endsWith('/payables')) return response([])
+      if (url.endsWith('/documents/1')) return response(detail)
+      if (url.includes('/documents?')) return response([detail])
+    }))
+    const wrapper = mount(App)
+    await flushPromises()
+    await wrapper.get('.document-row').trigger('click')
+    await flushPromises()
+    expect(wrapper.findAll('.attachment-list button').map(button => [button.text(), button.attributes('aria-label')])).toEqual([
+      ['Descargar', 'Descargar factura.pdf (adjunto 7)'],
+      ['Descargar', 'Descargar factura.pdf (adjunto 8)'],
+    ])
+
+    const openTask = async (label: string) => {
+      await wrapper.findAll('nav button').find(button => button.text() === label)!.trigger('click')
+      await flushPromises()
+    }
+    await openTask('Gestionar proveedores')
+    expect(wrapper.findAll('.supplier-management .management-row button').map(button => [button.text(), button.attributes('aria-label')])).toEqual([
+      ['Guardar', 'Guardar proveedor Proveedor Uno, CUIT 30711111119'],
+      ['Guardar', 'Guardar proveedor Proveedor Uno, CUIT 30722222220'],
+    ])
+
+    await openTask('Cuentas a pagar')
+    expect(wrapper.findAll('.ap-panel .row-actions button').map(button => [button.text(), button.attributes('aria-label')])).toEqual(
+      payments.flatMap(({ id }) => [
+        ['Abrir', `Abrir pago #${id} de Proveedor Uno`],
+        ['Comprobante', `Comprobante del pago #${id} de Proveedor Uno`],
+        ['Revertir', `Revertir pago #${id} de Proveedor Uno`],
+      ]),
+    )
+    wrapper.unmount()
   })
 
   it('reinicia formularios de acceso y descarta callbacks demorados al cambiar de entidad', async () => {
