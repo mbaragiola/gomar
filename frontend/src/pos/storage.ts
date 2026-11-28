@@ -256,3 +256,15 @@ export function recordOutcome(context: Context, id: string, status: Sale['status
     await result(store.put({ ...sale, status, serverId, receiptClock }))
   })
 }
+
+export function acceptReviewedSale(grant: Grant, id: string, serverId: number, receiptClock: ReceiptClock) {
+  return transact(['meta', 'sales'], 'readwrite', async (tx) => {
+    const current = await armed(tx)
+    if (!sameRegister(grant, current) || Date.now() >= grant.expires) return false
+    const store = tx.objectStore('sales')
+    const sale = await result<Sale | undefined>(store.get(id))
+    if (!sale || !sameContext(grant, sale) || sale.status !== 'attention') return false
+    await result(store.put({ ...sale, status: 'synced', serverId, receiptClock }))
+    return true
+  })
+}

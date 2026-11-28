@@ -122,6 +122,28 @@ func TestPostgresPOSSaleTimeAcrossLocalMonthAndScopedReplay(t *testing.T) {
 		}
 	}
 	creds := token(cashier, `{"entity_id":1,"outlet_id":1}`)
+	const recoveryPrefix = "/sales/"
+	recovery := native + recoveryPrefix + saleA
+	var receipt struct {
+		posSale
+		Actor int64 `json:"actor_id"`
+	}
+	wireReceipt := api(http.MethodGet, recovery, "", cashier, "", 200)
+	if err := json.Unmarshal([]byte(wireReceipt), &receipt); err != nil || receipt.RequestID != saleA ||
+		receipt.ID < 1 || receipt.Actor != 1 || receipt.Recorded != recordedA || receipt.TillReported != claimedA ||
+		receipt.Total != 300000 || receipt.PaymentMethod != "efectivo" || len(receipt.Items) != 1 ||
+		receipt.Items[0].Quantity != 1 || receipt.Items[0].ProductID < 1 || receipt.Items[0].Revision != 1 ||
+		strings.Contains(wireReceipt, "precio_centavos") || strings.Contains(wireReceipt, `"nombre"`) {
+		t.Fatalf("unexpected scoped recovery receipt: %s, %v", wireReceipt, err)
+	}
+	api(http.MethodGet, recovery+"?extra=1", "", cashier, "", 422)
+	api(http.MethodGet, recovery, "", reader, "", 403)
+	api(http.MethodGet, recovery, "", other, "", 404)
+	api(http.MethodGet, recovery, "", nil, "", 401)
+	api(http.MethodGet, recovery, "", nil, creds, 401)
+	api(http.MethodGet, "/api/v1/entities/1/outlets/2/pos"+recoveryPrefix+saleA, "", cashier, "", 404)
+	api(http.MethodGet, "/api/v1/entities/2/outlets/3/pos"+recoveryPrefix+saleA, "", cashier, "", 404)
+
 	nativeA := api(http.MethodGet, native+"/sale-times/"+saleA, "", cashier, "", 200)
 	if mcpA := api(http.MethodGet, mcpBase+saleA, "", nil, creds, 200); mcpA != nativeA {
 		t.Fatalf("timing differs across surfaces: %s / %s", nativeA, mcpA)

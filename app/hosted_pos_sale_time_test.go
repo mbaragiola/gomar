@@ -127,7 +127,15 @@ func TestPostgresHostedPOSSaleTime(t *testing.T) {
 		}
 		return n
 	}
+	recovery := func(sale receipt) string {
+		return fmt.Sprintf("/api/v1/entities/%d/outlets/%d/pos/sales/%s", sale.entity, sale.outlet, sale.ref)
+	}
 	wantA := check(f, c, a, aKey, claimed, postime.Unverified)
+	f.get(c, recovery(a), "", 200)
+	f.get(c, recovery(unmapped), "", 404)
+	f.get(c, recovery(finalized), "", 404)
+	other.get(peer, recovery(a), "", 404)
+
 	wantB := check(f, c, b, bKey, "", postime.NotReported)
 	wantSelf := check(f, c, self, selfKey, claimed, postime.Unverified)
 	check(base, control, unmapped, uKey, claimed, postime.Unverified) // Same PG, no configuration.
@@ -173,6 +181,7 @@ func TestPostgresHostedPOSSaleTime(t *testing.T) {
 	before := counts()
 	blockedA := func() {
 		t.Helper()
+		deny(f.get(c, recovery(a), "", 404))
 		deny(f.get(c, native(a), "", 404))
 		deny(f.get(c, mcp(a), aKey, 404))
 		if !bytes.Equal(check(f, c, b, bKey, "", postime.NotReported), wantB) ||

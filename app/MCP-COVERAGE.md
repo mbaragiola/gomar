@@ -468,6 +468,15 @@ uses the receipts. Local deletion would require a scoped server lookup
 that can find older references and preserve the evidence used at pre-close.
 Caja retains pending and attention sales for review.
 
+For a sale marked **Necesita revisión**, choose **Verificar registro**
+in the same Caja. Gomar looks up the original reference under the current
+cashier and outlet. Caja compares the registered amount, payment method,
+and product revisions and quantities with the saved sale. An exact match
+acknowledges the local row. A difference or unavailable result keeps it
+in review with the reference to bring to administration. The lookup never
+reposts a sale. The comparison needs the device's local receipt, so it stays
+in Caja. MCP retains the scoped timing handoff for known references.
+
 The register queue and the cross-month list inferred from browser-held
 receipts are native-only: MCP has no access to this device's IndexedDB or
 lease. To verify server-held evidence for a **known exact reference**, use
