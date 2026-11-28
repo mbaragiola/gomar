@@ -232,6 +232,7 @@ func main() {
 	pruneContext, stopPruning := context.WithCancel(context.Background())
 	defer stopPruning()
 	go application.pruneWikiProposalsLoop(pruneContext)
+	go application.stagedIntakeSweepLoop(pruneContext)
 	if ingress != nil {
 		if err := ingress.serve(server, protectedUnixShutdownGrace, func() {
 			fmt.Printf("unix://%s\n", *unixPath)

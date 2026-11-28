@@ -74,6 +74,20 @@ For an individual integration test, set `GOMAR_LOCAL_POSTGRES_TEST_DSN`
 to a private local PostgreSQL Unix socket and an empty `gomar_qa_`
 database. Never use a database that contains real records.
 
+## Temporary intake storage
+
+An uploaded intake image expires after 24 hours. Both listeners run the
+same maintenance loop. At startup and once a minute it checks up to 16
+expired or closed operations and retries any tracked source files that
+could not be removed, even when the uploader has lost access. Confirmed
+document attachments and audit records stay in place. Expired images
+cannot be downloaded while waiting for the sweep.
+
+Temporary source files count toward 100 MiB or 32 files per entity and
+1 GiB or 512 files per server database. Each file remains charged until
+its removal and reference clear complete. Gomar rejects new uploads
+above either limit. These caps cover tracked temporary sources only.
+
 ## Synthetic private-file restore rehearsal
 
 From a clean worktree with the PostgreSQL gate prerequisites (including
