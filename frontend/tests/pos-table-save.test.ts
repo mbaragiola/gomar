@@ -7,7 +7,7 @@ import type { TableSave } from '../src/pos/tableSave'
 import { acknowledgeTableRecovery, arm, beginTableSave, enqueue, finishTableSave, forgetLease, localLease, lockOfflinePOS, readGrant, readTableState, rememberLease } from '../src/pos/storage'
 
 vi.mock('../src/pos/storage', () => ({
-  localLease: vi.fn(), readGrant: vi.fn(), salesFor: vi.fn(async () => []),
+  localLease: vi.fn(), readGrant: vi.fn(), salesPage: vi.fn(async () => ({ sales: [] })), pendingSalesFor: vi.fn(async () => []),
   beginTableSave: vi.fn(), finishTableSave: vi.fn(), readTableState: vi.fn(), acknowledgeTableRecovery: vi.fn(),
   enqueue: vi.fn(), forgetLease: vi.fn(), disarm: vi.fn(), lockOfflinePOS: vi.fn(),
   arm: vi.fn(), rememberLease: vi.fn(), broadcastPOSLock: vi.fn(),

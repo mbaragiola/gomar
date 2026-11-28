@@ -460,6 +460,14 @@ browser clock) and accounts separately for missing times. A legacy row is
 never dated from its enqueue timestamp. Pending and review states are local
 observations, not proof that Gomar never received the sale.
 
+Caja queries pending sales for sync and shows all unresolved sales with
+up to 50 acknowledged sales at a time. Use **Ventas sincronizadas anteriores**
+to find older references. The register keeps acknowledged receipts locally
+because the server timing lookup needs the exact reference and pre-close
+uses the receipts. Local deletion would require a scoped server lookup
+that can find older references and preserve the evidence used at pre-close.
+Caja retains pending and attention sales for review.
+
 The register queue and the cross-month list inferred from browser-held
 receipts are native-only: MCP has no access to this device's IndexedDB or
 lease. To verify server-held evidence for a **known exact reference**, use
