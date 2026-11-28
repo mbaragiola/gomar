@@ -88,6 +88,12 @@ Temporary source files count toward 100 MiB or 32 files per entity and
 its removal and reference clear complete. Gomar rejects new uploads
 above either limit. These caps cover tracked temporary sources only.
 
+## Protected HTTPS deployment rehearsal
+
+See [deployment and recovery](HOSTED-OPERATIONS.md) for protected Unix
+ingress, separate administrator recovery, and the release checks exercised
+on the disposable HTTPS deployment.
+
 ## Synthetic private-file restore rehearsal
 
 From a clean worktree with the PostgreSQL gate prerequisites (including
