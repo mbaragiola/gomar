@@ -153,6 +153,11 @@ func (a *app) checkReceiptUpload(r *http.Request, u user) error {
 }
 
 func (a *app) attachReceipt(w http.ResponseWriter, r *http.Request, u user) error {
+	release, err := admitRequestWork(w, &a.privateImageWork, privateImageConcurrency)
+	if err != nil {
+		return err
+	}
+	defer release()
 	if err := a.checkReceiptUpload(r, u); err != nil {
 		return err
 	}

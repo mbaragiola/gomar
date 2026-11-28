@@ -240,6 +240,7 @@ func main() {
 	go application.pruneWikiProposalsLoop(pruneContext)
 	go application.stagedIntakeSweepLoop(pruneContext)
 	go application.credentialPruneLoop(pruneContext)
+	go application.reservationExpiryLoop(pruneContext)
 	if ingress != nil {
 		if err := ingress.serve(server, protectedUnixShutdownGrace, func() {
 			fmt.Printf("unix://%s\n", *unixPath)

@@ -89,7 +89,7 @@ async function book() {
     phone.value = ''
     note.value = ''
     submittedPolicy.value = result.cancellation_policy ?? null
-    confirmation.value = `Solicitud recibida. Todavía no está confirmada. Referencia: ${result.id}.`
+    confirmation.value = `Solicitud recibida. Todavía no está confirmada. Si el horario empieza sin confirmación, la solicitud vence. Referencia: ${result.id}.`
   } catch (err) {
     showError(err, 'No se pudo solicitar la reserva.')
   } finally {

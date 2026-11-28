@@ -23,6 +23,7 @@ type ReservationStatus struct {
 	Date     string             `json:"date"`
 	Timezone string             `json:"timezone"`
 	Counts   []ReservationCount `json:"counts"`
+	Expired  *ReservationCount  `json:"expired,omitempty"`
 }
 
 type PublishedMenu struct {
@@ -153,6 +154,10 @@ func (c *Client) ReservationStatus(ctx context.Context, entity, outlet int64, da
 			(item.RequestCount == 0 && item.PartySizeTotal != 0) {
 			return result, invalidResponse
 		}
+	}
+	if result.Expired != nil && (result.Expired.Status != "expired" || result.Expired.RequestCount < 1 ||
+		result.Expired.PartySizeTotal < result.Expired.RequestCount) {
+		return result, invalidResponse
 	}
 	return result, nil
 }
