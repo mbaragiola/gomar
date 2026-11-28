@@ -33,6 +33,11 @@ one native draft revision and audit entry. It leaves the branch, point of sale,
 issuer, other document data, attached files and financial records unchanged.
 See [printed document number proposals](MCP-DOCUMENT-NUMBER-PROPOSALS.md).
 
+Tenant legal-name and tax-ID changes, outlet creation, and outlet status
+changes stay in Gomar under **Administración → Gestionar accesos**. Approved
+MCP outlet renames and native tenant catalog changes write the same internal
+audit trail. MCP and browser reads do not return the audit trail.
+
 ## Managed employee accounts
 
 Employee invitation, temporary password display, first sign-in, password

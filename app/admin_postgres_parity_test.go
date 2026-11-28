@@ -26,8 +26,8 @@ func TestPostgresAdminManagementAndSuppliers(t *testing.T) {
 		args []any
 	}{
 		{"INSERT INTO users(id,username,password,active,staff,superuser) VALUES (101,'admin-fixture',$1,TRUE,TRUE,TRUE),(102,'clerk-fixture',$1,TRUE,FALSE,FALSE)", []any{hash}},
-		{"INSERT INTO entities(id,name,cuit,active) VALUES (101,'Tenant One','00000000000',TRUE),(102,'Tenant Two','00000000001',TRUE)", nil},
-		{"INSERT INTO outlets(id,entity_id,name,active) VALUES (101,101,'Center',TRUE),(102,102,'Foreign',TRUE)", nil},
+		{"INSERT INTO entities(id,name,cuit,active) VALUES (101,'Tenant One','00000000000',TRUE),(102,'Tenant Two','00000000019',TRUE)", nil},
+		{"INSERT INTO outlets(id,entity_id,name,active) VALUES (101,101,'Center',TRUE),(102,102,'Foreign',TRUE),(103,101,'Private branch',TRUE)", nil},
 		{"INSERT INTO memberships(id,user_id,entity_id,role,active) VALUES (101,101,101,'administration',TRUE)", nil},
 		{"INSERT INTO outlet_grants(membership_id,outlet_id) VALUES (101,101)", nil},
 	} {
@@ -90,9 +90,56 @@ func TestPostgresAdminManagementAndSuppliers(t *testing.T) {
 	if err := db.QueryRowContext(ctx, "SELECT count(*) FROM access_events WHERE membership_id=$1", memberID).Scan(&n); err != nil || n != 2 {
 		t.Fatalf("unexpected membership audit count %d: %v", n, err)
 	}
-	api("POST", "/outlets", `{"nombre":"New outlet","activa":true}`, 201)
+	api("PUT", "", `{"nombre":" Tenant renamed ","cuit":"00-00000003-5"}`, 200)
+	api("PUT", "", `{"nombre":"Duplicate","cuit":"00000000019"}`, 409)
+	api("PUT", "", `{"nombre":"Invalid","cuit":"00000000001"}`, 422)
+	createdOutlet := api("POST", "/outlets", `{"nombre":" New outlet ","activa":true}`, 201)
+	var added managedOutlet
+	if err := json.Unmarshal(createdOutlet.Body.Bytes(), &added); err != nil || added.ID < 1 {
+		t.Fatalf("missing created outlet ID: %v", err)
+	}
 	api("POST", "/outlets", `{"nombre":"New outlet","activa":true}`, 409)
+	api("PUT", "/outlets/101", `{"nombre":" New outlet ","activa":true}`, 409)
+	api("PUT", "/outlets/101", `{"nombre":" Center renamed ","activa":false}`, 200)
 	api("PUT", "/outlets/102", `{"nombre":"Foreign edit","activa":false}`, 404)
+	api("PUT", "/outlets/103", `{"nombre":"Out-of-scope edit","activa":false}`, 404)
+	check(run("PUT", "/api/v1/entities/102", `{"nombre":"Foreign edit","cuit":"00000000019"}`, "application/json"), 404)
+	check(run("GET", "/api/v1/entities/102/catalog-events", "", ""), 404)
+	api("GET", "/catalog-events", "", 404)
+	if err := db.QueryRowContext(ctx, `SELECT count(*) FROM tenant_catalog_events
+		WHERE entity_id=101 AND actor_id=101 AND occurred_at <= clock_timestamp() AND (
+		 (action='update_entity' AND outlet_id IS NULL AND before='{"name":"Tenant One","cuit":"00000000000"}'
+		  AND after='{"name":"Tenant renamed","cuit":"00000000035"}')
+		 OR (action='create_outlet' AND outlet_id=$1 AND before='{}' AND after='{"name":"New outlet","active":true}')
+		 OR (action='update_outlet' AND outlet_id=101 AND before='{"name":"Center","active":true}'
+		  AND after='{"name":"Center renamed","active":false}'))`, added.ID).Scan(&n); err != nil || n != 3 {
+		t.Fatalf("unexpected tenant catalog audit snapshots: %d, %v", n, err)
+	}
+	if _, err := db.ExecContext(ctx, "DELETE FROM tenant_catalog_events"); err == nil {
+		t.Fatal("tenant catalog events can be deleted")
+	}
+	if _, err := db.ExecContext(ctx, `CREATE FUNCTION gomar.qa_reject_catalog_audit() RETURNS trigger
+		LANGUAGE plpgsql AS $$BEGIN RAISE EXCEPTION 'synthetic catalog audit failure'; END;$$;
+		CREATE TRIGGER qa_reject_catalog_audit BEFORE INSERT ON tenant_catalog_events
+		FOR EACH ROW EXECUTE FUNCTION gomar.qa_reject_catalog_audit()`); err != nil {
+		t.Fatal(err)
+	}
+	api("PUT", "", `{"nombre":"Uncommitted entity","cuit":"00000000035"}`, 500)
+	api("POST", "/outlets", `{"nombre":"Uncommitted outlet"}`, 500)
+	api("PUT", "/outlets/101", `{"nombre":"Uncommitted rename","activa":true}`, 500)
+	var rolledBack bool
+	if err := db.QueryRowContext(ctx, `SELECT
+		(SELECT count(*) FROM tenant_catalog_events)=3 AND
+		EXISTS(SELECT 1 FROM entities WHERE id=101 AND name='Tenant renamed' AND cuit='00000000035') AND
+		EXISTS(SELECT 1 FROM outlets WHERE id=101 AND name='Center renamed' AND NOT active) AND
+		NOT EXISTS(SELECT 1 FROM outlets WHERE entity_id=101 AND name='Uncommitted outlet')`).Scan(&rolledBack); err != nil || !rolledBack {
+		t.Fatalf("catalog write or audit persisted on failure: %v", err)
+	}
+	if _, err := db.ExecContext(ctx, `DROP TRIGGER qa_reject_catalog_audit ON tenant_catalog_events;
+		DROP FUNCTION gomar.qa_reject_catalog_audit()`); err != nil {
+		t.Fatal(err)
+	}
+	api("PUT", "/outlets/101", `{"nombre":"Center renamed","activa":true}`, 200)
 	const supplierPayload = `{"razon_social":"Test supplier","cuit":"00000000000"}`
 	w := api("POST", "/suppliers", supplierPayload, 201)
 	var item supplier

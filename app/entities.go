@@ -476,7 +476,7 @@ func managementMembers(tx *sql.Tx, m entityMembership, scope []int64) ([]managed
 	return items, nil
 }
 
-func updateEntity(_ *http.Request, tx *sql.Tx, m entityMembership, body []byte) (int, any, error) {
+func updateEntity(r *http.Request, tx *sql.Tx, m entityMembership, body []byte) (int, any, error) {
 	var input struct {
 		Name *string `json:"nombre"`
 		CUIT *string `json:"cuit"`
@@ -496,11 +496,20 @@ func updateEntity(_ *http.Request, tx *sql.Tx, m entityMembership, body []byte) 
 	if err != nil {
 		return 0, nil, err
 	}
-	_, err = tx.Exec("UPDATE entities SET name=$1,cuit=$2 WHERE id=$3", m.Name, m.CUIT, m.ID)
-	if isUnique(err) {
-		err = problem{409, "Ya existe una entidad con ese CUIT."}
+	ctx := r.Context()
+	var before tenantLegalSnapshot
+	if err := tx.QueryRowContext(ctx, "SELECT name,cuit FROM entities WHERE id=$1 FOR UPDATE", m.ID).Scan(&before.Name, &before.CUIT); err != nil {
+		return 0, nil, err
 	}
-	return 200, m.entity, err
+	err = tx.QueryRowContext(ctx, "UPDATE entities SET name=$1,cuit=$2 WHERE id=$3 RETURNING name,cuit", m.Name, m.CUIT, m.ID).
+		Scan(&m.Name, &m.CUIT)
+	if isUnique(err) {
+		return 0, nil, problem{409, "Ya existe una entidad con ese CUIT."}
+	}
+	if err != nil {
+		return 0, nil, err
+	}
+	return 200, m.entity, recordTenantCatalogEvent(ctx, tx, m.ID, m.userID, sql.NullInt64{}, "update_entity", before, tenantLegalSnapshot{m.Name, m.CUIT})
 }
 
 func normalizeCUIT(raw string) (string, error) {
@@ -569,18 +578,33 @@ func saveOutlet(r *http.Request, tx *sql.Tx, m entityMembership, body []byte) (i
 	if item.Name == "" {
 		return 0, nil, problem{422, "El nombre del local es obligatorio."}
 	}
+	ctx := r.Context()
+	status, action, before := 201, "create_outlet", any(struct{}{})
 	var err error
-	status := 200
 	if update {
-		_, err = tx.Exec("UPDATE outlets SET name=$1,active=$2 WHERE id=$3 AND entity_id=$4", item.Name, item.Active, item.ID, m.ID)
+		var old tenantOutletSnapshot
+		err = tx.QueryRowContext(ctx, "SELECT name,active FROM outlets WHERE id=$1 AND entity_id=$2 FOR UPDATE", item.ID, m.ID).
+			Scan(&old.Name, &old.Active)
+		if errors.Is(err, sql.ErrNoRows) {
+			return 0, nil, missingOutlet
+		}
+		if err != nil {
+			return 0, nil, err
+		}
+		status, action, before = 200, "update_outlet", old
+		err = tx.QueryRowContext(ctx, "UPDATE outlets SET name=$1,active=$2 WHERE id=$3 AND entity_id=$4 RETURNING name,active", item.Name, item.Active, item.ID, m.ID).
+			Scan(&item.Name, &item.Active)
 	} else {
-		status = 201
-		err = tx.QueryRow("INSERT INTO outlets(entity_id,name,active) VALUES ($1,$2,$3) RETURNING id", m.ID, item.Name, item.Active).Scan(&item.ID)
+		err = tx.QueryRowContext(ctx, "INSERT INTO outlets(entity_id,name,active) VALUES ($1,$2,$3) RETURNING id,name,active", m.ID, item.Name, item.Active).
+			Scan(&item.ID, &item.Name, &item.Active)
 	}
 	if isUnique(err) {
-		err = problem{409, "Ya existe un local con ese nombre en la entidad."}
+		return 0, nil, outletDisplayLabelDuplicate
 	}
-	return status, item, err
+	if err != nil {
+		return 0, nil, err
+	}
+	return status, item, recordTenantCatalogEvent(ctx, tx, m.ID, m.userID, sql.NullInt64{Int64: item.ID, Valid: true}, action, before, tenantOutletSnapshot{item.Name, item.Active})
 }
 
 type accessSnapshot struct {
