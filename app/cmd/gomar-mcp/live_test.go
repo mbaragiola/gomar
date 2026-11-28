@@ -17,7 +17,7 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
-const liveReadToolCount = 43
+const liveReadToolCount = 44
 
 func TestDocumentedLiveReadToolCount(t *testing.T) {
 	raw, err := os.ReadFile("../../MCP-COVERAGE.md")
@@ -175,6 +175,11 @@ func TestLiveStdioScopedTools(t *testing.T) {
 				t.Error("unexpected reservation date or party size")
 			}
 			_, _ = io.WriteString(w, `{"date":"2026-11-01","timezone":"America/Argentina/Buenos_Aires","party_size":6,"slots":[{"start_at":"2026-11-01T21:00:00-03:00","table_label":"`+secret+`"}]}`)
+		case "/api/v1/mcp/entities/20/outlets/10/sales-export-handoff":
+			_, _ = io.WriteString(w, `{"handoff_url":"/exportaciones/ventas/20/10","csv":"`+secret+`"}`)
+		case "/api/v1/mcp/entities/20/outlets/12/sales-export-handoff":
+			w.WriteHeader(http.StatusForbidden)
+			_, _ = io.WriteString(w, secret)
 		case "/api/v1/mcp/entities/20/outlets/10/reservation-setup":
 			if r.URL.RawQuery != "" {
 				t.Error("unexpected reservation setup query")
@@ -243,6 +248,10 @@ func TestLiveStdioScopedTools(t *testing.T) {
 	}{
 		{"gomar_current_user", nil, `"username":"prueba"`, false},
 		{"gomar_list_entities", nil, `"id":20`, false},
+		{"gomar_open_sales_export", map[string]any{"entity_id": 20, "outlet_id": 10}, `"handoff_url":"/exportaciones/ventas/20/10"`, false},
+		{"gomar_open_sales_export", map[string]any{"entity_id": 20, "outlet_id": 11}, "permisos", true},
+		{"gomar_open_sales_export", map[string]any{"entity_id": 20, "outlet_id": 12}, "permisos", true},
+		{"gomar_open_sales_export", map[string]any{"entity_id": 21, "outlet_id": 10}, "permisos", true},
 		{"gomar_read_pos_sale_time", map[string]any{"entity_id": 20, "outlet_id": 10, "request_id": saleID}, `"till_reported_at_utc":"2026-12-01T02:58:00Z"`, false},
 		{"gomar_read_pos_sale_time", map[string]any{"entity_id": 20, "outlet_id": 11, "request_id": saleID}, "[gomar:scope_unavailable]", true},
 		{"gomar_read_pos_sale_time", map[string]any{"entity_id": 21, "outlet_id": 10, "request_id": saleID}, "permisos", true},
@@ -324,7 +333,7 @@ func TestLiveStdioScopedTools(t *testing.T) {
 			t.Fatalf("unexpected result for %s: %s", test.name, wire)
 		}
 	}
-	if requests.Load() != 54 {
+	if requests.Load() != 58 {
 		t.Fatalf("wrong number of requests: %d", requests.Load())
 	}
 	if err := session.Close(); err != nil {

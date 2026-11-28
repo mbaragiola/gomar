@@ -10,6 +10,7 @@ For everyday examples, see the [Spanish prompt guide](MCP-GUIA-DE-CONSULTAS.md).
 | --- | --- | --- |
 | Identity and business scope | Current user, businesses, and outlets; propose a display-name change for one active outlet | Native only: business and outlet administration beyond that rename, membership and grant management, credentials and provider sign-in. |
 | POS | Recorded sales totals, own sale time evidence by exact reference, product catalog with exact barcode lookup, one exact saved table check and native handoff; propose product creation and separate name, price, availability or barcode changes | Native only: scan into the local cart, save a tab-local untendered cart, explicitly retire an inspected check with no active tender, preview/print an unsaved table check, register sales, checkout and offline sales sync. Not built: editing or settling a saved table check, and shift management. |
+| Scoped sales export | `gomar_open_sales_export` returns the native page for a single pinned branch with current financial export permission | Native only: choose dates, prepare and download the protected CSV, and explicitly confirm receipt. |
 | Inventory | Tracked balances and thresholds, including an exact configured item by ID, movement history, filtered alert pages and stock alert counts; propose receipts, waste, physical counts, initial disabled product setup, and changes to a product’s minimum or tracking | Native only: branch-wide settings. Not built: bills of materials. |
 | Wiki | Search and read by ID; propose new pages and versioned edits | Not built: deletion. |
 | Delivery | Recent order status with limited fields; status counts for the latest 100 inbox records | No native staff write workflow. Provider calls and credentials are not part of MCP. |
@@ -19,7 +20,7 @@ For everyday examples, see the [Spanish prompt guide](MCP-GUIA-DE-CONSULTAS.md).
 | Reconciliation | Scoped counts, paged run list, metadata and setup by ID and a read-only close eligibility check; propose one empty single-outlet draft | Native only: private files, source rows, preparing matches, decisions and closing review. Setup metadata does not prove readiness. |
 | Reservations and menus | Daily counts, setup flags, one exact configured future start and one numbered table check, staff queue and detail, public candidate times, published menu metadata; propose confirmation or cancellation of an existing request and prepare a table, future slot, or fixed informational cancellation notice for an existing disabled venue | Native only: public booking, guest and contact details, custom venue settings and enablement, actual menu files and publication. Preparation never enables or books anything. |
 
-The packaged live server registers 43 baseline read tools. Discovery does not
+The packaged live server registers 44 baseline read tools. Discovery does not
 guarantee access: app flags and current permissions determine which queries
 can run. There are also 26 distinct opt-in proposal actions, not 26
 simultaneous writes. Of those, 22 are named actions and four use distinct older
@@ -685,3 +686,19 @@ the MCP latest-100 summary keep their existing order and outputs.
 External order references and item details stay native-only; MCP
 returns no customer contact. No provider, ingestion, polling or
 operation changing orders is added.
+
+
+## Scoped sales export
+
+`gomar_open_sales_export` returns only a same-origin page path for the
+requested branch. A current financial export role, grant to that active
+branch, and applicable hosted scope are required. The key must be pinned to
+the same branch. A denied call provides no page path.
+
+Sign in to the Gomar origin with the authorized customer account, then
+open the returned page path. Choose the dates and download the CSV there. Confirm receipt in
+Gomar after downloading. The server checks the current organization, branch
+and permission on each action and binds confirmation to the original
+requester and exact file digest. The native page keeps the CSV, sales rows,
+digest, and confirmation out of MCP. Preparing a CSV is insufficient to
+record receipt.

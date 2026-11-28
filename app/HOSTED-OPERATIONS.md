@@ -107,9 +107,10 @@ that an ungranted outlet is absent, and revoke the rehearsal key when done.
 Keep provider login, public reservations and all optional write paths off
 until their own release checks pass.
 
-## Scoped sales export core
+## Scoped sales export
 
-The unregistered native export core prepares one CSV of recorded POS sales
+In Gomar, select an organization and branch and open **Exportar ventas**.
+The native workflow prepares one CSV of recorded POS sales
 for one active outlet the requester can export. It includes UTC record
 times and ARS minor-unit totals for up to 1,000 sales across at most 31
 Buenos Aires dates. It excludes attachments, customers, staff, line items
@@ -117,10 +118,12 @@ and all other datasets. Current role and outlet scope apply on every retry
 and acknowledgment. The audit retains exact sale IDs and the SHA-256 digest,
 so retries produce the same bytes without storing a second CSV copy.
 
-A separate acknowledgment records the same requester’s confirmation of
-the exact digest. Preparation alone does not establish delivery. There is
-no registered export route, public download link, customer handoff or
-retention action.
+Choose the dates, prepare the CSV, and download it in the signed-in browser.
+The requester can then confirm receipt for the exact digest. The record
+captures the requester’s statement. Preparing or downloading a file alone
+does not record an acknowledgment. The MCP handoff opens the scoped native
+page without file data or credentials. This workflow leaves cancellation,
+hosted access changes, and retention to the separately agreed process.
 
 ## Drain, back up and restore
 

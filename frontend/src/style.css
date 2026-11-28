@@ -307,8 +307,8 @@ a { color: var(--accent); }
 .staff-context select { min-height: 44px; }
 .staff-role { align-self: center; color: var(--muted); font-size: .82rem; }
 .staff-nav { display: flex; flex-wrap: wrap; align-items: start; gap: .35rem; margin-top: .75rem; padding-bottom: .6rem; border-bottom: 1px solid var(--line); }
-.staff-nav button, .staff-admin summary { min-height: 44px; padding: .55rem .7rem; color: var(--ink); background: transparent; border-radius: 6px; font-weight: 600; }
-.staff-nav button:hover, .staff-admin summary:hover { background: var(--passive); }
+.staff-nav button, .staff-nav > a, .staff-admin summary { min-height: 44px; padding: .55rem .7rem; color: var(--ink); background: transparent; border-radius: 6px; font-weight: 600; }
+.staff-nav button:hover, .staff-nav > a:hover, .staff-admin summary:hover { background: var(--passive); }
 .staff-nav button[aria-current="page"] { color: var(--accent); background: var(--passive); box-shadow: inset 0 -2px var(--accent); }
 .staff-admin { min-width: 0; margin-inline-start: auto; }
 .staff-admin summary { cursor: pointer; align-content: center; }
