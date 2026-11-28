@@ -25,6 +25,12 @@ The build generates the embedded web assets. To regenerate only those assets,
 run `bash scripts/stage-web.sh` before running Go tests in `app/`.
 The top-level Go module is a separate synthetic chat preview.
 
+Pull requests run **Required Gomar checks** in GitHub Actions. The check
+builds from the frontend lockfile, runs both Go modules and the PostgreSQL
+gate, and verifies the packaged MCP scope and permission tests ran.
+The PostgreSQL gate runs its scenarios in separate disposable databases.
+The job summary shows each step's outcome and requires all steps to pass.
+
 Run the PostgreSQL gate from the repository root:
 
 ```sh
