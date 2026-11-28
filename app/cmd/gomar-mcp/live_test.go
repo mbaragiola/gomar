@@ -217,6 +217,15 @@ func TestLiveStdioScopedTools(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer session.Close()
+	instructions := session.InitializeResult().Instructions
+	for _, required := range []string{"gomar_list_entities", "gomar_list_outlets", "pendiente", "antes de crear cualquier propuesta", "un producto por vez", "recepción parcial sin permiso explícito"} {
+		if !strings.Contains(instructions, required) {
+			t.Fatalf("server instructions are missing %q", required)
+		}
+	}
+	if strings.Contains(instructions, secret) {
+		t.Fatal("credentials appeared in server instructions")
+	}
 	metadata, err := session.ListTools(ctx, &mcp.ListToolsParams{})
 	if err != nil || len(metadata.Tools) != liveReadToolCount {
 		t.Fatal(metadata, err)
@@ -235,7 +244,7 @@ func TestLiveStdioScopedTools(t *testing.T) {
 		{"gomar_current_user", nil, `"username":"prueba"`, false},
 		{"gomar_list_entities", nil, `"id":20`, false},
 		{"gomar_read_pos_sale_time", map[string]any{"entity_id": 20, "outlet_id": 10, "request_id": saleID}, `"till_reported_at_utc":"2026-12-01T02:58:00Z"`, false},
-		{"gomar_read_pos_sale_time", map[string]any{"entity_id": 20, "outlet_id": 11, "request_id": saleID}, "permisos", true},
+		{"gomar_read_pos_sale_time", map[string]any{"entity_id": 20, "outlet_id": 11, "request_id": saleID}, "[gomar:scope_unavailable]", true},
 		{"gomar_read_pos_sale_time", map[string]any{"entity_id": 21, "outlet_id": 10, "request_id": saleID}, "permisos", true},
 		{"gomar_read_pos_sale_time", map[string]any{"entity_id": 20, "outlet_id": 12, "request_id": saleID}, "permisos", true},
 		{"gomar_read_pos_sale_time", map[string]any{"entity_id": 20, "outlet_id": 10, "request_id": "/wrong"}, "referencia exacta", true},

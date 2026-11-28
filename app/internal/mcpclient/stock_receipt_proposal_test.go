@@ -49,7 +49,7 @@ func TestStockReceiptProposalOnlyTransmitsPositiveAddition(t *testing.T) {
 		t.Fatal("expected only the typed pending proposal receipt", err)
 	}
 	if _, err := client.ProposeStockReceipt(t.Context(), 4, 3, requestID, StockReceipt{ProductID: 7, Quantity: 9}); err == nil ||
-		!strings.Contains(err.Error(), "en esta sucursal") || strings.Contains(err.Error(), "private") {
+		!strings.Contains(err.Error(), "en esta sucursal") || !strings.Contains(err.Error(), "[gomar:proposal_conflict]") || strings.Contains(err.Error(), "private") {
 		t.Fatal("expected a safe stock conflict message", err)
 	}
 	for _, qty := range []int64{0, -1, 1000001} {
