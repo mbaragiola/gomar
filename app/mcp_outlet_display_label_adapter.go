@@ -124,20 +124,18 @@ func (a *app) applyOutletDisplayLabel(r *http.Request, tx *sql.Tx, u user, s res
 	if fresh != p {
 		return outletDisplayLabelChanged
 	}
-	result, err := tx.ExecContext(ctx, `UPDATE outlets SET name=$1 WHERE id=$2 AND entity_id=$3 AND name=$4 AND active`,
-		p.Name, s.Outlet, s.Entity, p.CurrentName)
+	var after tenantOutletSnapshot
+	err = tx.QueryRowContext(ctx, `UPDATE outlets SET name=$1 WHERE id=$2 AND entity_id=$3 AND name=$4 AND active
+		RETURNING name,active`, p.Name, s.Outlet, s.Entity, p.CurrentName).Scan(&after.Name, &after.Active)
 	if isUnique(err) {
 		return outletDisplayLabelDuplicate
 	}
-	if err != nil {
-		return err
-	}
-	n, err := result.RowsAffected()
-	if err != nil {
-		return err
-	}
-	if n != 1 {
+	if errors.Is(err, sql.ErrNoRows) {
 		return outletDisplayLabelChanged
 	}
-	return nil
+	if err != nil {
+		return err
+	}
+	return recordTenantCatalogEvent(ctx, tx, s.Entity, u.id, sql.NullInt64{Int64: s.Outlet, Valid: true},
+		"update_outlet", tenantOutletSnapshot{fresh.CurrentName, fresh.Active}, after)
 }

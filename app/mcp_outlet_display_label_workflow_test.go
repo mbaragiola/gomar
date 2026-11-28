@@ -175,6 +175,18 @@ func TestPostgresMCPOutletDisplayLabelWorkflow(t *testing.T) {
 	call("POST", api, body(10, "Centro", "Centro renovado"), separate, nil, 409)
 	call("POST", first.path+"/decision", first.decision, "", otherLogin, 404)
 	check("Centro")
+	if _, err := db.ExecContext(ctx, `CREATE FUNCTION gomar.qa_reject_mcp_catalog_audit() RETURNS trigger
+		LANGUAGE plpgsql AS $$BEGIN RAISE EXCEPTION 'synthetic catalog audit failure'; END;$$;
+		CREATE TRIGGER qa_reject_mcp_catalog_audit BEFORE INSERT ON tenant_catalog_events
+		FOR EACH ROW EXECUTE FUNCTION gomar.qa_reject_mcp_catalog_audit()`); err != nil {
+		t.Fatal(err)
+	}
+	call("POST", first.path+"/decision", first.decision, "", cookies, 500)
+	check("Centro")
+	if _, err := db.ExecContext(ctx, `DROP TRIGGER qa_reject_mcp_catalog_audit ON tenant_catalog_events;
+		DROP FUNCTION gomar.qa_reject_mcp_catalog_audit()`); err != nil {
+		t.Fatal(err)
+	}
 	result := call("POST", first.path+"/decision", first.decision, "", cookies, 200)
 	var receipt outletDisplayLabelWireDetails
 	if err := json.Unmarshal(result.Body.Bytes(), &receipt); err != nil || receipt.LabelChange != nil || receipt.Name == nil || *receipt.Name != "Centro renovado" {
@@ -189,6 +201,16 @@ func TestPostgresMCPOutletDisplayLabelWorkflow(t *testing.T) {
 	call("POST", first.path+"/decision", first.decision, "", cookies, 409)
 	call("POST", stale.path+"/decision", stale.decision, "", cookies, 409)
 	check("Centro renovado")
+	var auditCount int
+	if err := db.QueryRowContext(ctx, `SELECT count(*) FROM tenant_catalog_events
+		WHERE entity_id=1 AND outlet_id=1 AND actor_id=1 AND action='update_outlet'
+		AND before='{"name":"Centro","active":true}'
+		AND after='{"name":"Centro renovado","active":true}'`).Scan(&auditCount); err != nil || auditCount != 1 {
+		t.Fatalf("approval did not record the expected catalog event: %d, %v", auditCount, err)
+	}
+	if err := db.QueryRowContext(ctx, `SELECT count(*) FROM tenant_catalog_events`).Scan(&auditCount); err != nil || auditCount != 1 {
+		t.Fatalf("queue, denial, or retry wrote an extra event: %d, %v", auditCount, err)
+	}
 	if fingerprint() != before {
 		t.Fatal("rename changed memberships, financial/sale records, or venue")
 	}
