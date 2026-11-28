@@ -2,7 +2,6 @@ package main
 
 import (
 	"database/sql"
-	"encoding/json"
 	"errors"
 	"net/http"
 	"slices"
@@ -604,6 +603,12 @@ func saveOutlet(r *http.Request, tx *sql.Tx, m entityMembership, body []byte) (i
 	if err != nil {
 		return 0, nil, err
 	}
+	if !update {
+		if err := grantNewOutlet(ctx, tx, m.ID, item.ID, m.id, m.userID); err != nil {
+			return 0, nil, err
+		}
+		item.Authorized = true
+	}
 	return status, item, recordTenantCatalogEvent(ctx, tx, m.ID, m.userID, sql.NullInt64{Int64: item.ID, Valid: true}, action, before, tenantOutletSnapshot{item.Name, item.Active})
 }
 
@@ -694,11 +699,8 @@ func saveMembership(r *http.Request, tx *sql.Tx, m entityMembership, body []byte
 		}
 	}
 	item.Role, item.Active = *input.Role, *input.Active
-	// The snapshots only contain strings, booleans and integer IDs.
-	beforeJSON, _ := json.Marshal(before)
-	afterJSON, _ := json.Marshal(accessSnapshot{item.Role, item.Active, requested})
-	if _, err := tx.Exec(`INSERT INTO access_events(entity_id,membership_id,actor_id,action,before,after,occurred_at)
-		VALUES ($1,$2,$3,$4,$5,$6,$7)`, m.ID, item.ID, m.userID, action, string(beforeJSON), string(afterJSON), time.Now().UTC().Format(time.RFC3339Nano)); err != nil {
+	if err := recordAccessEvent(r.Context(), tx, m.ID, item.ID, m.userID, action, before,
+		accessSnapshot{item.Role, item.Active, requested}); err != nil {
 		return 0, nil, err
 	}
 	grants, valid, err := grantScope(tx, item.ID, m.ID)
