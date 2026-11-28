@@ -309,6 +309,8 @@ func postPOSSale(r *http.Request, tx *sql.Tx, m entityMembership, raw []byte, st
 	if err != nil {
 		return 0, nil, err
 	}
+	// A confirmed sale may have been queued offline against an earlier active revision.
+	// A later catalog change does not reprice it or expire that revision.
 	for _, line := range input.Items {
 		item := posSaleItem{posLine: line}
 		err := tx.QueryRowContext(ctx, `SELECT name,price_minor FROM pos_product_versions

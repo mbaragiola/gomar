@@ -419,6 +419,28 @@ The normal optional stock rules apply. No provider charge, refund, fiscal
 document or fiscal cancellation is made. The ordinary single-method
 offline sales contract does not change.
 
+### Prices for confirmed sales and saved table checks
+
+When Caja sends a confirmed sale, Gomar prices it from the exact product
+revision supplied for that outlet. The server uses the stored unit price,
+including for a prior revision that was active. A later price change or
+product deactivation leaves that revision available for queued sales. A
+missing revision, a revision marked inactive, or a revision from another
+outlet rejects the sale without recording it. Caja keeps the rejected sale
+for review. Exact retries return the original receipt.
+
+Price revisions have no age limit. The server receives the same sale
+request online or after a delay and has no trusted capture time. The local
+register lease limits new offline sales, and the optional reported clock
+can flag a delay for review. Neither expires a queued sale or changes
+its registered price.
+
+Saving a new table check prepares an open order. Every item must match the
+current active revision, so a price change or deactivation requires the
+operator to review the current catalog before saving. A check already saved
+keeps its original items and prices. An exact retry, and later finalization
+when enabled, use that saved amount.
+
 ### Time evidence for directly queued Caja sales
 
 Caja records the browser-reported UTC clock once when a new sale is queued
