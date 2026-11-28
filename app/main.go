@@ -102,19 +102,24 @@ func main() {
 	if *enableStock && !*enablePOS {
 		log.Fatal("-enable-stock requires -enable-pos")
 	}
-	explicitTCP, unixMode := false, false
+	explicitTCP, unixMode, createAdmin := false, false, false
 	flag.Visit(func(f *flag.Flag) {
 		explicitTCP = explicitTCP || f.Name == "listen"
 		unixMode = unixMode || f.Name == "listen-unix" || f.Name == "unix-https-authority"
+		createAdmin = createAdmin || f.Name == "create-admin"
 	})
 	modes := 0
-	for _, enabled := range []bool{*initOnly, *checkOnly, *admin != ""} {
+	for _, enabled := range []bool{*initOnly, *checkOnly, createAdmin} {
 		if enabled {
 			modes++
 		}
 	}
 	if *state == "" || flag.NArg() != 0 || modes > 1 || modes != 0 && (explicitTCP || unixMode || *publicReservations || *reservationContacts || *enableReservationConfirmProposals || *enableReservationTableAddProposals || *enableReservationSlotAddProposals || *enableReservationPolicyNoticeProposals || *enableOutletDisplayLabelProposals || *enableReservationCancelProposals || *enablePOSCreateProposals || *enableStockMinimumProposals || *enableStockTrackingProposals || *enableStockProductSetupProposals || *enableSupplierNameProposals || *enablePOS || *enableDelivery || *enableMCP || *enableWikiProposals || *enableDocumentProposals || *enableWikiEditProposals || *enableStockReceiptProposals || *enableProposalSessions || *enableDocumentReviewProposals || *enableDocumentEditProposals || *enableDocumentNumberProposals || *enableDocumentPointOfSaleProposals || *enableStockAdjustmentProposals || *enablePOSCatalogProposals || *enableReconciliationDraftProposals || *enableProviderAuth || *enableAdminRecovery || *providerOnly || *providerEmployee || *employeeOnboarding) {
 		log.Fatal("provide -state; choose at most one of -init, -check and -create-admin without server flags")
+	}
+	adminUsername := strings.TrimSpace(*admin)
+	if createAdmin && adminUsername == "" {
+		log.Fatal("provide a local administrator username")
 	}
 	var addr netip.AddrPort
 	if unixMode {
@@ -183,18 +188,14 @@ func main() {
 	if *initOnly || *checkOnly {
 		return
 	}
-	if *admin != "" {
-		username := strings.TrimSpace(*admin)
-		if username == "" {
-			log.Fatal("provide a local administrator username")
-		}
-		password, err := readLocalAdminPassword(os.Stdin, username)
+	if createAdmin {
+		password, err := readLocalAdminPassword(os.Stdin, adminUsername)
 		if err != nil {
 			log.Fatal(err)
 		}
 		encoded := encodePassword(password)
 		if _, err := db.ExecContext(context.Background(), `INSERT INTO users(username,password,active,staff,superuser)
-			VALUES ($1, $2, TRUE, TRUE, TRUE)`, username, encoded); err != nil {
+			VALUES ($1, $2, TRUE, TRUE, TRUE)`, adminUsername, encoded); err != nil {
 			log.Fatal("could not create local administrator")
 		}
 		return

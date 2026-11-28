@@ -1,9 +1,46 @@
 package main
 
 import (
+	"flag"
+	"os"
+	"os/exec"
 	"strings"
 	"testing"
 )
+
+func TestAdminBootstrapCLI(t *testing.T) {
+	const child = "GOMAR_ADMIN_BOOTSTRAP_TEST_CHILD"
+	if os.Getenv(child) == "1" {
+		os.Args = append(os.Args[:1], flag.Args()...)
+		flag.CommandLine = flag.NewFlagSet(os.Args[0], flag.ExitOnError)
+		main()
+		return
+	}
+
+	self, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		name, want string
+		args       []string
+	}{
+		{"empty username", "provide a local administrator username", []string{"-create-admin", ""}},
+		{"blank username", "provide a local administrator username", []string{"-create-admin", " \t"}},
+		{"omitted flag", "PostgreSQL connection settings are missing", nil},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			args := append([]string{"-test.run=^TestAdminBootstrapCLI$", "--", "-state", t.TempDir()}, tc.args...)
+			cmd := exec.CommandContext(t.Context(), self, args...)
+			cmd.Env = []string{child + "=1"}
+			output, err := cmd.CombinedOutput()
+			if code, ok := err.(*exec.ExitError); !ok || code.ExitCode() != 1 ||
+				!strings.Contains(string(output), tc.want) || strings.Contains(string(output), "http://") {
+				t.Fatalf("expected CLI to reject before serving with %q, got %v: %s", tc.want, err, output)
+			}
+		})
+	}
+}
 
 func TestReadLocalAdminPassword(t *testing.T) {
 	for _, tt := range []struct {
