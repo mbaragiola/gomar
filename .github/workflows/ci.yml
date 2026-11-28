@@ -1,0 +1,99 @@
+name: Gomar CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  merge_group:
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  checks:
+    name: Required Gomar checks
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      GOTOOLCHAIN: local
+      GOWORK: 'off'
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
+        with:
+          node-version: '22.23.1'
+          package-manager-cache: false
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
+        with:
+          go-version: '1.27.4'
+          cache: false
+      - name: Install test dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends bubblewrap postgresql-16
+          npm ci --prefix frontend
+          go mod download
+          go -C app mod download
+      - name: Build frontend and both app binaries
+        id: build
+        run: bash scripts/build-app.sh
+      - name: Frontend lint
+        id: lint
+        run: npm --prefix frontend run lint
+      - name: Frontend tests
+        id: frontend
+        run: npm --prefix frontend test
+      - name: Root Go tests
+        id: root_go
+        run: go test -mod=readonly -count=1 -v ./...
+      - name: App Go tests
+        id: app_go
+        run: go -C app test -mod=readonly -count=1 -v ./...
+      - name: PostgreSQL gate
+        id: postgres
+        env:
+          QA_PG_BIN: /usr/lib/postgresql/16/bin
+        run: bash scripts/qa-postgres.sh
+      - name: Packaged MCP permissions
+        id: mcp
+        run: |
+          report="$(mktemp)"
+          trap 'rm -f -- "$report"' EXIT
+          go -C app test -mod=readonly -count=1 -json ./cmd/gomar-mcp | tee "$report"
+          jq -es '
+            (any(.[]; .Action == "pass" and .Test == "TestLiveStdioScopedTools")) and
+            (any(.[]; .Action == "pass" and .Test == "TestStdioRefusesBadScopeAndOversizeFrame")) and
+            (all(.[]; .Action != "skip" and .Action != "fail"))
+          ' "$report" >/dev/null
+      - name: Summarize checks
+        if: ${{ always() }}
+        env:
+          BUILD: ${{ steps.build.outcome }}
+          LINT: ${{ steps.lint.outcome }}
+          FRONTEND: ${{ steps.frontend.outcome }}
+          ROOT_GO: ${{ steps.root_go.outcome }}
+          APP_GO: ${{ steps.app_go.outcome }}
+          POSTGRES: ${{ steps.postgres.outcome }}
+          MCP: ${{ steps.mcp.outcome }}
+        run: |
+          {
+            echo '### Gomar check results'
+            echo '| Check | Result |'
+            echo '| --- | --- |'
+            echo "| Build | $BUILD |"
+            echo "| Frontend lint | $LINT |"
+            echo "| Frontend tests | $FRONTEND |"
+            echo "| Root Go tests | $ROOT_GO |"
+            echo "| App Go tests | $APP_GO |"
+            echo "| PostgreSQL gate | $POSTGRES |"
+            echo "| Packaged MCP permissions | $MCP |"
+          } >> "$GITHUB_STEP_SUMMARY"
+          for result in "$BUILD" "$LINT" "$FRONTEND" "$ROOT_GO" "$APP_GO" "$POSTGRES" "$MCP"; do
+            [[ "$result" == success ]] || exit 1
+          done
