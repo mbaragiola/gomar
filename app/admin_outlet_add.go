@@ -20,9 +20,9 @@ type adminOutletEntityOption struct {
 
 type adminCatalogAddPage struct {
 	Name, Problem, CUIT, FormID, FormPath, NameLabel, NameField string
-	EntityID                                                    int64
+	EntityID, MembershipID                                      int64
 	Active, Supplier, Legal                                     bool
-	Entities                                                    []adminOutletEntityOption
+	Entities, InitialGrantees                                   []adminOutletEntityOption
 	MaxName                                                     int
 }
 
@@ -61,6 +61,26 @@ func (a *app) serveAdminCatalogAdd(w http.ResponseWriter, r *http.Request, page 
 		failure(w, err)
 		return
 	}
+	if !supplier {
+		eligible, err := a.db.QueryContext(r.Context(), "SELECT m.id,e.name || ' · ' || u.username"+initialOutletGrantee+" ORDER BY e.name,u.username,m.id")
+		if err != nil {
+			failure(w, err)
+			return
+		}
+		defer eligible.Close()
+		for eligible.Next() {
+			var option adminOutletEntityOption
+			if err := eligible.Scan(&option.ID, &option.Name); err != nil {
+				failure(w, err)
+				return
+			}
+			fields.InitialGrantees = append(fields.InitialGrantees, option)
+		}
+		if err := eligible.Err(); err != nil {
+			failure(w, err)
+			return
+		}
+	}
 	page.CatalogAdd = &fields
 	renderAdmin(w, page)
 }
@@ -70,6 +90,10 @@ func (a *app) saveAdminCatalogAdd(w http.ResponseWriter, r *http.Request, actorI
 		switch key {
 		case fields.NameField, "csrfmiddlewaretoken", "entity", "active", "_save":
 			if len(values) == 1 {
+				continue
+			}
+		case "initial_membership":
+			if !fields.Supplier && len(values) == 1 {
 				continue
 			}
 		case "cuit":
@@ -107,6 +131,13 @@ func (a *app) saveAdminCatalogAdd(w http.ResponseWriter, r *http.Request, actorI
 			return false
 		}
 	}
+	if !fields.Supplier {
+		fields.MembershipID, err = strconv.ParseInt(r.PostForm.Get("initial_membership"), 10, 64)
+		if err != nil || fields.MembershipID < 1 {
+			fields.Problem = invalidInitialOutletGrantee.detail
+			return false
+		}
+	}
 	ctx := r.Context()
 	tx, err := a.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -139,6 +170,16 @@ func (a *app) saveAdminCatalogAdd(w http.ResponseWriter, r *http.Request, actorI
 	if err != nil {
 		failure(w, err)
 		return true
+	}
+	if !fields.Supplier {
+		if err := grantNewOutlet(ctx, tx, id, recordID, fields.MembershipID, actorID); err != nil {
+			if err == invalidInitialOutletGrantee {
+				fields.Problem = invalidInitialOutletGrantee.detail
+				return false
+			}
+			failure(w, err)
+			return true
+		}
 	}
 	list := adminOutletPath
 	if err == nil {

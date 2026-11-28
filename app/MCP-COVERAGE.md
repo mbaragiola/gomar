@@ -38,6 +38,14 @@ changes stay in Gomar under **Administración → Gestionar accesos**. Approved
 MCP outlet renames and native tenant catalog changes write the same internal
 audit trail. MCP and browser reads do not return the audit trail.
 
+Creating an outlet requires an ordinary tenant administrator. In Gomar,
+the administrator who creates it receives the first outlet grant. In the
+platform console, choose an active administrator of the selected entity
+for the grant. Both paths record the grant with the outlet creation. This
+step assigns access and stays native-only. A read key can discover a
+new active outlet after its owner has the grant. It cannot create outlets,
+assign grants, or discover an outlet outside its existing scope.
+
 ## Managed employee accounts
 
 Employee invitation, temporary password display, first sign-in, password

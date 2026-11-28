@@ -127,6 +127,10 @@
             <option value="">---------</option>
             {{range .Entities}}<option value="{{.ID}}" {{if eq .ID $.CatalogAdd.EntityID}}selected{{end}}>{{.Name}}</option>{{end}}
         </select></label>{{end}}
+        {{if not (or .Supplier .Legal)}}<label>Administración inicial <select id="id_initial_membership" name="initial_membership" required>
+            <option value="">Elegí una membresía de la entidad</option>
+            {{range .InitialGrantees}}<option value="{{.ID}}" {{if eq .ID $.CatalogAdd.MembershipID}}selected{{end}}>{{.Name}}</option>{{end}}
+        </select></label>{{end}}
         <label>{{.NameLabel}} <input name="{{.NameField}}" id="id_{{.NameField}}" value="{{.Name}}" maxlength="{{.MaxName}}" required></label>
         {{if or .Supplier .Legal}}<label>CUIT <input name="cuit" id="id_cuit" value="{{.CUIT}}" maxlength="{{if .Legal}}11{{else}}14{{end}}" required></label>{{end}}
         <label><input type="checkbox" name="active" id="id_active" {{if .Active}}checked{{end}}> Activo</label>

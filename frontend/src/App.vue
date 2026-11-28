@@ -505,11 +505,20 @@ async function createOutlet() {
   const entityId = selectedEntityId.value
   try {
     await request(`/entities/${entityId}/outlets`, { method: 'POST', body: JSON.stringify(newOutletForm) })
-    if (!contextIsCurrent(sessionToken, contextToken, entityId)) return
-    Object.assign(newOutletForm, { nombre: '', activa: true })
-    await loadManagement(sessionToken, contextToken)
   } catch (value) {
     if (contextIsCurrent(sessionToken, contextToken, entityId)) showError(value)
+    return
+  }
+  if (!contextIsCurrent(sessionToken, contextToken, entityId)) return
+  const reloadContextToken = contextGeneration + 1
+  try {
+    await loadContext(sessionToken, true, selectedOutletId.value ?? undefined)
+    if (!contextIsCurrent(sessionToken, reloadContextToken, entityId)) return
+    staffView.value = 'access'
+    showManagement.value = true
+    await loadManagement(sessionToken, reloadContextToken)
+  } catch (value) {
+    if (contextIsCurrent(sessionToken, reloadContextToken, entityId)) showError(value)
   }
 }
 
@@ -1617,6 +1626,7 @@ onBeforeUnmount(() => window.removeEventListener('hashchange', syncAttachmentHan
           </form>
           <div class="management-section">
             <h3>Locales</h3>
+            <p>Al crear un local, tu membresía recibe el permiso inicial.</p>
             <form class="management-row" @submit.prevent="createOutlet">
               <label>Nuevo local<input v-model="newOutletForm.nombre" required /></label>
               <label class="check"><input v-model="newOutletForm.activa" type="checkbox" /> Activo</label>
