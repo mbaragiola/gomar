@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -17,6 +18,16 @@ import (
 )
 
 const liveReadToolCount = 42
+
+func TestDocumentedLiveReadToolCount(t *testing.T) {
+	raw, err := os.ReadFile("../../MCP-COVERAGE.md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := fmt.Sprintf("registers %d baseline read tools", liveReadToolCount); !strings.Contains(string(raw), want) {
+		t.Fatalf("MCP-COVERAGE.md must document %q", want)
+	}
+}
 
 func TestLiveStdioScopedTools(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)

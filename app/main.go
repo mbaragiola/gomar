@@ -60,6 +60,15 @@ func main() {
 	enableDocumentEditProposals := flag.Bool("enable-mcp-document-edit-proposals", false, "allow proposing draft document date and amount edits for browser approval")
 	enableDocumentReviewProposals := flag.Bool("enable-mcp-document-review-proposals", false, "allow staff to propose draft document review for browser approval")
 	flag.Parse()
+	explicitTCP, unixMode, createAdmin := false, false, false
+	flag.Visit(func(f *flag.Flag) {
+		if !*enableMCP && strings.HasPrefix(f.Name, "enable-mcp-") && f.Value.String() == "true" {
+			log.Fatalf("-%s requires -enable-mcp", f.Name)
+		}
+		explicitTCP = explicitTCP || f.Name == "listen"
+		unixMode = unixMode || f.Name == "listen-unix" || f.Name == "unix-https-authority"
+		createAdmin = createAdmin || f.Name == "create-admin"
+	})
 	if *reservationContacts && !*publicReservations {
 		log.Fatal("-enable-reservation-contacts requires -public-reservations")
 	}
@@ -81,11 +90,14 @@ func main() {
 	if *enableReservationConfirmProposals && !*publicReservations {
 		log.Fatal("-enable-mcp-reservation-confirm-proposals requires -public-reservations")
 	}
-	if (*enableProposalSessions || *enablePOSCatalogProposals) && !*enablePOS {
+	if *enableProposalSessions && !*enablePOS {
 		log.Fatal("-enable-mcp-proposal-sessions requires -enable-pos")
 	}
+	if *enablePOSCatalogProposals && !*enablePOS {
+		log.Fatal("-enable-mcp-pos-catalog-proposals requires -enable-pos")
+	}
 	if *enableStockAdjustmentProposals && (!*enablePOS || !*enableStock) {
-		log.Fatal("stock adjustment proposals require both POS and stock")
+		log.Fatal("-enable-mcp-stock-adjustment-proposals requires -enable-pos and -enable-stock")
 	}
 	if *enableStockReceiptProposals && (!*enablePOS || !*enableStock) {
 		log.Fatal("-enable-mcp-stock-receipt-proposals requires -enable-pos and -enable-stock")
@@ -102,12 +114,6 @@ func main() {
 	if *enableStock && !*enablePOS {
 		log.Fatal("-enable-stock requires -enable-pos")
 	}
-	explicitTCP, unixMode, createAdmin := false, false, false
-	flag.Visit(func(f *flag.Flag) {
-		explicitTCP = explicitTCP || f.Name == "listen"
-		unixMode = unixMode || f.Name == "listen-unix" || f.Name == "unix-https-authority"
-		createAdmin = createAdmin || f.Name == "create-admin"
-	})
 	modes := 0
 	for _, enabled := range []bool{*initOnly, *checkOnly, createAdmin} {
 		if enabled {

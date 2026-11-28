@@ -19,7 +19,7 @@ For everyday examples, see the [Spanish prompt guide](MCP-GUIA-DE-CONSULTAS.md).
 | Reconciliation | Scoped counts, paged run list, metadata and setup by ID and a read-only close eligibility check; propose one empty single-outlet draft | Native only: private files, source rows, preparing matches, decisions and closing review. Setup metadata does not prove readiness. |
 | Reservations and menus | Daily counts, setup flags, one exact configured future start and one numbered table check, staff queue and detail, public candidate times, published menu metadata; propose confirmation or cancellation of an existing request and prepare a table, future slot, or fixed informational cancellation notice for an existing disabled venue | Native only: public booking, guest and contact details, custom venue settings and enablement, actual menu files and publication. Preparation never enables or books anything. |
 
-The packaged live server registers 41 baseline read tools. Discovery does not
+The packaged live server registers 42 baseline read tools. Discovery does not
 guarantee access: app flags and current permissions determine which queries
 can run. There are also 26 distinct opt-in proposal actions, not 26
 simultaneous writes. Of those, 22 are named actions and four use distinct older
@@ -27,6 +27,13 @@ credential options. The standard connection selects at most one named action. As
 opt-in, [two local lanes](MCP-LOCAL-PROPOSAL-LANES.md) allow POS rename and
 stock minimum proposals together for one pinned outlet. Each keeps its own
 credential and browser approval. Other action combinations are not supported.
+
+Start Gomar with `-enable-mcp` before enabling any proposal flag. Add
+`-enable-pos` for POS proposal sessions and catalog or product proposals,
+and `-enable-stock` for stock proposals. Reservation confirmation and
+cancellation also require `-public-reservations`. The preparation
+proposals for a table, future slot or informational notice can remain
+enabled while public reservations are off.
 
 A separate draft number proposal changes only the printed number and records
 one native draft revision and audit entry. It leaves the branch, point of sale,
