@@ -27,14 +27,14 @@ func TestPostgresPayableCrossOutletSettlement(t *testing.T) {
 	}
 	const password = "synthetic-accounting-password"
 	if _, err := db.ExecContext(ctx, `INSERT INTO users(id,username,password,active,staff,superuser)
-       VALUES (1,'fixture-accountant',$1,TRUE,FALSE,FALSE)`, encodePassword(password)); err != nil {
+       VALUES (1,'fixture-accountant',$1,TRUE,FALSE,FALSE),(2,'fixture-outlet-owner',$1,TRUE,FALSE,FALSE)`, encodePassword(password)); err != nil {
 		t.Fatal(err)
 	}
 	const fixture = `
     INSERT INTO entities(id,name,cuit,active) VALUES (1,'Fixture Entity','00000000000',TRUE);
     INSERT INTO outlets(id,entity_id,name,active) VALUES (1,1,'Fixture A',TRUE),(2,1,'Fixture B',TRUE);
-    INSERT INTO memberships(id,user_id,entity_id,role,active) VALUES (1,1,1,'accounting',TRUE);
-    INSERT INTO outlet_grants VALUES (1,1),(1,2);
+    INSERT INTO memberships(id,user_id,entity_id,role,active) VALUES (1,1,1,'accounting',TRUE),(2,2,1,'administration',TRUE);
+    INSERT INTO outlet_grants VALUES (1,1),(1,2),(2,1),(2,2);
     INSERT INTO suppliers(id,entity_id,name,cuit,active) VALUES (1,1,'Synthetic Supplier','00000000001',TRUE);
     INSERT INTO documents(id,entity_id,outlet_id,supplier_id,issuer_cuit,document_type,letter,
       point_of_sale,number,issue_date,due_date,currency,total_minor,description,status,revision,created_at,updated_at)
@@ -213,6 +213,65 @@ func TestPostgresPayableCrossOutletSettlement(t *testing.T) {
 	downloaded := call("GET", receiptURL, "", 200)
 	if !bytes.Equal(downloaded.Body.Bytes(), picture.Bytes()) || downloaded.Header().Get("Content-Type") != pngType {
 		t.Fatal("backing private receipt differs from synthetic upload")
+	}
+
+	admin := postgresTestCookies(t, handler, "fixture-outlet-owner", password)
+	setActive := func(outlet int, active bool) {
+		t.Helper()
+		name := map[int]string{1: "Fixture A", 2: "Fixture B"}[outlet]
+		r := httptest.NewRequestWithContext(ctx, "PUT", fmt.Sprintf("http://example.com/api/v1/entities/1/outlets/%d", outlet),
+			strings.NewReader(fmt.Sprintf(`{"nombre":%q,"activa":%t}`, name, active)))
+		r.Header.Set("Content-Type", "application/json")
+		for _, c := range admin {
+			r.AddCookie(c)
+			if c.Name == "csrftoken" {
+				r.Header.Set("X-CSRFToken", c.Value)
+			}
+		}
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, r)
+		check(rec, 200)
+	}
+	call("PUT", "/outlets/2", `{"nombre":"Fixture B","activa":false}`, 403)
+	setActive(2, false)
+	var archived []payableView
+	decode(call("GET", "/payables?outlet_id=2", "", 200), &archived)
+	if len(archived) != 1 || !archived[0].Archived || archived[0].Balance != "40.00" {
+		t.Fatalf("archived outstanding amount missing: %+v", archived)
+	}
+	var historicalPayable payableDetailView
+	decode(call("GET", payableURL, "", 200), &historicalPayable)
+	if !historicalPayable.Archived || len(historicalPayable.Movements) != 2 {
+		t.Fatalf("archived ledger missing: %+v", historicalPayable)
+	}
+	var historicalPayment paymentDetailView
+	decode(call("GET", path(winner), "", 200), &historicalPayment)
+	if !historicalPayment.Archived || historicalPayment.Key != "" || len(historicalPayment.Allocations) != 1 {
+		t.Fatalf("archived payment was not read-only: %+v", historicalPayment)
+	}
+	call("GET", receiptURL, "", 404)
+	check(upload(), 404)
+	call("POST", path(winner)+"/reverse", `{"motivo":"Archived reversal attempt"}`, 404)
+	call("POST", path(winner)+"/post", paymentApply(winner), 404)
+	call("POST", path(loser)+"/post", paymentApply(loser), 404)
+	call("POST", "/payments", fmt.Sprintf(bodyTemplate, 2), 404)
+	if _, err := db.ExecContext(ctx, "DELETE FROM outlet_grants WHERE membership_id=1 AND outlet_id=2"); err != nil {
+		t.Fatal(err)
+	}
+	call("GET", payableURL, "", 404)
+	call("GET", path(winner), "", 404)
+	if _, err := db.ExecContext(ctx, "INSERT INTO outlet_grants VALUES(1,2)"); err != nil {
+		t.Fatal(err)
+	}
+	setActive(1, false)
+	call("GET", "/payables", "", 200)
+	call("GET", path(winner), "", 200)
+	call("POST", path(winner)+"/reverse", `{"motivo":"Frozen Treasury"}`, 403)
+	call("GET", receiptURL, "", 403)
+	setActive(1, true)
+	setActive(2, true)
+	if resumed := call("GET", receiptURL, "", 200); !bytes.Equal(resumed.Body.Bytes(), picture.Bytes()) {
+		t.Fatal("receipt data changed through closure and reactivation")
 	}
 	call("POST", path(winner)+"/reverse", `{"motivo":"Reversión sintética"}`, 201)
 	var restored payableDetailView

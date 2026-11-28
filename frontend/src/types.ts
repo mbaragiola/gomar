@@ -62,6 +62,8 @@ export interface Payable {
   estado_nombre: string
   vencida: boolean
   registrada: string
+  archivada?: boolean
+  movimientos?: { tipo_nombre: string; variacion: string; saldo: string; fecha: string; actor: string; motivo: string }[]
 }
 
 export interface Payment {
@@ -82,6 +84,7 @@ export interface Payment {
   registrado: string | null
   tiene_comprobante: boolean
   idempotency_key: string
+  archivado?: boolean
   aplicaciones?: { payable_id: number; referencia: string; importe: string }[]
 }
 

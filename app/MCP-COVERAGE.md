@@ -181,6 +181,21 @@ payment's branch, and **Abrir** uses the selected branch. Nothing is deleted or
 posted by switching branches. Existing MCP reads remain pinned to one branch
 and do not include payment references, methods, or receipts.
 
+Deactivating an outlet preserves its posted payables, payment history,
+and outstanding balances. An operator with Treasury permission and
+current grants can review the archived ledger and authorized payment
+allocations in **Cuentas a pagar**. A payment stays read-only while its own
+outlet or an allocation outlet is inactive. A tenant administrator must
+reactivate the applicable outlets before resolving the balance, reversing
+a payment, or accessing a private receipt. This does not reopen other
+outlet workflows while the outlet is inactive.
+
+MCP payable and recorded-payment lists, exact records, and payable
+movements accept an entity-wide read key for an explicitly named outlet
+with a current grant. Keys pinned to inactive outlets remain unusable.
+The existing one-outlet finance projections and cross-branch settlement
+exclusions still apply. Payment entry and private files stay in Gomar.
+
 ### Payable eligibility
 
 `gomar_check_payable_eligibility` checks one `document_id` for the selected

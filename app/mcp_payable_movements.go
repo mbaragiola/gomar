@@ -45,7 +45,7 @@ const mcpPayableMovementScope = mcpPayableScope + `
  )`
 
 func mcpListPayableMovements(r *http.Request, tx *sql.Tx, s mcpTokenScope) (any, error) {
-	outlet, err := mcpFinanceOutlet(r, tx, s)
+	outlet, err := mcpFinancialHistoryOutlet(r, tx, s)
 	if err != nil {
 		return nil, err
 	}
