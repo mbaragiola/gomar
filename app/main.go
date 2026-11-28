@@ -50,6 +50,7 @@ func main() {
 	enableReservationSlotAddProposals := flag.Bool("enable-mcp-reservation-slot-add-proposals", false, "allow proposing one future slot for a disabled reservation venue")
 	enableReservationTableAddProposals := flag.Bool("enable-mcp-reservation-table-add-proposals", false, "allow proposing one table for a disabled reservation venue")
 	enableReservationConfirmProposals := flag.Bool("enable-mcp-reservation-confirm-proposals", false, "allow proposing confirmation of one pending reservation for browser approval")
+	publicationOriginSecretFile := flag.String("reservation-publication-secret-file", "", "serve published reservations through protected HTTPS ingress")
 	publicReservations := flag.Bool("public-reservations", false, "enable the guest reservation routes for explicitly enabled venues")
 	reservationContacts := flag.Bool("enable-reservation-contacts", false, "collect reservation contacts only at configured public venues")
 	enableReconciliationDraftProposals := flag.Bool("enable-mcp-reconciliation-draft-proposals", false, "allow an empty single-branch draft proposal for browser approval")
@@ -122,6 +123,17 @@ func main() {
 	}
 	if *state == "" || flag.NArg() != 0 || modes > 1 || modes != 0 && (explicitTCP || unixMode || *publicReservations || *reservationContacts || *enableReservationConfirmProposals || *enableReservationTableAddProposals || *enableReservationSlotAddProposals || *enableReservationPolicyNoticeProposals || *enableOutletDisplayLabelProposals || *enableReservationCancelProposals || *enablePOSCreateProposals || *enableStockMinimumProposals || *enableStockTrackingProposals || *enableStockProductSetupProposals || *enableSupplierNameProposals || *enablePOS || *enableDelivery || *enableMCP || *enableWikiProposals || *enableDocumentProposals || *enableWikiEditProposals || *enableStockReceiptProposals || *enableProposalSessions || *enableDocumentReviewProposals || *enableDocumentEditProposals || *enableDocumentNumberProposals || *enableDocumentPointOfSaleProposals || *enableStockAdjustmentProposals || *enablePOSCatalogProposals || *enableReconciliationDraftProposals || *enableProviderAuth || *enableAdminRecovery || *providerOnly || *providerEmployee || *employeeOnboarding) {
 		log.Fatal("provide -state; choose at most one of -init, -check and -create-admin without server flags")
+	}
+	var publicationOriginSecret string
+	if *publicationOriginSecretFile != "" {
+		if modes != 0 || !unixMode || *publicReservations {
+			log.Fatal("published reservations require protected Unix serving without direct public reservation routes")
+		}
+		var err error
+		publicationOriginSecret, err = readProviderSecretFile(*publicationOriginSecretFile)
+		if err != nil || !validReservationPublicationSecret(publicationOriginSecret) {
+			log.Fatal("invalid reservation publication secret file")
+		}
 	}
 	adminUsername := strings.TrimSpace(*admin)
 	if createAdmin && adminUsername == "" {
@@ -225,7 +237,15 @@ func main() {
 		server.BaseContext = ingress.baseContext
 		server.ConnContext = ingress.connContext
 		application.host = *unixAuthority
-		server.Handler = ingress.wrapHTTPS(*unixAuthority, application.routes())
+		handler := application.routes()
+		if publicationOriginSecret != "" {
+			guest, err := reservationPublicationOrigin(db, publicationOriginSecret, time.Now)
+			if err != nil {
+				log.Fatal(err)
+			}
+			handler = withReservationPublicationOrigin(handler, guest)
+		}
+		server.Handler = ingress.wrapHTTPS(*unixAuthority, handler)
 	} else {
 		listener, err = net.Listen("tcp", addr.String())
 		if err != nil {

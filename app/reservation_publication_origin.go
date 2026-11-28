@@ -114,11 +114,24 @@ func loadPublishedReservationBusiness(ctx context.Context, db *sql.DB, business 
 	return result, nil
 }
 
+func validReservationPublicationSecret(secret string) bool {
+	decoded, err := base64.RawURLEncoding.Strict().DecodeString(secret)
+	return err == nil && len(decoded) == 32
+}
+
+func withReservationPublicationOrigin(ordinary, guest http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasPrefix(r.URL.Path, reservationPublicationOriginPrefix) {
+			guest.ServeHTTP(w, r)
+			return
+		}
+		ordinary.ServeHTTP(w, r)
+	})
+}
+
 // The publication origin is only available to an authenticated HTTPS peer.
-// No application route registers it until a restricted ingress is configured.
 func reservationPublicationOrigin(db *sql.DB, credential string, clock func() time.Time) (http.Handler, error) {
-	decoded, err := base64.RawURLEncoding.Strict().DecodeString(credential)
-	if db == nil || clock == nil || err != nil || len(decoded) != 32 {
+	if db == nil || clock == nil || !validReservationPublicationSecret(credential) {
 		return nil, errors.New("invalid reservation publication origin configuration")
 	}
 	correct := sha256.Sum256([]byte("Bearer " + credential))

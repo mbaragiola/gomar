@@ -162,3 +162,23 @@ billing admission together. The audited first outlet grant requires an
 eligible tenant administrator who already exists. Verify a first owner,
 initial grant, and recovery on the supported customer admission path without
 SQL before opening a paid or complimentary hosted tenant.
+
+## Guest reservation origin
+
+Enable the origin with `-reservation-publication-secret-file` on the
+protected Unix listener. Use an absolute path to an owner-only regular file
+containing a 32-byte unpadded base64url secret. Keep direct public reservation
+routes disabled when serving this origin.
+
+Give the guest hostname its own HTTPS proxy rule. Forward only
+`/_turnate/reservations/*` to the protected socket and return 404 for other
+paths on that hostname. Preserve the authorization header on the guest
+route, set the configured upstream Host and replace the forwarded scheme
+with `https`. Authenticate calls with the service secret. Use a separate
+ingress for staff and recovery.
+
+Publish only approved business and branch bindings. Every branch publication
+identifies its entity, outlet, venue and revision. A withdrawal increases
+the revision and disables the binding. Guests submit the revision they saw
+and a booking key. A retry with the same key and input returns the initial
+receipt while the publication remains current.
