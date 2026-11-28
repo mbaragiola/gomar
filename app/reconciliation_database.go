@@ -3,13 +3,21 @@ package main
 import (
 	"database/sql"
 	"errors"
+	"net/http"
 )
 
-// Serialize writes and operation replay to a single visible run. Check
-// current membership and grants before locking; read the run state only
-// after acquiring this lock to get a fresh READ COMMITTED snapshot.
-func lockReconciliationRun(tx *sql.Tx, u user, entity, id int64, includeDeleted bool) error {
-	member, err := scopedMembership(tx, u.id, entity, "reconcile_financial_data")
+func (a *app) lockReconciliationMembership(r *http.Request, tx *sql.Tx, u user, entity int64) (entityMembership, error) {
+	const capability = "reconcile_financial_data"
+	if _, err := scopedMembership(tx, u.id, entity, capability); err != nil {
+		return entityMembership{}, err
+	}
+	return a.lockAccountingMembership(r, tx, entity, u.id, capability)
+}
+
+// Tenant access changes acquire the entity lock. Keep it while authorizing
+// the run and serializing its state and operation replay.
+func (a *app) lockReconciliationRun(r *http.Request, tx *sql.Tx, u user, entity, id int64, includeDeleted bool) error {
+	member, err := a.lockReconciliationMembership(r, tx, u, entity)
 	if err != nil {
 		return err
 	}

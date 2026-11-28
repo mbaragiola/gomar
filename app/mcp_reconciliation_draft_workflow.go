@@ -415,7 +415,7 @@ func (a *app) beginReconciliationDraftReview(r *http.Request, u user) (*sql.Tx, 
 		return nil, s, zero, err
 	}
 	s.actor = u.id
-	tx, err := a.db.BeginTx(r.Context(), nil)
+	tx, err := a.db.BeginTx(r.Context(), &sql.TxOptions{Isolation: sql.LevelReadCommitted})
 	if err != nil {
 		return nil, s, zero, err
 	}

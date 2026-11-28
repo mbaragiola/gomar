@@ -87,10 +87,14 @@ func scopedMembership(tx *sql.Tx, userID, entityID int64, capability string) (en
 }
 
 func (a *app) scopedRequest(capability string, next scopedHandler, readBody bool) http.HandlerFunc {
-	return a.scopedRequestPrelock(capability, next, readBody, nil)
+	return a.scopedRequestTx(capability, next, readBody, nil, nil)
 }
 
 func (a *app) scopedRequestPrelock(capability string, next scopedHandler, readBody bool, prelock func(*http.Request, *sql.Tx, user) error) http.HandlerFunc {
+	return a.scopedRequestTx(capability, next, readBody, &sql.TxOptions{Isolation: sql.LevelReadCommitted}, prelock)
+}
+
+func (a *app) scopedRequestTx(capability string, next scopedHandler, readBody bool, options *sql.TxOptions, prelock func(*http.Request, *sql.Tx, user) error) http.HandlerFunc {
 	return a.protected(func(w http.ResponseWriter, r *http.Request, u user) error {
 		id, err := pathID(r, "entity")
 		if err != nil {
@@ -101,14 +105,7 @@ func (a *app) scopedRequestPrelock(capability string, next scopedHandler, readBo
 		if readBody {
 			requestBody, bodyErr = readJSONBody(w, r)
 		}
-		var tx *sql.Tx
-		if prelock != nil && !u.employee {
-			// The hosted scope recheck must see observations committed
-			// while waiting on the scope row, regardless of server defaults.
-			tx, err = a.db.BeginTx(r.Context(), &sql.TxOptions{Isolation: sql.LevelReadCommitted})
-		} else {
-			tx, err = a.beginEmployeeCheckedWrite(r, u)
-		}
+		tx, err := a.beginEmployeeCheckedWriteWithOptions(r, u, options)
 		if err != nil {
 			return err
 		}

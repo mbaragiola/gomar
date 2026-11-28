@@ -41,7 +41,7 @@ var payablesLocation = func() *time.Location {
 
 func (a *app) registerPayables(add func(string, string, http.HandlerFunc)) {
 	const base = "/api/v1/entities/{entity}"
-	add(base+"/documents/{document}/payable", "POST", a.scopedRequest("read_business_data", a.postPayable, true))
+	add(base+"/documents/{document}/payable", "POST", a.scopedAccountingWrite("read_business_data", a.postPayable))
 	add(base+"/payables", "GET", a.financialRoute(recordPayments, a.listPayables, false))
 	add(base+"/payables/{payable}", "GET", a.financialRoute(recordPayments, a.payableDetail, false))
 	add(base+"/payments", "GET", a.financialRoute(recordPayments, listPayments, false))
@@ -57,13 +57,30 @@ func (a *app) registerPayables(add func(string, string, http.HandlerFunc)) {
 const payableOutletJoin = ` JOIN outlets o ON o.id=p.outlet_id AND o.entity_id=p.entity_id
 	JOIN outlet_grants g ON g.outlet_id=o.id AND g.membership_id=$1 `
 
+func (a *app) scopedAccountingWrite(capability string, next scopedHandler) http.HandlerFunc {
+	return a.scopedRequestTx(capability, next, true, &sql.TxOptions{Isolation: sql.LevelReadCommitted}, nil)
+}
+
 func (a *app) financialRoute(capability string, next scopedHandler, readBody bool) http.HandlerFunc {
-	return a.scopedRequest(capability, func(r *http.Request, tx *sql.Tx, m entityMembership, body []byte) (int, any, error) {
+	handler := func(r *http.Request, tx *sql.Tx, m entityMembership, body []byte) (int, any, error) {
 		if err := requireFinancialGrant(tx, m, readBody); err != nil {
 			return 0, nil, err
 		}
 		return next(r, tx, m, body)
-	}, readBody)
+	}
+	if readBody {
+		return a.scopedAccountingWrite(capability, handler)
+	}
+	return a.scoped(capability, handler)
+}
+
+// Payables and tenant access changes share the same entity lock. Reload the
+// membership after the wait and use it for all subsequent outlet checks.
+func (a *app) lockAccountingMembership(r *http.Request, tx *sql.Tx, entity, actor int64, capability string) (entityMembership, error) {
+	if err := a.lockDocumentWrite(r, tx, user{id: actor}, entity); err != nil {
+		return entityMembership{}, err
+	}
+	return scopedMembership(tx, actor, entity, capability)
 }
 
 func requireFinancialOutlet(tx *sql.Tx, m entityMembership) error {
@@ -231,7 +248,8 @@ func (a *app) postPayable(r *http.Request, tx *sql.Tx, m entityMembership, body 
 	}
 	// All accounting writers lock the entity, not just this document's
 	// outlet: one payment can allocate to several granted outlets.
-	if err := lockPostgresEntity(r.Context(), tx, m.ID); err != nil {
+	m, err = a.lockAccountingMembership(r, tx, m.ID, m.userID, "read_business_data")
+	if err != nil {
 		return 0, nil, err
 	}
 	var outletID, supplierID, point, number, total int64

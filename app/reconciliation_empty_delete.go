@@ -35,12 +35,12 @@ func (a *app) deleteReconciliationDraft(w http.ResponseWriter, r *http.Request, 
 	if key == "" || utf8.RuneCountInString(key) > 64 {
 		return problem{422, "La clave de operación no es válida."}
 	}
-	tx, err := a.db.BeginTx(r.Context(), nil)
+	tx, err := a.db.BeginTx(r.Context(), &sql.TxOptions{Isolation: sql.LevelReadCommitted})
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback()
-	if err := lockReconciliationRun(tx, u, entity, id, true); err != nil {
+	if err := a.lockReconciliationRun(r, tx, u, entity, id, true); err != nil {
 		return err
 	}
 	m, err := scopedMembership(tx, u.id, entity, "reconcile_financial_data")

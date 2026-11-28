@@ -30,12 +30,12 @@ func (a *app) createReconciliationDraft(w http.ResponseWriter, r *http.Request, 
 			return badInput
 		}
 	}
-	tx, err := a.db.BeginTx(r.Context(), nil)
+	tx, err := a.db.BeginTx(r.Context(), &sql.TxOptions{Isolation: sql.LevelReadCommitted})
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback()
-	m, err := scopedMembership(tx, u.id, entity, "reconcile_financial_data")
+	m, err := a.lockReconciliationMembership(r, tx, u, entity)
 	if err != nil {
 		return err
 	}
