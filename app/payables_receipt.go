@@ -135,7 +135,7 @@ func visibleReceiptPayment(r *http.Request, tx *sql.Tx, u user) (entityMembershi
 	if err := requireFinancialOutlet(tx, m); err != nil {
 		return m, paymentRecord{}, err
 	}
-	payment, err := paymentFromPath(r, tx, m)
+	payment, err := activePaymentFromPath(r, tx, m)
 	return m, payment, err
 }
 

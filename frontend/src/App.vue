@@ -71,7 +71,10 @@ const payables = ref<Payable[]>([])
 const payments = ref<Payment[]>([])
 const paymentDraft = ref<Payment | null>(null)
 const openingPayment = ref(false)
-const activePayment = computed(() => !openingPayment.value && paymentDraft.value?.outlet.id === selectedOutletId.value
+const archivedPayable = ref<Payable | null>(null)
+const archivedPayment = ref<Payment | null>(null)
+let treasuryHistoryGeneration = 0
+const activePayment = computed(() => !openingPayment.value && !paymentDraft.value?.archivado && paymentDraft.value?.outlet.id === selectedOutletId.value
   ? paymentDraft.value : null)
 const showAccountsPayable = ref(false)
 const showReconciliation = ref(false)
@@ -234,7 +237,7 @@ const canUploadVisibleAttachment = computed(() => shownHandoff.value?.can_upload
 const paymentForm = reactive({ supplier_id: 0, moneda: 'ARS', total: '', metodo: 'bank_transfer', referencia: '' })
 const allocationAmounts = reactive<Record<number, string>>({})
 const eligiblePayables = computed(() => payables.value.filter((item) => (
-  item.supplier.id === paymentForm.supplier_id && item.moneda === paymentForm.moneda && item.estado !== 'settled'
+  !item.archivada && item.supplier.id === paymentForm.supplier_id && item.moneda === paymentForm.moneda && item.estado !== 'settled'
 )))
 const allocatedTotal = computed(() => eligiblePayables.value.reduce((sum, item) => {
   const parsed = Number((allocationAmounts[item.id] || '0').replace(',', '.'))
@@ -1271,6 +1274,9 @@ async function toggleAccountsPayable() {
   const entityId = selectedEntityId.value
   showAccountsPayable.value = !showAccountsPayable.value
   if (!showAccountsPayable.value || !entityId) return
+  treasuryHistoryGeneration += 1
+  archivedPayable.value = null
+  archivedPayment.value = null
   try {
     await loadAccountsPayable(sessionToken, contextToken)
   } catch (value) {
@@ -1295,6 +1301,33 @@ async function postSelectedDocumentToPayable() {
     if (contextIsCurrent(sessionToken, contextToken, entityId)) await openDocument(documentId)
   } catch (value) {
     if (contextIsCurrent(sessionToken, contextToken, entityId)) showError(value)
+  }
+}
+
+async function openTreasuryHistory(collection: 'payables' | 'payments', id: number) {
+  const entityId = selectedEntityId.value
+  if (!entityId || !canRecordPayments.value) return
+  const session = sessionGeneration
+  const context = contextGeneration
+  const run = ++treasuryHistoryGeneration
+  const current = () => run === treasuryHistoryGeneration && contextIsCurrent(session, context, entityId) && showAccountsPayable.value
+  archivedPayable.value = null
+  archivedPayment.value = null
+  try {
+    const path = `/entities/${entityId}/${collection}/${id}`
+    if (collection === 'payables') {
+      const detail = await request<Payable>(path)
+      if (!current() || detail.id !== id) return
+      if (detail.archivada) archivedPayable.value = detail
+      else await loadAccountsPayable(session, context)
+    } else {
+      const detail = await request<Payment>(path)
+      if (!current() || detail.id !== id) return
+      if (detail.archivado) archivedPayment.value = detail
+      else await loadAccountsPayable(session, context)
+    }
+  } catch (value) {
+    if (current()) showError(value)
   }
 }
 
@@ -1367,6 +1400,9 @@ function clearPaymentDraft() {
 }
 
 function clearPaymentContext() {
+  treasuryHistoryGeneration += 1
+  archivedPayable.value = null
+  archivedPayment.value = null
   clearPaymentDraft()
   payables.value = []
   payments.value = []
@@ -1398,7 +1434,7 @@ async function postCurrentPayment() {
 }
 
 async function reverseSupplierPayment(payment: Payment) {
-  if (!selectedEntityId.value) return
+  if (payment.archivado || !selectedEntityId.value) return
   const motivo = window.prompt('Motivo de la reversión:')?.trim()
   if (!motivo) return
   const sessionToken = sessionGeneration
@@ -1456,7 +1492,7 @@ async function uploadPaymentReceipt(event: Event) {
 }
 
 async function downloadPaymentReceipt(payment: Payment) {
-  if (!selectedEntityId.value) return
+  if (payment.archivado || !selectedEntityId.value) return
   const sessionToken = sessionGeneration
   const contextToken = contextGeneration
   const entityId = selectedEntityId.value
@@ -1742,6 +1778,12 @@ onBeforeUnmount(() => {
                 <span><strong>{{ item.supplier.razon_social }}</strong><small>{{ item.referencia }} · {{ item.outlet.nombre }}</small></span>
                 <span><strong>{{ money(item.saldo, item.moneda) }}</strong><small v-if="item.fecha_vencimiento">Vence {{ localDate(item.fecha_vencimiento) }}</small><small v-else>Sin vencimiento informado</small></span>
                 <span class="status" :class="{ overdue: item.vencida, reviewed: item.estado === 'settled' }">{{ item.vencida ? 'Vencida' : item.estado_nombre }}</span>
+                <button
+                  v-if="item.archivada" class="text-button" :aria-label="`Ver movimientos de ${item.referencia}`"
+                  @click="openTreasuryHistory('payables', item.id)"
+                >
+                  Ver movimientos · Local cerrado
+                </button>
               </div>
               <p v-if="!payables.length" class="empty">No hay facturas registradas en cuentas a pagar.</p>
             </div>
@@ -1750,6 +1792,7 @@ onBeforeUnmount(() => {
               <p v-if="hasOutlet" class="muted">Local del pago: {{ outlets.find((item) => item.id === selectedOutletId)?.nombre }}</p>
               <p class="muted">Efectivo y transferencia son solo etiquetas. Gomar no ejecuta movimientos bancarios.</p>
               <p v-if="openingPayment" class="muted" role="status">Cargando pago…</p>
+              <p v-else-if="!hasOutlet" class="muted">Los movimientos de locales cerrados son de solo lectura. Un administrador debe reactivar el local para resolverlos.</p>
               <form v-else-if="!activePayment" class="stack" @submit.prevent="createPaymentDraft">
                 <label>Proveedor<select v-model="paymentForm.supplier_id" required><option v-for="supplier in suppliers" :key="supplier.id" :value="supplier.id">{{ supplier.razon_social }}</option></select></label>
                 <label>Moneda<select v-model="paymentForm.moneda"><option value="ARS">ARS</option><option value="USD">USD</option></select></label>
@@ -1784,14 +1827,34 @@ onBeforeUnmount(() => {
               <span><strong>#{{ payment.id }} · {{ payment.supplier.razon_social }}</strong><small>{{ payment.outlet.nombre }} · {{ payment.metodo_nombre }} · {{ payment.referencia || 'Sin referencia' }}</small></span>
               <span><strong>{{ money(payment.total, payment.moneda) }}</strong><small>{{ payment.tipo === 'reversal' ? `Reversión de #${payment.reversion_de}` : payment.estado_nombre }}</small></span>
               <span class="row-actions">
-                <button v-if="payment.outlet.id === selectedOutletId" class="text-button" :aria-label="`Abrir pago #${payment.id} de ${payment.supplier.razon_social}`" @click="openPayment(payment)">Abrir</button>
+                <button v-if="payment.archivado" class="text-button" :aria-label="`Ver pago archivado #${payment.id}`" @click="openTreasuryHistory('payments', payment.id)">Ver · Local cerrado</button>
+                <button v-else-if="payment.outlet.id === selectedOutletId" class="text-button" :aria-label="`Abrir pago #${payment.id} de ${payment.supplier.razon_social}`" @click="openPayment(payment)">Abrir</button>
                 <small v-else>Seleccioná {{ payment.outlet.nombre }} para abrir</small>
-                <button v-if="payment.tiene_comprobante" class="text-button" :aria-label="`Comprobante del pago #${payment.id} de ${payment.supplier.razon_social}`" @click="downloadPaymentReceipt(payment)">Comprobante</button>
-                <button v-if="canReversePayments && payment.estado === 'posted' && payment.tipo === 'payment'" class="danger" :aria-label="`Revertir pago #${payment.id} de ${payment.supplier.razon_social}`" @click="reverseSupplierPayment(payment)">Revertir</button>
+                <button v-if="!payment.archivado && payment.tiene_comprobante" class="text-button" :aria-label="`Comprobante del pago #${payment.id} de ${payment.supplier.razon_social}`" @click="downloadPaymentReceipt(payment)">Comprobante</button>
+                <button v-if="!payment.archivado && canReversePayments && payment.estado === 'posted' && payment.tipo === 'payment'" class="danger" :aria-label="`Revertir pago #${payment.id} de ${payment.supplier.razon_social}`" @click="reverseSupplierPayment(payment)">Revertir</button>
               </span>
             </div>
             <p v-if="!payments.length" class="empty">Todavía no hay pagos.</p>
           </div>
+          <section v-if="archivedPayable" class="subsection" aria-label="Movimientos de la factura archivada">
+            <h3>{{ archivedPayable.referencia }} · {{ archivedPayable.outlet.nombre }}</h3>
+            <p>Solo lectura. Para aplicar un pago, pedí a administración que reactive el local.</p>
+            <ul class="gomar-feature-list">
+              <li v-for="(movement, index) in archivedPayable.movimientos" :key="index">
+                {{ movement.tipo_nombre }} · {{ money(movement.variacion, archivedPayable.moneda) }} · Saldo {{ money(movement.saldo, archivedPayable.moneda) }}
+                · {{ localDateTime(movement.fecha) }} · {{ movement.actor }}
+              </li>
+            </ul>
+          </section>
+          <section v-if="archivedPayment" class="subsection" aria-label="Detalle del pago archivado">
+            <h3>Pago #{{ archivedPayment.id }} · {{ archivedPayment.outlet.nombre }}</h3>
+            <p>Solo lectura. Para corregir el pago o abrir un comprobante privado, pedí a administración que reactive los locales cerrados.</p>
+            <ul class="gomar-feature-list">
+              <li v-for="item in archivedPayment.aplicaciones" :key="item.payable_id">
+                {{ item.referencia }} · {{ money(item.importe, archivedPayment.moneda) }}
+              </li>
+            </ul>
+          </section>
         </section>
 
         <section v-if="showSupplierManagement" class="card supplier-management">

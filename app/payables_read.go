@@ -28,6 +28,7 @@ type payableView struct {
 	StateLabel string   `json:"estado_nombre"`
 	Overdue    bool     `json:"vencida"`
 	Posted     string   `json:"registrada"`
+	Archived   bool     `json:"archivada,omitempty"`
 }
 
 type payableMovementView struct {
@@ -115,7 +116,7 @@ func scanPayable(row payableScanner, today string) (payableView, error) {
 	var original, balance int64
 	if err := row.Scan(&p.ID, &p.Document, &p.Reference, &p.Outlet.ID, &p.Outlet.Name,
 		&p.Supplier.ID, &p.Supplier.Name, &p.Supplier.CUIT, &p.Issue, &p.Due, &p.Currency,
-		&original, &balance, &p.State, &p.Posted); err != nil {
+		&original, &balance, &p.State, &p.Posted, &p.Archived); err != nil {
 		return p, err
 	}
 	p.Original, p.Balance = payableMoney(original), payableMoney(balance)
@@ -127,7 +128,7 @@ func scanPayable(row payableScanner, today string) (payableView, error) {
 
 const selectPayables = `SELECT p.id,p.source_document_id,p.document_reference_snapshot,p.outlet_id,o.name,
 	p.supplier_id,p.supplier_name_snapshot,p.supplier_cuit_snapshot,p.issue_date_snapshot,p.due_date_snapshot,
-	p.currency,p.original_minor,p.balance_minor,p.state,p.posted_at
+	p.currency,p.original_minor,p.balance_minor,p.state,p.posted_at,NOT o.active
 	FROM ap_payables p` + payableOutletJoin + ` WHERE p.entity_id=$2 `
 
 func (a *app) listPayables(r *http.Request, tx *sql.Tx, m entityMembership, _ []byte) (int, any, error) {
@@ -135,16 +136,23 @@ func (a *app) listPayables(r *http.Request, tx *sql.Tx, m entityMembership, _ []
 	if err != nil {
 		return 0, nil, badInput
 	}
-	outletID, err := documentOutlet(r, tx, m)
-	if err != nil {
-		return 0, nil, err
-	}
 	lastValue := func(key string) string {
 		values := query[key]
 		if len(values) == 0 {
 			return ""
 		}
 		return values[len(values)-1]
+	}
+	var outletID sql.NullInt64
+	if query.Has("outlet_id") {
+		id, err := strconv.ParseInt(lastValue("outlet_id"), 10, 64)
+		if err != nil {
+			return 0, nil, badInput
+		}
+		if err := requireFinancialHistoryOutlet(tx, m, id); err != nil {
+			return 0, nil, err
+		}
+		outletID = sql.NullInt64{Int64: id, Valid: true}
 	}
 	var supplierID *int64
 	if query.Has("supplier_id") {
@@ -267,6 +275,7 @@ type paymentView struct {
 	PostedAt    *string         `json:"registrado"`
 	HasReceipt  bool            `json:"tiene_comprobante"`
 	Key         string          `json:"idempotency_key"`
+	Archived    bool            `json:"archivado,omitempty"`
 }
 
 type paymentRecord struct {
@@ -292,13 +301,19 @@ var paymentStatuses = map[string]string{"draft": "Borrador", "posted": "Registra
 
 const selectVisiblePayments = `SELECT p.id,p.outlet_id,o.name,p.supplier_id,s.name,p.currency,p.total_minor,
 	p.method,p.reference,p.status,p.kind,p.reversal_of_id,p.reversal_reason,p.created_at,p.posted_at,p.post_key,p.posted_by_id,
-	EXISTS(SELECT 1 FROM ap_receipts receipt WHERE receipt.payment_id=p.id)
+	EXISTS(SELECT 1 FROM ap_receipts receipt WHERE receipt.payment_id=p.id),
+	(NOT o.active OR EXISTS (
+		SELECT 1 FROM ap_allocations archived
+		JOIN ap_payables invoice ON invoice.id=archived.payable_id
+		JOIN outlets source ON source.id=invoice.outlet_id AND source.entity_id=p.entity_id
+		WHERE archived.payment_id=p.id AND NOT source.active
+	))
 	FROM ap_payments p` + payableOutletJoin + ` JOIN suppliers s ON s.id=p.supplier_id AND s.entity_id=p.entity_id
 	WHERE p.entity_id=$2 AND NOT EXISTS (
 		SELECT 1 FROM ap_allocations a JOIN ap_payables invoice ON invoice.id=a.payable_id
 		WHERE a.payment_id=p.id AND (invoice.entity_id<>p.entity_id OR NOT EXISTS (
 			SELECT 1 FROM outlets source JOIN outlet_grants scope_grant ON scope_grant.outlet_id=source.id
-			WHERE source.id=invoice.outlet_id AND source.entity_id=p.entity_id AND source.active=TRUE
+			WHERE source.id=invoice.outlet_id AND source.entity_id=p.entity_id
 			AND scope_grant.membership_id=g.membership_id))
 	) `
 
@@ -306,7 +321,7 @@ func scanPayment(row payableScanner) (paymentRecord, error) {
 	var p paymentRecord
 	if err := row.Scan(&p.ID, &p.Outlet.ID, &p.Outlet.Name, &p.Supplier.ID, &p.Supplier.Name, &p.Currency,
 		&p.totalMinor, &p.Method, &p.Reference, &p.Status, &p.Kind, &p.ReversalOf, &p.Reason, &p.CreatedAt,
-		&p.PostedAt, &p.Key, &p.postedBy, &p.HasReceipt); err != nil {
+		&p.PostedAt, &p.Key, &p.postedBy, &p.HasReceipt, &p.Archived); err != nil {
 		return p, err
 	}
 	p.Total = payableMoney(p.totalMinor)
@@ -315,6 +330,9 @@ func scanPayment(row payableScanner) (paymentRecord, error) {
 	p.CreatedAt = payableAPITime(p.CreatedAt)
 	if p.PostedAt != nil {
 		*p.PostedAt = payableAPITime(*p.PostedAt)
+	}
+	if p.Archived {
+		p.Key = ""
 	}
 	return p, nil
 }
@@ -358,6 +376,14 @@ func paymentFromPath(r *http.Request, tx *sql.Tx, m entityMembership) (paymentRe
 		return paymentRecord{}, err
 	}
 	return visiblePayment(tx, m, id)
+}
+
+func activePaymentFromPath(r *http.Request, tx *sql.Tx, m entityMembership) (paymentRecord, error) {
+	payment, err := paymentFromPath(r, tx, m)
+	if err == nil && payment.Archived {
+		return paymentRecord{}, missingPayment
+	}
+	return payment, err
 }
 
 func paymentDetail(r *http.Request, tx *sql.Tx, m entityMembership, _ []byte) (int, any, error) {

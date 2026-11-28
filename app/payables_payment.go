@@ -121,7 +121,7 @@ type allocationPayable struct {
 func loadAllocationPayable(tx *sql.Tx, m entityMembership, id int64) (allocationPayable, error) {
 	var p allocationPayable
 	err := tx.QueryRow(`SELECT p.supplier_id,p.currency,p.original_minor,p.balance_minor
-		FROM ap_payables p`+payableOutletJoin+` WHERE p.entity_id=$2 AND p.id=$3`, m.id, m.ID, id).
+		FROM ap_payables p`+payableOutletJoin+` WHERE p.entity_id=$2 AND p.id=$3 AND o.active`, m.id, m.ID, id).
 		Scan(&p.supplier, &p.currency, &p.original, &p.balance)
 	if errors.Is(err, sql.ErrNoRows) {
 		err = problem{404, "No se encontró una factura seleccionada."}
@@ -176,7 +176,7 @@ func (a *app) postPayment(r *http.Request, tx *sql.Tx, m entityMembership, body 
 	if err := lockPostgresEntity(r.Context(), tx, m.ID); err != nil {
 		return 0, nil, err
 	}
-	p, err := paymentFromPath(r, tx, m)
+	p, err := activePaymentFromPath(r, tx, m)
 	if err != nil {
 		return 0, nil, err
 	}
@@ -284,7 +284,7 @@ func (a *app) reversePayment(r *http.Request, tx *sql.Tx, m entityMembership, bo
 	if err := lockPostgresEntity(r.Context(), tx, m.ID); err != nil {
 		return 0, nil, err
 	}
-	p, err := paymentFromPath(r, tx, m)
+	p, err := activePaymentFromPath(r, tx, m)
 	if err != nil {
 		return 0, nil, err
 	}

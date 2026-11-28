@@ -53,13 +53,13 @@ func (a *app) registerPayables(add func(string, string, http.HandlerFunc)) {
 	add(base+"/payments/{payment}/receipt", "POST", a.protected(a.attachReceipt))
 }
 
-// When used in a SELECT, these joins restrict the outlet to the current active grant.
-const payableOutletJoin = ` JOIN outlets o ON o.id=p.outlet_id AND o.entity_id=p.entity_id AND o.active=TRUE
+// When used in a SELECT, these joins restrict the outlet to the current grant; mutations apply their active-outlet checks separately.
+const payableOutletJoin = ` JOIN outlets o ON o.id=p.outlet_id AND o.entity_id=p.entity_id
 	JOIN outlet_grants g ON g.outlet_id=o.id AND g.membership_id=$1 `
 
 func (a *app) financialRoute(capability string, next scopedHandler, readBody bool) http.HandlerFunc {
 	return a.scopedRequest(capability, func(r *http.Request, tx *sql.Tx, m entityMembership, body []byte) (int, any, error) {
-		if err := requireFinancialOutlet(tx, m); err != nil {
+		if err := requireFinancialGrant(tx, m, readBody); err != nil {
 			return 0, nil, err
 		}
 		return next(r, tx, m, body)
@@ -67,11 +67,25 @@ func (a *app) financialRoute(capability string, next scopedHandler, readBody boo
 }
 
 func requireFinancialOutlet(tx *sql.Tx, m entityMembership) error {
+	return requireFinancialGrant(tx, m, true)
+}
+
+func requireFinancialGrant(tx *sql.Tx, m entityMembership, activeOnly bool) error {
 	var granted bool
 	err := tx.QueryRow(`SELECT EXISTS(SELECT 1 FROM outlet_grants g JOIN outlets o ON o.id=g.outlet_id
-		WHERE g.membership_id=$1 AND o.entity_id=$2 AND o.active=TRUE)`, m.id, m.ID).Scan(&granted)
+		WHERE g.membership_id=$1 AND o.entity_id=$2 AND (o.active OR NOT $3::boolean))`, m.id, m.ID, activeOnly).Scan(&granted)
 	if err == nil && !granted {
 		return noFinancialOutlet
+	}
+	return err
+}
+
+func requireFinancialHistoryOutlet(tx *sql.Tx, m entityMembership, outletID int64) error {
+	var granted bool
+	err := tx.QueryRow(`SELECT EXISTS(SELECT 1 FROM outlet_grants g JOIN outlets o ON o.id=g.outlet_id
+		WHERE g.membership_id=$1 AND o.entity_id=$2 AND o.id=$3)`, m.id, m.ID, outletID).Scan(&granted)
+	if err == nil && !granted {
+		return missingOutlet
 	}
 	return err
 }

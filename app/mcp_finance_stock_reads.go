@@ -72,6 +72,19 @@ func mcpFinanceOutlet(r *http.Request, tx *sql.Tx, s mcpTokenScope) (int64, erro
 	return mcpWorkspaceOutlet(r, tx, s)
 }
 
+// An entity-wide read key can request history for an explicit currently
+// granted outlet. The shared loader still rejects inactive pinned keys.
+func mcpFinancialHistoryOutlet(r *http.Request, tx *sql.Tx, s mcpTokenScope) (int64, error) {
+	if !slices.Contains(capabilities[s.role], recordPayments) {
+		return 0, forbiddenRole
+	}
+	outlet, err := pathID(r, "outlet")
+	if err != nil || s.outlet.Valid && s.outlet.Int64 != outlet {
+		return 0, missingOutlet
+	}
+	return outlet, requireFinancialHistoryOutlet(tx, s.entityMembership, outlet)
+}
+
 var missingScopedPayable = problem{404, "No se encontró la cuenta a pagar."}
 
 type mcpRecordScanner interface{ Scan(...any) error }
@@ -149,7 +162,7 @@ func mcpPayablePage(r *http.Request) (int64, []string, error) {
 }
 
 func mcpFinanceRecords[T any](r *http.Request, tx *sql.Tx, s mcpTokenScope, query string, payableDueFilter bool, scan func(mcpRecordScanner) (T, error), id func(T) int64) (any, error) {
-	outlet, err := mcpFinanceOutlet(r, tx, s)
+	outlet, err := mcpFinancialHistoryOutlet(r, tx, s)
 	if err != nil {
 		return nil, err
 	}
@@ -193,7 +206,7 @@ func mcpFinanceRecord[T any](r *http.Request, tx *sql.Tx, s mcpTokenScope, query
 	if r.URL.RawQuery != "" {
 		return nil, badInput
 	}
-	outlet, err := mcpFinanceOutlet(r, tx, s)
+	outlet, err := mcpFinancialHistoryOutlet(r, tx, s)
 	if err != nil {
 		return nil, err
 	}
