@@ -55,7 +55,8 @@ func TestPostgresEmployeeOnboarding(t *testing.T) {
   INSERT INTO outlet_grants VALUES(501,1),(501,4),(502,2),(503,1);`); err != nil {
 		t.Fatal(err)
 	}
-	enabled := (&app{db: db, host: "example.com", employeeOnboarding: true, enableMCP: true, enablePOS: true, enablePOSTableChecks: true, enablePOSManualTender: true}).routes()
+	employeeApp := &app{db: db, host: "example.com", employeeOnboarding: true, enableMCP: true, enablePOS: true, enablePOSTableChecks: true, enablePOSManualTender: true}
+	enabled := employeeApp.routes()
 	owner := postgresTestCookies(t, enabled, "fixture-manager", manager)
 	other := postgresTestCookies(t, enabled, "second-manager", manager)
 	reader := postgresTestCookies(t, enabled, "ordinary-reader", manager)
@@ -190,6 +191,14 @@ func TestPostgresEmployeeOnboarding(t *testing.T) {
 	}
 	cs := fresh()
 	call("POST", login, makeLogin(2, first.TemporaryPassword), cs, 401)
+	if !employeeApp.employeePasswords.enter(1, employeeLoginBudgetKey(1, "concurrent-fixture"), time.Now()) {
+		t.Fatal("could not reserve first organization's concurrent employee sign-in")
+	}
+	call("POST", login, makeLogin(1, first.TemporaryPassword), cs, 429)
+	secondLogin := call("POST", login, makeLogin(2, second.TemporaryPassword), cs, 200)
+	secondChange := append(fresh(), secondLogin.Result().Cookies()...)
+	employeeApp.employeePasswords.leave(1)
+
 	a2 := fresh()
 	var wg sync.WaitGroup
 	answers := make(chan *httptest.ResponseRecorder, 2)
@@ -215,7 +224,7 @@ func TestPostgresEmployeeOnboarding(t *testing.T) {
 					changelog = append(cs, k)
 				}
 			}
-		case 401:
+		case 401, 429:
 			denials++
 		default:
 			t.Fatalf("unexpected first-use status %d", out.Code)
@@ -224,6 +233,7 @@ func TestPostgresEmployeeOnboarding(t *testing.T) {
 	if wins != 1 || denials != 1 || len(changelog) != len(cs)+1 {
 		t.Fatal("temporary password was not consumed exactly once")
 	}
+	call("POST", login, makeLogin(1, first.TemporaryPassword), cs, 401)
 	call("GET", "/api/v1/auth/me", "", changelog, 401)
 	call("GET", "/api/v1/entities", "", changelog, 401)
 	call("POST", "/api/v1/auth/mcp-token", `{"entity_id":1,"outlet_id":1}`, changelog, 401)
@@ -231,6 +241,15 @@ func TestPostgresEmployeeOnboarding(t *testing.T) {
 	call("POST", change, fmt.Sprintf(`{"password":%q}`, first.TemporaryPassword), changelog, 422)
 	const newPass = "A fixture-only long passphrase"
 	changeBody := `{"password":"` + newPass + `"}`
+	if !employeeApp.employeeChangePool.enter(2) ||
+		!employeeApp.employeeChanges.enter(1, employeeLoginBudgetKey(1, "concurrent-change-fixture"), time.Now()) {
+		t.Fatal("could not reserve first organization's concurrent password change")
+	}
+	call("POST", change, changeBody, changelog, 429)
+	call("POST", change, changeBody, secondChange, 200)
+	employeeApp.employeeChanges.leave(1)
+	employeeApp.employeeChangePool.leave()
+
 	done := call("POST", change, changeBody, changelog, 200)
 	for _, k := range done.Result().Cookies() {
 		if k.Name == "sessionid" {
@@ -487,12 +506,8 @@ func TestPostgresEmployeeOnboarding(t *testing.T) {
 	if err := db.QueryRowContext(ctx, `SELECT status,(CASE WHEN temporary_hash IS NULL AND change_hash IS NULL AND password_hash IS NULL THEN 0 ELSE 1 END) FROM organization_employees WHERE user_id=$1`, first.ID).Scan(&status, &stored); err != nil || status != "disabled" || stored != 0 {
 		t.Fatal("disabled employee retained a credential")
 	}
-	// Independently activate the same handle at the other organization.
-	// Losing access there must also stop an admitted native edit.
-	otherCS := fresh()
-	otherRestricted := call("POST", login, makeLogin(2, second.TemporaryPassword), otherCS, 200).Result().Cookies()
-	call("POST", change, changeBody, append(otherCS, otherRestricted...), 200)
-	otherAuth := call("POST", login, makeLogin(2, newPass), otherCS, 200).Result().Cookies()
+	// Losing access in the second organization must also stop an admitted native edit.
+	otherAuth := call("POST", login, makeLogin(2, newPass), fresh(), 200).Result().Cookies()
 	call("POST", "/api/v1/entities/2/suppliers", `{"razon_social":"Fixture original","cuit":"00000000019"}`, otherAuth, 201)
 	var supplier int64
 	if err := db.QueryRowContext(ctx, "SELECT id FROM suppliers WHERE entity_id=2 AND cuit='00000000019'").Scan(&supplier); err != nil {
