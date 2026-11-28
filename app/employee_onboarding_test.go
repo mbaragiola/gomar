@@ -319,6 +319,84 @@ func TestPostgresEmployeeOnboarding(t *testing.T) {
 	}
 	call("POST", "/api/v1/auth/login", fmt.Sprintf(`{"usuario":%q,"clave":%q}`, internal, newPass), fresh(), 401)
 	call("POST", "/api/v1/entities/2/memberships", fmt.Sprintf(`{"usuario":%q,"rol":"read_only"}`, internal), other, 404)
+	if _, err := db.ExecContext(ctx, `
+	  INSERT INTO users(id,username,password,active,staff,superuser)
+	  SELECT id,'internal-paging-'||id,'unused',id<1200,false,false
+	  FROM generate_series(1001,1102) id UNION ALL
+	  SELECT id,'internal-paging-'||id,'unused',false,false,false FROM generate_series(1201,1301) id;
+	  INSERT INTO memberships(id,user_id,entity_id,role,active)
+	  SELECT id+1000,id,1,'purchasing',active FROM users WHERE username LIKE 'internal-paging-%';
+	  INSERT INTO outlet_grants
+	  SELECT id, CASE WHEN user_id=1102 THEN 3 ELSE 1 END FROM memberships WHERE user_id BETWEEN 1001 AND 1301;
+	  INSERT INTO organization_employees(user_id,entity_id,handle,status,password_hash)
+	  SELECT id,1,'paging-fixture-'||id,CASE WHEN active THEN 'active' ELSE 'disabled' END,
+	    CASE WHEN active THEN 'unused' END FROM users WHERE username LIKE 'internal-paging-%';
+	`); err != nil {
+		t.Fatal(err)
+	}
+	type employeePage struct {
+		Employees []managedEmployee
+		Truncated bool
+		Next      string `json:"next_cursor"`
+	}
+	pageAt := func(query string) employeePage {
+		t.Helper()
+		res := call("GET", base+query, "", owner, 200)
+		var page employeePage
+		if err := json.Unmarshal(res.Body.Bytes(), &page); err != nil || res.Header().Get("Cache-Control") != "no-store" {
+			t.Fatalf("invalid employee page: %v", err)
+		}
+		return page
+	}
+	for _, query := range []string{"?before=", "?before=a-01", "?before=d-9223372036854775808", "?before=x-1",
+		"?before=a-1&before=d-2", "?before=a-1&extra=1", "?before=%ff"} {
+		call("GET", base+query, "", owner, 422)
+	}
+	page := pageAt("")
+	if len(page.Employees) != 100 || !page.Truncated || page.Next != "a-1002" {
+		t.Fatalf("unexpected employee first page size %d, cursor %q", len(page.Employees), page.Next)
+	}
+	for _, item := range page.Employees {
+		if item.Status == "disabled" || item.ID == first.ID {
+			t.Fatal("first page must contain only newer accessible enabled employees")
+		}
+	}
+	call("GET", base+"?before="+page.Next, "", other, 404)
+	call("GET", base+"?before="+page.Next, "", reader, 403)
+	var readCredential struct{ Token string }
+	if err := json.Unmarshal(legacyRead.Body.Bytes(), &readCredential); err != nil || readCredential.Token == "" {
+		t.Fatal("missing synthetic MCP credential")
+	}
+	for path, status := range map[string]int{
+		base + "?before=" + page.Next:                                    401,
+		"/api/v1/mcp/entities/1/outlets/1/employees?before=" + page.Next: 404,
+	} {
+		req := httptest.NewRequest("GET", "http://example.com"+path, nil).WithContext(ctx)
+		req.Header.Set("Authorization", "Bearer "+readCredential.Token)
+		rec := httptest.NewRecorder()
+		enabled.ServeHTTP(rec, req)
+		check(rec, status)
+		if strings.Contains(rec.Body.String(), "paging-fixture-") {
+			t.Fatal("employee page leaked through MCP credential")
+		}
+	}
+	seen := map[int64]bool{}
+	for ; ; page = pageAt("?before=" + page.Next) {
+		for _, item := range page.Employees {
+			if seen[item.ID] || item.ID == 1102 || item.ID == second.ID {
+				t.Fatalf("duplicate or out-of-scope employee in pagination: %d", item.ID)
+			}
+			seen[item.ID] = true
+		}
+		if page.Next == "" {
+			break
+		}
+	}
+	if !seen[first.ID] || !seen[1301] {
+		t.Fatal("paging must include the older employee and retain disabled employees")
+	}
+	call("POST", base+"/1102/reset", "{}", owner, 403)
+	call("POST", base+"/1102/disable", "{}", owner, 403)
 	route := fmt.Sprintf("%s/%d", base, first.ID)
 	call("POST", fmt.Sprintf("/api/v1/entities/2/employees/%d/reset", first.ID), "{}", other, 404)
 	// Dispatch the native handler only after the usual outer auth check.

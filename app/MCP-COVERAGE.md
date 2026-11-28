@@ -44,7 +44,8 @@ tool that lists managed employees, issues credentials or changes their access.
 For the handoff, open Gomar without any credentials or employee IDs in the
 URL. Sign in as an organization administrator, select the intended
 organization, then choose **Administración → Gestionar accesos → Empleados de
-la organización**. The app checks current management permission and permitted
+la organización**. Use **Más empleados** if the first page does not show
+the employee. The app checks current management permission and permitted
 locations. A clerk, another organization’s administrator or an ungranted
 provider account cannot manage these employees. The employee uses **Ingresar
 como empleado** in Gomar and changes the temporary password there.
