@@ -47,7 +47,7 @@ func (c reservationConciergeCatalog) Info(ctx context.Context, slug string) (pub
 		return publicconcierge.VenueInfo{}, err
 	}
 	defer tx.Rollback()
-	_, v, err := reservationPublicVenue(ctx, tx, slug)
+	_, v, err := c.service.publicVenue(ctx, tx, slug)
 	if err != nil {
 		return publicconcierge.VenueInfo{}, conciergeReservationError(err)
 	}

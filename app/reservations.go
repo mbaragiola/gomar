@@ -76,7 +76,22 @@ type reservationTable struct {
 	Capacity int    `json:"capacity"`
 }
 type reservationsService struct {
-	db *sql.DB
+	db          *sql.DB
+	publication reservationPublication
+}
+
+// Supplied by a trusted publication source, never by the guest.
+type reservationPublication struct {
+	entity, outlet int64
+	venue          string
+}
+
+// Unregistered. Match both immutable owners of the venue on every lookup.
+func publishedReservations(db *sql.DB, publication reservationPublication) (reservationsService, error) {
+	if publication.entity <= 0 || publication.outlet <= 0 || !reservationValidSlug(publication.venue) {
+		return reservationsService{}, reservationUnavailable
+	}
+	return reservationsService{db: db, publication: publication}, nil
 }
 
 func reservationValidSlug(slug string) bool {
@@ -114,15 +129,16 @@ func reservationStart(raw string, now time.Time) (string, error) {
 	}
 	return at.UTC().Format(time.RFC3339), nil
 }
-func reservationPublicVenue(ctx context.Context, tx *sql.Tx, slug string) (int64, reservationVenue, error) {
+func (s reservationsService) publicVenue(ctx context.Context, tx *sql.Tx, slug string) (int64, reservationVenue, error) {
 	var outletID int64
 	v := reservationVenue{Locale: reservationLocale, Timezone: reservationTimezone}
-	if !reservationValidSlug(slug) {
+	if !reservationValidSlug(slug) || s.publication.venue != "" && s.publication.venue != slug {
 		return 0, v, reservationUnavailable
 	}
 	err := tx.QueryRowContext(ctx, `SELECT v.outlet_id,v.slug,v.display_name,v.cancellation_policy,v.collect_contact
         FROM reservation_venues v JOIN outlets o ON o.id=v.outlet_id AND o.active
-        JOIN entities e ON e.id=o.entity_id AND e.active WHERE v.slug=$1 AND v.enabled`, slug).
+        JOIN entities e ON e.id=o.entity_id AND e.active WHERE v.slug=$1 AND v.enabled
+		AND (($2::bigint=0 AND $3::bigint=0) OR (e.id=$2 AND o.id=$3))`, slug, s.publication.entity, s.publication.outlet).
 		Scan(&outletID, &v.Slug, &v.DisplayName, &v.CancellationPolicy, &v.CollectContact)
 	if errors.Is(err, sql.ErrNoRows) {
 		err = reservationUnavailable
@@ -134,14 +150,14 @@ func reservationPublicVenue(ctx context.Context, tx *sql.Tx, slug string) (int64
 // venue settings. A remapped slug cannot move a mutation under a different
 // outlet's lock. SQLite's IMMEDIATE transaction already serializes writes.
 func (s reservationsService) lockedVenue(ctx context.Context, tx *sql.Tx, slug string) (int64, error) {
-	outlet, _, err := reservationPublicVenue(ctx, tx, slug)
+	outlet, _, err := s.publicVenue(ctx, tx, slug)
 	if err != nil {
 		return outlet, err
 	}
 	if err = lockPostgresOutlet(ctx, tx, outlet); err != nil {
 		return 0, err
 	}
-	current, _, err := reservationPublicVenue(ctx, tx, slug)
+	current, _, err := s.publicVenue(ctx, tx, slug)
 	if err != nil {
 		return 0, err
 	}
@@ -157,7 +173,7 @@ func (s reservationsService) info(ctx context.Context, venue string) (reservatio
 		return reservationVenue{}, err
 	}
 	defer tx.Rollback()
-	_, result, err := reservationPublicVenue(ctx, tx, venue)
+	_, result, err := s.publicVenue(ctx, tx, venue)
 	return result, err
 }
 
@@ -169,12 +185,16 @@ func (s reservationsService) availability(ctx context.Context, venue, date strin
 	if err != nil || partySize < 1 || partySize > 12 || !reservationBookableDay(day, now) {
 		return nil, badInput
 	}
-	tx, err := s.db.BeginTx(ctx, nil)
+	var options *sql.TxOptions
+	if s.publication.venue != "" {
+		options = &sql.TxOptions{Isolation: sql.LevelRepeatableRead, ReadOnly: true}
+	}
+	tx, err := s.db.BeginTx(ctx, options)
 	if err != nil {
 		return nil, err
 	}
 	defer tx.Rollback()
-	id, _, err := reservationPublicVenue(ctx, tx, venue)
+	id, _, err := s.publicVenue(ctx, tx, venue)
 	if err != nil {
 		return nil, err
 	}
@@ -226,14 +246,18 @@ func (s reservationsService) requestPublic(ctx context.Context, venue string, in
 	if err != nil || !valid || in.PartySize < 1 || in.PartySize > 12 {
 		return reservationResult{}, badInput
 	}
-	tx, err := s.db.BeginTx(ctx, nil)
+	var options *sql.TxOptions
+	if s.publication.venue != "" {
+		options = &sql.TxOptions{Isolation: sql.LevelReadCommitted}
+	}
+	tx, err := s.db.BeginTx(ctx, options)
 	if err != nil {
 		return reservationResult{}, err
 	}
 	defer tx.Rollback()
 	var initialOutlet int64
 	if contactsEnabled {
-		initialOutlet, err = lockReservationContactEntity(ctx, tx, venue)
+		initialOutlet, err = s.lockReservationContactEntity(ctx, tx, venue)
 		if err != nil {
 			return reservationResult{}, err
 		}
