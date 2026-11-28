@@ -37,6 +37,16 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends bubblewrap postgresql-16
+          # Ubuntu may require an AppArmor profile for Bubblewrap to set up loopback.
+          if ! /usr/bin/bwrap --unshare-net --bind / / -- /usr/bin/true; then
+            sudo apparmor_parser -r -K <<'APPARMOR'
+          abi <abi/4.0>,
+          profile bwrap /usr/bin/bwrap flags=(unconfined) {
+            userns,
+          }
+          APPARMOR
+          fi
+          /usr/bin/bwrap --unshare-net --bind / / -- /usr/bin/true
           npm ci --prefix frontend
           go mod download
           go -C app mod download
