@@ -33,8 +33,8 @@ func normalizeReservationPhone(raw string) (string, bool) {
 
 // Contact writes maintain entity → outlet lock order. Taking only a key-share
 // lock on the entity lets independent outlets keep accepting bookings.
-func lockReservationContactEntity(ctx context.Context, tx *sql.Tx, venue string) (int64, error) {
-	outlet, _, err := reservationPublicVenue(ctx, tx, venue)
+func (s reservationsService) lockReservationContactEntity(ctx context.Context, tx *sql.Tx, venue string) (int64, error) {
+	outlet, _, err := s.publicVenue(ctx, tx, venue)
 	if err != nil {
 		return 0, err
 	}
