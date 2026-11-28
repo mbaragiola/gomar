@@ -378,7 +378,7 @@ func (a *app) selectedDocumentDetail(w http.ResponseWriter, r *http.Request, u u
 var missingDocumentDetail = problem{404, "No se encontró el comprobante."}
 
 var documentAuditLabels = map[string]string{
-	"create": "Alta", "update": "Modificación", "delete": "Baja", "review": "Revisión", "attach": "Adjunto",
+	"create": "Alta", "update": "Modificación", "delete": "Baja", "review": "Revisión", "attach": "Adjunto", "restore": "Restauración",
 }
 
 type documentAuditEvent struct {

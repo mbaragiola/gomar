@@ -269,6 +269,21 @@ func TestPostgresEmployeeOnboarding(t *testing.T) {
 	check(serve((&app{db: db, host: "example.com"}).routes(), "GET", "/api/v1/auth/me", "", auth), 401)
 	call("POST", "/api/v1/auth/mcp-token", `{"entity_id":1,"outlet_id":1}`, auth, 403)
 	call("POST", "/api/v1/entities/1/suppliers", `{"razon_social":"Fixture baseline supplier","cuit":"00000000000"}`, auth, 201)
+	if _, err := db.ExecContext(ctx, `INSERT INTO documents(id,entity_id,outlet_id,supplier_id,issuer_cuit,document_type,
+		letter,point_of_sale,number,issue_date,currency,total_minor,description,status,revision,created_at,updated_at,deleted_at)
+		SELECT 800001,1,1,id,cuit,'invoice','A',1,76,'2026-11-27','ARS',100,'','draft',2,'before','after','removed'
+		FROM suppliers WHERE entity_id=1 AND cuit='00000000000'`); err != nil {
+		t.Fatal(err)
+	}
+	const restore = "/removed-drafts/800001/restore"
+	const restoreBody = `{"motivo":"Fixture employee restore","expected_revision":2}`
+	call("POST", "/api/v1/entities/1/outlets/3"+restore, restoreBody, auth, 404)
+	call("POST", "/api/v1/entities/2/outlets/2"+restore, restoreBody, auth, 404)
+	call("POST", "/api/v1/entities/1/outlets/1"+restore, restoreBody, auth, 200)
+	var restoreActor int64
+	if err := db.QueryRowContext(ctx, "SELECT actor_id FROM document_audit WHERE document_id=800001 AND action='restore'").Scan(&restoreActor); err != nil || restoreActor != first.ID {
+		t.Fatal("employee restore had no actor audit entry", err)
+	}
 	var internal, password string
 	if err := db.QueryRowContext(ctx, "SELECT username,password FROM users WHERE id=$1", first.ID).Scan(&internal, &password); err != nil {
 		t.Fatal(err)

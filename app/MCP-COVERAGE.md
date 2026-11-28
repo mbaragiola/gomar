@@ -13,13 +13,13 @@ For everyday examples, see the [Spanish prompt guide](MCP-GUIA-DE-CONSULTAS.md).
 | Inventory | Tracked balances and thresholds, including an exact configured item by ID, movement history, filtered alert pages and stock alert counts; propose receipts, waste, physical counts, initial disabled product setup, and changes to a product’s minimum or tracking | Native only: branch-wide settings. Not built: bills of materials. |
 | Wiki | Search and read by ID; propose new pages and versioned edits | Not built: deletion. |
 | Delivery | Recent order status with limited fields; status counts for the latest 100 inbox records | No native staff write workflow. Provider calls and credentials are not part of MCP. |
-| Documents and intake | Scoped list, detail and totals by currency; propose draft creation, review, date and amount edits, or separate printed-number and printed point-of-sale corrections | Native only: other document edits, deletion and private file handling. Provider OCR is disabled; staged OCR confirmation is not a shipped workflow. |
+| Documents and intake | Scoped list, detail and totals by currency; list removed drafts with a recovery link; propose draft creation, review, date and amount edits, or separate printed-number and printed point-of-sale corrections | Native only: other document edits, deletion, restoration and private file handling. Provider OCR is disabled; staged OCR confirmation is not a shipped workflow. |
 | Suppliers | Active supplier names and IDs; propose a legal-name correction that applies across the business | Native only: supplier creation, tax identity and superuser catalog status changes. |
 | Payables and payment records | Outstanding and overdue totals, status counts, outlet-only payable and payment record details, one payable’s ledger history, and one document’s eligibility for posting | Native only: creating payables, recording and reversing internal payments, and receipt handling. MCP reads do not verify bank activity or move money. |
 | Reconciliation | Scoped counts, paged run list, metadata and setup by ID and a read-only close eligibility check; propose one empty single-outlet draft | Native only: private files, source rows, preparing matches, decisions and closing review. Setup metadata does not prove readiness. |
 | Reservations and menus | Daily counts, setup flags, one exact configured future start and one numbered table check, staff queue and detail, public candidate times, published menu metadata; propose confirmation or cancellation of an existing request and prepare a table, future slot, or fixed informational cancellation notice for an existing disabled venue | Native only: public booking, guest and contact details, custom venue settings and enablement, actual menu files and publication. Preparation never enables or books anything. |
 
-The packaged live server registers 42 baseline read tools. Discovery does not
+The packaged live server registers 43 baseline read tools. Discovery does not
 guarantee access: app flags and current permissions determine which queries
 can run. There are also 26 distinct opt-in proposal actions, not 26
 simultaneous writes. Of those, 22 are named actions and four use distinct older
@@ -387,6 +387,18 @@ branch. Finding one does not open it automatically, mark it reviewed or
 create a payable. Review still requires native permission and an explicit
 action in Gomar (or the separately issued review proposal and browser
 approval). The MCP list does not add any private metadata.
+
+### Restore a removed draft
+
+In Comprobantes, **Borradores dados de baja** lets draft managers restore
+a removed draft in their selected branch. Restoring requires a reason and
+keeps the same record, fiscal identity, attachments and audit history.
+Attachment downloads still require their own permission. Use
+`gomar_list_removed_drafts` to list the same branch’s removed drafts without
+issuer CUITs or files. Choose a draft’s link to open it in Gomar. The browser
+rechecks the branch, draft and current permission before showing the form.
+Only a person in Gomar can enter the reason and confirm the restore. Existing
+MCP reads omit removed drafts until restored.
 
 ### Revoke your own read connections in Gomar
 

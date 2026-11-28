@@ -17,7 +17,7 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
-const liveReadToolCount = 42
+const liveReadToolCount = 43
 
 func TestDocumentedLiveReadToolCount(t *testing.T) {
 	raw, err := os.ReadFile("../../MCP-COVERAGE.md")
@@ -122,6 +122,11 @@ func TestLiveStdioScopedTools(t *testing.T) {
 				t.Error("unexpected preflight query")
 			}
 			_, _ = io.WriteString(w, `{"eligible":false,"blocker":"not_reviewed","private":"`+secret+`"}`)
+		case "/api/v1/mcp/entities/20/outlets/10/removed-drafts":
+			if r.URL.RawQuery != "before_id=8" {
+				t.Error("unexpected removed draft cursor")
+			}
+			_, _ = io.WriteString(w, `{"items":[{"id":7,"revision":2,"document_type":"invoice","letter":"A","point_of_sale":1,"number":7,"removed_at":"2026-11-27T18:00:00Z","handoff_url":"/#restaurar-borrador=20:10:7","issuer_cuit":"`+secret+`"}]}`)
 		case "/api/v1/mcp/entities/20/outlets/10/documents/7":
 			_, _ = io.WriteString(w, `{"id":7,"revision":0,"status":"draft","type":"invoice","reference":"Factura 00001-00000007","issue_date":"2026-11-01","currency":"ARS","total_minor":0,"private":"`+secret+`"}`)
 		case "/api/v1/mcp/entities/20/outlets/10/reconciliation-runs":
@@ -261,6 +266,10 @@ func TestLiveStdioScopedTools(t *testing.T) {
 		{"gomar_document_totals", map[string]any{"entity_id": 20, "outlet_id": 10, "status": "reviewed"}, "", true},
 		{"gomar_check_payable_eligibility", map[string]any{"entity_id": 20, "outlet_id": 10, "document_id": 7}, `"blocker":"not_reviewed"`, false},
 		{"gomar_check_payable_eligibility", map[string]any{"entity_id": 20, "outlet_id": 11, "document_id": 7}, "permisos", true},
+		{"gomar_list_removed_drafts", map[string]any{"entity_id": 20, "outlet_id": 10, "before_id": 8}, `"handoff_url":"/#restaurar-borrador=20:10:7"`, false},
+		{"gomar_list_removed_drafts", map[string]any{"entity_id": 20, "outlet_id": 11}, "permisos", true},
+		{"gomar_list_removed_drafts", map[string]any{"entity_id": 21, "outlet_id": 10}, "permisos", true},
+		{"gomar_list_removed_drafts", map[string]any{"entity_id": 20, "outlet_id": 10, "before_id": 0}, "next_before_id", true},
 		{"gomar_read_document", map[string]any{"entity_id": 20, "outlet_id": 10, "document_id": 7}, `"revision":0`, false},
 		{"gomar_read_document", map[string]any{"entity_id": 20, "outlet_id": 10, "document_id": 0}, "document_id", true},
 		{"gomar_list_reconciliation_runs", map[string]any{"entity_id": 20, "outlet_id": 10, "after_id": 5}, `"id":8`, false},
@@ -306,7 +315,7 @@ func TestLiveStdioScopedTools(t *testing.T) {
 			t.Fatalf("unexpected result for %s: %s", test.name, wire)
 		}
 	}
-	if requests.Load() != 51 {
+	if requests.Load() != 54 {
 		t.Fatalf("wrong number of requests: %d", requests.Load())
 	}
 	if err := session.Close(); err != nil {

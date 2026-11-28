@@ -22,6 +22,9 @@ import ManageEmployees from './components/ManageEmployees.vue'
 import PublicReservations from './components/PublicReservations.vue'
 import StaffReservations from './components/StaffReservations.vue'
 import ReconciliationPanel from './components/ReconciliationPanel.vue'
+import RestoreRemovedDraft from './components/RestoreRemovedDraft.vue'
+import { restoreHandoffPrefix, parseRestoreHandoff } from './document-restore-handoff'
+import type { RemovedDraft } from './document-restore-handoff'
 import { localDate, localDateTime, money, todayInBuenosAires } from './format'
 import { blankPrintedReference, parsePrintedReference, printedDocumentTypes, printedReferenceLabel, printedReferenceResponse } from './document-reference'
 import type { PrintedReference, PrintedReferenceMatch } from './document-reference'
@@ -67,6 +70,7 @@ const selectedDocument = ref<Document | null>(null)
 const shownHandoff = ref<AttachmentHandoffDetail | null>(null)
 const attachmentHeading = ref<HTMLHeadingElement | null>(null)
 let handoffGeneration = 0
+const restoreTarget = ref<RemovedDraft>()
 const payables = ref<Payable[]>([])
 const payments = ref<Payment[]>([])
 const paymentDraft = ref<Payment | null>(null)
@@ -861,7 +865,8 @@ async function openDocument(id: number, selection?: PrintedReference | 'draft') 
 }
 
 const unavailableHandoff = 'No se pudo abrir el borrador desde este enlace. Verificá el local y tus permisos.'
-const hasHandoffLocation = () => window.location.pathname === '/' && window.location.hash.startsWith(draftHandoffPrefix)
+const hasHandoffLocation = () => window.location.pathname === '/' &&
+  (window.location.hash.startsWith(draftHandoffPrefix) || window.location.hash.startsWith(restoreHandoffPrefix))
 function closeShownHandoff() {
   if (!shownHandoff.value) return
   shownHandoff.value = null
@@ -874,6 +879,7 @@ function closeShownHandoff() {
 function clearHandoffLocation() {
   handoffGeneration += 1
   closeShownHandoff()
+  restoreTarget.value = undefined
   if (hasHandoffLocation()) window.history.replaceState(window.history.state, '', window.location.pathname + window.location.search)
 }
 
@@ -891,7 +897,9 @@ async function syncAttachmentHandoff() {
   const run = ++handoffGeneration
   if (!authenticated.value || window.location.pathname !== '/') return
   closeShownHandoff()
+  restoreTarget.value = undefined
   if (!hasHandoffLocation()) return
+  if (window.location.hash.startsWith(restoreHandoffPrefix)) return syncRestoreHandoff(run)
   const hash = window.location.hash
   const target = window.location.search === '' ? parseDraftAttachmentHandoff(hash) : null
   if (!target) {
@@ -926,6 +934,59 @@ async function syncAttachmentHandoff() {
     void nextTick(() => { if (current()) attachmentHeading.value?.focus() })
   } catch {
     if (current()) error.value = unavailableHandoff
+  }
+}
+
+function showRestoredDraft(id: number) {
+  const session = sessionGeneration
+  const context = contextGeneration
+  const entity = selectedEntityId.value
+  if (!entity) return
+  void loadDocuments(session, context).catch((value) => {
+    if (contextIsCurrent(session, context, entity)) showError(value)
+  })
+  void openDocument(id)
+}
+
+async function syncRestoreHandoff(run: number) {
+  const hash = window.location.hash
+  const target = window.location.search === '' ? parseRestoreHandoff(hash) : null
+  const unavailable = 'No se pudo abrir el borrador dado de baja. Verificá el local y tus permisos.'
+  if (!target) {
+    error.value = unavailable
+    return
+  }
+  const session = sessionGeneration
+  let context = contextGeneration
+  const current = () => run === handoffGeneration && sessionIsCurrent(session) &&
+    context === contextGeneration && window.location.hash === hash
+  const readTarget = async () => {
+    const page = await request<{ items: RemovedDraft[] }>(`/entities/${target.entity}/outlets/${target.outlet}/removed-drafts?draft_id=${target.document}`, {
+      cache: 'no-store', referrerPolicy: 'no-referrer',
+    })
+    if (page.items?.length !== 1 || page.items[0].id !== target.document) throw new Error(unavailable)
+    return page.items[0]
+  }
+  error.value = ''
+  try {
+    let detail = await readTarget()
+    if (!current()) return
+    if (selectedEntityId.value !== target.entity || selectedOutletId.value !== target.outlet) {
+      selectedEntityId.value = target.entity
+      const loadingContext = loadContext(session, true, target.outlet)
+      context = contextGeneration
+      await loadingContext
+      if (!current()) return
+      if (selectedOutletId.value !== target.outlet) throw new Error(unavailable)
+      detail = await readTarget()
+      if (!current()) return
+    }
+    selectStaffView('documents', true)
+    showCreate.value = false
+    mobileDetail.value = false
+    restoreTarget.value = detail
+  } catch {
+    if (current()) error.value = unavailable
   }
 }
 
@@ -1933,6 +1994,11 @@ onBeforeUnmount(() => {
                 <button type="button" class="text-button" :disabled="draftQueueLoading" @click="loadDraftQueue()">Actualizar borradores</button>
               </template>
             </div>
+            <RestoreRemovedDraft
+              v-if="selectedEntityId && selectedOutletId && canManageDrafts && staffView === 'documents'"
+              :key="`restore:${selectedEntityId}:${selectedOutletId}:${restoreTarget?.id ?? 0}`" :entity-id="selectedEntityId"
+              :outlet-id="selectedOutletId" :target="restoreTarget" @restored="showRestoredDraft"
+            />
             <details v-if="selectedOutletId && canReadBusiness" class="document-reference-finder">
               <summary>Buscar por referencia impresa</summary>
               <form class="form-grid" @submit.prevent="findPrintedReference()">

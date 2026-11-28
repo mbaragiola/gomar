@@ -40,6 +40,7 @@ func employeeBrowserScope(r *http.Request, u user) error {
 		"POST " + e + "/suppliers", "PUT " + e + "/suppliers/{supplier}",
 		"POST " + e + "/documents", "PUT " + e + "/documents/{document}", "DELETE " + e + "/documents/{document}",
 		"POST " + e + "/documents/{document}/review", "POST " + e + "/documents/{document}/attachments",
+		"POST " + e + "/outlets/{outlet}/removed-drafts/{document}/restore",
 		"POST " + e + "/outlets/{outlet}/intake", "DELETE " + e + "/intake/{operation}",
 		"POST " + e + "/documents/{document}/payable", "POST " + e + "/payments",
 		"POST " + e + "/payments/{payment}/post", "POST " + e + "/payments/{payment}/reverse", "POST " + e + "/payments/{payment}/receipt",
