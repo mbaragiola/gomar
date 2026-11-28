@@ -161,7 +161,7 @@ func (a *app) attachReceipt(w http.ResponseWriter, r *http.Request, u user) erro
 		return err
 	}
 	// Neither reading a request body nor parsing a file holds the writer lock.
-	tx, err := a.beginEmployeeCheckedWrite(r, u)
+	tx, err := a.beginEmployeeCheckedWriteWithOptions(r, u, &sql.TxOptions{Isolation: sql.LevelReadCommitted})
 	if err != nil {
 		return err
 	}
@@ -170,7 +170,7 @@ func (a *app) attachReceipt(w http.ResponseWriter, r *http.Request, u user) erro
 	if err != nil {
 		return err
 	}
-	if err := lockPostgresEntity(r.Context(), tx, m.ID); err != nil {
+	if err := a.lockDocumentWrite(r, tx, u, m.ID); err != nil {
 		return err
 	}
 	// A competing attachment, reversal, or outlet-scope change can have

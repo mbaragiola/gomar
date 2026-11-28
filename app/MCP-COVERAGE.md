@@ -195,6 +195,9 @@ allocations still cover the operator's authorized branches; history shows the
 payment's branch, and **Abrir** uses the selected branch. Nothing is deleted or
 posted by switching branches. Existing MCP reads remain pinned to one branch
 and do not include payment references, methods, or receipts.
+Accounting writes recheck active membership, role and required branches once
+they hold the same lock as tenant access changes. This also applies to
+reconciliation writes and approval of a reconciliation draft proposal.
 
 Deactivating an outlet preserves its posted payables, payment history,
 and outstanding balances. An operator with Treasury permission and

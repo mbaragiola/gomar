@@ -91,12 +91,12 @@ func (a *app) decideReconciliationPair(w http.ResponseWriter, r *http.Request, u
 	if *input.Key == "" || utf8.RuneCountInString(*input.Key) > 64 {
 		return problem{422, "La clave de operación no es válida."}
 	}
-	tx, err := a.db.BeginTx(r.Context(), nil)
+	tx, err := a.db.BeginTx(r.Context(), &sql.TxOptions{Isolation: sql.LevelReadCommitted})
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback()
-	if err := lockReconciliationRun(tx, u, entity, id, false); err != nil {
+	if err := a.lockReconciliationRun(r, tx, u, entity, id, false); err != nil {
 		return err
 	}
 	run, err := readReconciliationCSVScope(tx, u, entity, id, 0)

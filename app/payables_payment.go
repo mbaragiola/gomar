@@ -27,11 +27,12 @@ func (a *app) createPaymentDraft(r *http.Request, tx *sql.Tx, m entityMembership
 		return 0, nil, badInput
 	}
 
-	if err := lockPostgresEntity(r.Context(), tx, m.ID); err != nil {
+	m, err := a.lockAccountingMembership(r, tx, m.ID, m.userID, recordPayments)
+	if err != nil {
 		return 0, nil, err
 	}
 	var allowed bool
-	err := tx.QueryRow(`SELECT EXISTS(SELECT 1 FROM outlets o JOIN outlet_grants g ON g.outlet_id=o.id
+	err = tx.QueryRow(`SELECT EXISTS(SELECT 1 FROM outlets o JOIN outlet_grants g ON g.outlet_id=o.id
 		WHERE o.id=$1 AND o.entity_id=$2 AND o.active=TRUE AND g.membership_id=$3)`,
 		*input.Outlet, m.ID, m.id).Scan(&allowed)
 	if err != nil {
@@ -173,7 +174,8 @@ func (a *app) postPayment(r *http.Request, tx *sql.Tx, m entityMembership, body 
 			return 0, nil, badInput
 		}
 	}
-	if err := lockPostgresEntity(r.Context(), tx, m.ID); err != nil {
+	m, err := a.lockAccountingMembership(r, tx, m.ID, m.userID, recordPayments)
+	if err != nil {
 		return 0, nil, err
 	}
 	p, err := activePaymentFromPath(r, tx, m)
@@ -281,7 +283,8 @@ func (a *app) reversePayment(r *http.Request, tx *sql.Tx, m entityMembership, bo
 	if input.Reason == nil {
 		return 0, nil, badInput
 	}
-	if err := lockPostgresEntity(r.Context(), tx, m.ID); err != nil {
+	m, err := a.lockAccountingMembership(r, tx, m.ID, m.userID, "reverse_supplier_payments")
+	if err != nil {
 		return 0, nil, err
 	}
 	p, err := activePaymentFromPath(r, tx, m)
