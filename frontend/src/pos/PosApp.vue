@@ -12,7 +12,7 @@ import { maxLines, maxQuantity, normalizedProducts, positive, sameContext, saleR
   isPaymentMethod, matchesPaymentMethod, paymentLabels, productByBarcode,
   type Context, type Grant, type PaymentMethod, type Product, type Sale } from './model'
 import { acknowledgeTableRecovery, arm, beginTableSave, broadcastPOSLock, disarm, enqueue, finishTableSave, forgetLease,
-  localLease, lockOfflinePOS, posLockEvent, readGrant, readTableState, recordOutcome, rememberLease, refreshTillTimeCapability, salesFor } from './storage'
+  localLease, lockOfflinePOS, posLockEvent, readGrant, readTableState, recordOutcome, rememberLease, refreshTillTimeCapability, pendingSalesFor, salesPage, type SalesCursor } from './storage'
 import { matchesTableSave, matchesTableSaveRejection, tableSaveRequest, type TableCheck, type TableSave } from './tableSave'
 
 interface Entity { id: number; nombre: string; rol: string; capacidades: string[] }
@@ -42,6 +42,9 @@ const entity = ref(0)
 const outlet = ref(0)
 const grant = ref<Grant | null>(null)
 const recorded = ref<Sale[]>([])
+const historyCursor = ref<SalesCursor>()
+const nextHistoryCursor = ref<SalesCursor>()
+const loadingHistory = ref(false)
 const basket = ref(new Map<number, number>())
 const barcode = ref('')
 const scanError = ref('')
@@ -96,6 +99,8 @@ function clearView() {
   epoch++
   grant.value = null
   recorded.value = []
+  historyCursor.value = nextHistoryCursor.value = undefined
+  loadingHistory.value = false
   tableSaveWork.value = undefined
   tableSave.value = undefined
   tableRecovery.value = undefined
@@ -184,17 +189,18 @@ async function openCached(current: Grant | undefined, token: number) {
   entities.value = []
   outlets.value = []
   if (!current) return
-  const [sales, tableState] = await Promise.all([salesFor(current), readTableState(current)])
+  const [sales, tableState] = await Promise.all([salesPage(current, historyCursor.value), readTableState(current)])
   if (token === epoch && localLease() === current.lease && Date.now() < current.expires) {
     restoreTableSave(tableState.pending)
     tableRecovery.value = tableState.recovery
     grant.value = current
-    recorded.value = sales
+    recorded.value = sales.sales
+    nextHistoryCursor.value = sales.next
   }
 }
 
 async function refresh() {
-  if (verifying.value || changing.value || saving.value || savingTable.value) return
+  if (verifying.value || changing.value || saving.value || savingTable.value || loadingHistory.value) return
   const token = epoch
   verifying.value = true
   navigatorOnline.value = navigator.onLine
@@ -233,12 +239,13 @@ async function refresh() {
       }
       const verified = await updateTillTimeCapability(current, catalog.hora_informada_caja_utc_v1 === true)
       if (!verified || token !== epoch || localLease() !== current.lease) return
-      const [sales, tableState] = await Promise.all([salesFor(verified), readTableState(verified)])
+      const [sales, tableState] = await Promise.all([salesPage(verified, historyCursor.value), readTableState(verified)])
       if (token !== epoch || localLease() !== current.lease) return
       restoreTableSave(tableState.pending)
       tableRecovery.value = tableState.recovery
       grant.value = { ...verified, tableChecks: catalog.cuentas_mesa === true, manualTender: catalog.registro_medios_pago === true, tableFinalization: catalog.finalizacion_mesa === true }
-      recorded.value = sales
+      recorded.value = sales.sales
+      nextHistoryCursor.value = sales.next
     } else {
       entity.value = authorized.find((row) => sellingRoles.has(row.rol))?.id ?? authorized[0]?.id ?? 0
       await selectEntity()
@@ -282,12 +289,13 @@ async function enable() {
     }
     rememberLease(next.lease)
     broadcastPOSLock()
-    const [sales, tableState] = await Promise.all([salesFor(next), readTableState(next)])
+    const [sales, tableState] = await Promise.all([salesPage(next), readTableState(next)])
     if (token !== epoch || localLease() !== next.lease) return
     restoreTableSave(tableState.pending)
     tableRecovery.value = tableState.recovery
     grant.value = next
-    recorded.value = sales
+    recorded.value = sales.sales
+    nextHistoryCursor.value = sales.next
     notice.value = 'Caja habilitada en esta pestaña por hasta 8 horas.'
   } catch (err) {
     tell(err, 'No se pudo habilitar la caja.')
@@ -452,7 +460,7 @@ function scanBarcode() {
 async function complete() {
   const current = grant.value
   const method = payment.value
-  if (!current || !isPaymentMethod(method) || !needsConfirm.value || saving.value || verifying.value || tableCartLocked.value || localLease() !== current.lease) return
+  if (!current || !isPaymentMethod(method) || !needsConfirm.value || saving.value || verifying.value || loadingHistory.value || tableCartLocked.value || localLease() !== current.lease) return
   saving.value = true
   error.value = ''
   notice.value = ''
@@ -471,9 +479,27 @@ async function complete() {
   if (online.value) void sync()
 }
 
+async function changeSalesPage(before?: SalesCursor) {
+  const current = grant.value
+  if (!current || loadingHistory.value || syncing.value || verifying.value || saving.value || localLease() !== current.lease) return
+  loadingHistory.value = true
+  const token = epoch
+  try {
+    const page = await salesPage(current, before)
+    if (token !== epoch || localLease() !== current.lease || Date.now() >= current.expires) return
+    recorded.value = page.sales
+    historyCursor.value = before
+    nextHistoryCursor.value = page.next
+  } catch (err) {
+    if (token === epoch) tell(err, 'No se pudieron consultar las ventas anteriores.')
+  } finally {
+    if (token === epoch) loadingHistory.value = false
+  }
+}
+
 async function sync() {
   const current = grant.value
-  if (!current || syncing.value || verifying.value || !navigator.onLine || localLease() !== current.lease) return
+  if (!current || syncing.value || verifying.value || loadingHistory.value || !navigator.onLine || localLease() !== current.lease) return
   syncing.value = true
   const token = epoch
   try {
@@ -493,8 +519,8 @@ async function sync() {
     const verified = await updateTillTimeCapability(current, supportsTillTime)
     if (!verified || token !== epoch || !navigator.onLine || localLease() !== current.lease) return
     if (grant.value?.lease === current.lease) grant.value = { ...grant.value, tillTimeV1: supportsTillTime }
-    const sales = await salesFor(current)
-    for (const sale of sales.sort((a, b) => a.created - b.created || a.id.localeCompare(b.id))) {
+    const sales = await pendingSalesFor(current)
+    for (const sale of sales) {
       if (token !== epoch || !navigator.onLine || localLease() !== current.lease || Date.now() >= current.expires) break
       if (sale.status !== 'pending' || !sameContext(current, sale)) continue
       try {
@@ -516,8 +542,11 @@ async function sync() {
       }
     }
     if (token === epoch) {
-      const sales = await salesFor(current)
-      if (token === epoch) recorded.value = sales
+      const page = await salesPage(current, historyCursor.value)
+      if (token === epoch) {
+        recorded.value = page.sales
+        nextHistoryCursor.value = page.next
+      }
     }
   } catch (err) {
     if (token !== epoch) return
@@ -666,7 +695,7 @@ onUnmounted(() => {
         <button v-if="!needsConfirm" class="primary" type="button" :disabled="cartControlsLocked || !basketLines.length || !payment" @click="confirmSale">Registrar venta</button>
         <div v-else class="gomar-feature-actions">
           <span v-if="payment">Medio de pago elegido: {{ paymentLabels[payment] }}.</span>
-          <button class="primary" type="button" :disabled="saving || verifying || tableCartLocked" @click="complete">Confirmar y guardar venta</button>
+          <button class="primary" type="button" :disabled="saving || verifying || loadingHistory || tableCartLocked" @click="complete">Confirmar y guardar venta</button>
           <button type="button" :disabled="saving" @click="needsConfirm = false">Volver sin guardar</button>
         </div>
         <small>Cobrá por fuera de Gomar. Este registro no verifica ni procesa pagos ni emite un comprobante fiscal.</small>
@@ -706,7 +735,7 @@ onUnmounted(() => {
       <PrecloseSummary :key="grant.lease" :scope="grant" :updating="verifying || saving || syncing" />
       <section class="card gomar-feature">
         <div class="section-heading"><h2>Ventas de esta caja</h2>
-          <button type="button" :disabled="!online || syncing || verifying || !pending" @click="sync">Sincronizar pendientes</button>
+          <button type="button" :disabled="!online || syncing || verifying || loadingHistory || !pending" @click="sync">Sincronizar pendientes</button>
         </div>
         <p v-if="syncing" role="status">Sincronizando…</p>
         <ul v-if="recorded.length" class="gomar-feature-list">
@@ -726,6 +755,10 @@ onUnmounted(() => {
           </li>
         </ul>
         <p v-else>No hay ventas guardadas para este local.</p>
+        <div v-if="historyCursor || nextHistoryCursor" class="gomar-feature-actions">
+          <button v-if="historyCursor" type="button" :disabled="loadingHistory || syncing || verifying || saving" @click="changeSalesPage()">Ventas recientes</button>
+          <button v-if="nextHistoryCursor" type="button" :disabled="loadingHistory || syncing || verifying || saving" @click="changeSalesPage(nextHistoryCursor)">Ventas sincronizadas anteriores</button>
+        </div>
         <small>Si una venta necesita revisión, no la vuelvas a cargar. El reporte mensual usa la hora de registro de Gomar, no la del dispositivo.</small>
       </section>
     </template>

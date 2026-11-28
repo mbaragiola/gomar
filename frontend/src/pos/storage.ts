@@ -3,6 +3,9 @@ import type { ReceiptClock } from './sale-time'
 import type { TableSave } from './tableSave'
 
 const dbName = 'gomar-pos-v1'
+const saleIndex = 'scope-status-created'
+export const acknowledgedPageSize = 50
+export type SalesCursor = [created: number, id: string]
 const tableSaveKey = (context: Context) => `table-save:${scopeKey(context)}`
 const tableRecoveryKey = (context: Context) => `table-save-recovery:${scopeKey(context)}`
 const leaseName = 'gomar-pos-active-lease'
@@ -31,21 +34,31 @@ export function lockOfflinePOS() {
 
 function open(initialize: boolean): Promise<IDBDatabase> {
   return new Promise((resolve, reject) => {
-    const req = indexedDB.open(dbName, 1)
-    req.onupgradeneeded = () => {
-      // Opening a missing database can start a version-change transaction
-      // before the readonly snapshot begins. The inspector never provisions
-      // or migrates a register, even after this browser evicted its data.
+    const req = initialize ? indexedDB.open(dbName, 2) : indexedDB.open(dbName)
+    let blocked = false
+    req.onupgradeneeded = ({ oldVersion }) => {
+      // The inspector never provisions or migrates a register.
       if (!initialize) {
         req.transaction?.abort()
         return
       }
-      req.result.createObjectStore('meta')
-      req.result.createObjectStore('sales', { keyPath: 'id' }).createIndex('scope', 'key')
+      if (oldVersion === 0) {
+        req.result.createObjectStore('meta')
+        req.result.createObjectStore('sales', { keyPath: 'id' }).createIndex('scope', 'key')
+      }
+      req.transaction!.objectStore('sales').createIndex(saleIndex, ['key', 'status', 'created', 'id'])
     }
-    req.onsuccess = () => resolve(req.result)
+    req.onsuccess = () => {
+      const db = req.result
+      if (blocked) return db.close()
+      db.onversionchange = () => db.close()
+      resolve(db)
+    }
     req.onerror = () => reject(req.error)
-    req.onblocked = () => reject(new Error('Cerrá las otras pestañas de caja y volvé a intentar.'))
+    req.onblocked = () => {
+      blocked = true
+      reject(new Error('Cerrá las otras pestañas de caja y volvé a intentar.'))
+    }
   })
 }
 
@@ -177,8 +190,41 @@ export function acknowledgeTableRecovery(grant: Grant, id: string) {
   })
 }
 
-export function salesFor(context: Context) {
-  return transact(['sales'], 'readonly', (tx) => result<Sale[]>(tx.objectStore('sales').index('scope').getAll(scopeKey(context))))
+function saleRange(scope: string, status: Sale['status'], before?: SalesCursor) {
+  return IDBKeyRange.bound([scope, status], before ? [scope, status, ...before] : [scope, status, []], false, true)
+}
+
+export function pendingSalesFor(context: Context) {
+  return transact(['sales'], 'readonly', (tx) =>
+    result<Sale[]>(tx.objectStore('sales').index(saleIndex).getAll(saleRange(scopeKey(context), 'pending'))))
+}
+
+export function salesPage(context: Context, before?: SalesCursor) {
+  const scope = scopeKey(context)
+  return transact(['sales'], 'readonly', async (tx) => {
+    const index = tx.objectStore('sales').index(saleIndex)
+    const acknowledged = new Promise<{ sales: Sale[]; next?: SalesCursor }>((resolve, reject) => {
+      const sales: Sale[] = []
+      const req = index.openCursor(saleRange(scope, 'synced', before), 'prev')
+      req.onerror = () => reject(req.error)
+      req.onsuccess = () => {
+        const cursor = req.result
+        if (!cursor) return resolve({ sales })
+        if (sales.length === acknowledgedPageSize) {
+          const last = sales[sales.length - 1]
+          return resolve({ sales, next: [last.created, last.id] })
+        }
+        sales.push(cursor.value as Sale)
+        cursor.continue()
+      }
+    })
+    const [page, pending, attention] = await Promise.all([
+      acknowledged,
+      result<Sale[]>(index.getAll(saleRange(scope, 'pending'))),
+      result<Sale[]>(index.getAll(saleRange(scope, 'attention'))),
+    ])
+    return { sales: [...pending, ...attention, ...page.sales], next: page.next }
+  })
 }
 
 // A read-only snapshot for the active register, not an entry point for
