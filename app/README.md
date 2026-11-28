@@ -103,6 +103,12 @@ across the entity. Signing out or revoking an older key frees a slot.
 Existing sessions and keys keep their original expiry. MCP proposal
 credentials use their own policy.
 
+## Protected HTTPS deployment rehearsal
+
+See [deployment and recovery](HOSTED-OPERATIONS.md) for protected Unix
+ingress, separate administrator recovery, and the release checks exercised
+on the disposable HTTPS deployment.
+
 ## Synthetic private-file restore rehearsal
 
 From a clean worktree with the PostgreSQL gate prerequisites (including
