@@ -99,12 +99,13 @@ func TestPostgresReservationCustomerContacts(t *testing.T) {
 	}
 	done := make(chan *httptest.ResponseRecorder, 3)
 	var wg sync.WaitGroup
-	for i, e := range []struct{ venue, phone string }{{"fixture-one", "+54 9 11 2345-6789"}, {"fixture-two", "+5491123456789"}, {"fixture-other", "+5491123456789"}} {
+	for i, e := range []struct{ venue, phone string }{{"fixture-one", "+54 9 11 2345-6789"}, {"fixture-two", "+5491123456789"}} {
 		wg.Go(func() {
 			done <- ask(e.venue, "POST", "/requests", payload(fmt.Sprintf("Person %d", i), e.phone, fmt.Sprintf("private-note-%d", i), 2))
 		})
 	}
 	wg.Wait()
+	done <- ask("fixture-other", "POST", "/requests", payload("Person 2", "+5491123456789", "private-note-2", 2))
 	close(done)
 	for res := range done {
 		if res.Code != 201 {

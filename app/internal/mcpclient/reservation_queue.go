@@ -28,7 +28,7 @@ func validQueueEntry(e ReservationRequest, date string, location *time.Location)
 		return false
 	}
 	switch e.Status {
-	case "pending", "confirmed", "cancelled":
+	case "pending", "confirmed", "cancelled", "expired":
 	default:
 		return false
 	}

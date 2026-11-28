@@ -89,6 +89,11 @@ func (a *app) uploadDocumentImage(w http.ResponseWriter, r *http.Request, u user
 	if err != nil {
 		return err
 	}
+	release, err := admitRequestWork(w, &a.privateImageWork, privateImageConcurrency)
+	if err != nil {
+		return err
+	}
+	defer release()
 	before, err := a.expectedAttachmentDocument(r, u, entityID, documentID)
 	if err != nil {
 		return err

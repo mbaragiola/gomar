@@ -326,6 +326,9 @@ func reservationChange(ctx context.Context, tx *sql.Tx, outlet int64, id, action
 		if status == "cancelled" {
 			return reservationResult{ID: id, Status: "cancelled"}, nil
 		}
+		if status == "pending" && start <= now.UTC().Format(time.RFC3339) {
+			return reservationResult{}, reservationStateConflict
+		}
 		return cancelReservationSnapshot(ctx, tx, outlet, id, status, start, partySize, table)
 	}
 	var enabled bool

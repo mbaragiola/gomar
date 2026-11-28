@@ -46,6 +46,12 @@ func (a *app) registerReservationPublic(add func(string, string, http.HandlerFun
 				failure(w, reservationUnavailable)
 				return
 			}
+			release, err := admitRequestWork(w, &a.publicReservationWork, publicReservationConcurrency)
+			if err != nil {
+				failure(w, err)
+				return
+			}
+			defer release()
 			code, out, err := fn(w, r, r.PathValue("venue"))
 			if err != nil {
 				failure(w, err)

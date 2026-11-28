@@ -403,6 +403,19 @@ rechecks the branch, draft and current permission before showing the form.
 Only a person in Gomar can enter the reason and confirm the restore. Existing
 MCP reads omit removed drafts until restored.
 
+### Reservation expiry and capacity
+
+A guest request starts pending and can be confirmed before its booked time.
+The maintenance worker marks past pending requests expired in batches.
+Staff and MCP queue reads show them as expired. The MCP day summary includes
+expired counts when present. The worker preserves the original request and
+leaves confirmed and cancelled requests unchanged.
+
+Each Gomar process admits at most two public reservation info, availability
+or request operations at once, and one private image upload across staged
+intake, document attachments and payment receipts. Extra operations get
+HTTP 503 with a retry hint. The PostgreSQL pool is shared with staff work.
+
 ### Revoke your own read connections in Gomar
 
 Credential management is native-only. In **Conectar Claude o Codex**, a

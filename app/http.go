@@ -11,6 +11,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 	"unicode/utf8"
 
@@ -36,6 +37,9 @@ type app struct {
 	adminSignIn         signInWork
 	mcpClock            func() time.Time
 	posClock            func() time.Time
+
+	publicReservationWork atomic.Int32
+	privateImageWork      atomic.Int32
 
 	host                                      string
 	payablesClock                             func() time.Time

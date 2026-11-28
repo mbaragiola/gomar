@@ -156,6 +156,10 @@ func (a *app) mcpReservationStatus(r *http.Request, tx *sql.Tx, s mcpTokenScope)
 		if err := rows.Scan(&state, &count, &guests); err != nil {
 			return nil, err
 		}
+		if state == "expired" {
+			result.Expired = &mcpclient.ReservationCount{Status: state, RequestCount: count, PartySizeTotal: guests}
+			continue
+		}
 		index := slices.IndexFunc(result.Counts, func(x mcpclient.ReservationCount) bool { return x.Status == state })
 		if index < 0 {
 			return nil, errors.New("unexpected reservation status")

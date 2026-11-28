@@ -4,7 +4,7 @@ import { ApiError, request } from '../api'
 import { reservationSlotUTC, reservationTimes } from '../reservation-format'
 import { localDateTime, todayInBuenosAires } from '../format'
 
-type Status = 'pending' | 'confirmed' | 'cancelled'
+type Status = 'pending' | 'confirmed' | 'cancelled' | 'expired'
 interface Booking {
   id: string
   guest_name: string
@@ -43,7 +43,7 @@ const menuInputKey = ref(0)
 const menuIntent = ref<'write' | 'remove' | null>(null)
 const cancellation = ref<Booking | null>(null)
 const settings = reactive<Settings>({ venue: '', display_name: '', cancellation_policy: '', enabled: false })
-const statuses: Record<Status, string> = { pending: 'Pendiente', confirmed: 'Confirmada', cancelled: 'Cancelada' }
+const statuses: Record<Status, string> = { pending: 'Pendiente', confirmed: 'Confirmada', cancelled: 'Cancelada', expired: 'Vencida' }
 
 function showError(err: unknown, fallback: string) {
   problem.value = err instanceof ApiError ? err.message : fallback
@@ -298,7 +298,7 @@ onMounted(load)
         <p>{{ localDateTime(row.start_at) }} · {{ row.party_size }} personas · {{ statuses[row.status] }}</p>
         <p v-if="row.table_label">Mesa: {{ row.table_label }}</p>
         <p v-if="row.cancellation_policy" class="gomar-feature-text">Política al solicitar: {{ row.cancellation_policy }}</p>
-        <div v-if="canEdit && row.status !== 'cancelled'" class="gomar-feature-actions">
+        <div v-if="canEdit && (row.status === 'pending' || row.status === 'confirmed')" class="gomar-feature-actions">
           <button v-if="row.status === 'pending'" type="button" :disabled="busy" @click="action(row, 'confirm')">Confirmar reserva</button>
           <button type="button" :disabled="busy" @click="cancellation = row">Cancelar reserva</button>
         </div>

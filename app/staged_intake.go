@@ -150,6 +150,11 @@ func (a *app) uploadStagedIntake(w http.ResponseWriter, r *http.Request, u user)
 	if err != nil {
 		return err
 	}
+	release, err := admitRequestWork(w, &a.privateImageWork, privateImageConcurrency)
+	if err != nil {
+		return err
+	}
+	defer release()
 	if err := a.checkIntakeUpload(r, u, outletID); err != nil {
 		return err
 	}
