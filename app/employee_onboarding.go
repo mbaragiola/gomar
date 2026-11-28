@@ -6,8 +6,10 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"net/url"
 	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -190,15 +192,27 @@ type managedEmployee struct {
 }
 
 func (a *app) listEmployees(r *http.Request, tx *sql.Tx, m entityMembership, _ []byte) (int, any, error) {
+	var before int64
+	var enabled bool
 	if r.URL.RawQuery != "" {
-		return 0, nil, badInput
+		query, err := url.ParseQuery(r.URL.RawQuery)
+		if err != nil || len(query) != 1 || len(query["before"]) != 1 {
+			return 0, nil, badInput
+		}
+		group, id, found := strings.Cut(query.Get("before"), "-")
+		before, err = strconv.ParseInt(id, 10, 64)
+		if !found || err != nil || before < 1 || strconv.FormatInt(before, 10) != id || (group != "a" && group != "d") {
+			return 0, nil, badInput
+		}
+		enabled = group == "a"
 	}
 	rows, err := tx.QueryContext(r.Context(), `SELECT e.user_id,e.handle,t.role,e.status
   FROM organization_employees e JOIN memberships t ON (t.user_id,t.entity_id)=(e.user_id,e.entity_id)
   WHERE e.entity_id=$1 AND NOT EXISTS (
    SELECT 1 FROM outlet_grants g JOIN outlets o ON o.id=g.outlet_id WHERE g.membership_id=t.id
     AND (o.entity_id<>$1 OR NOT EXISTS(SELECT 1 FROM outlet_grants actor WHERE actor.membership_id=$2 AND actor.outlet_id=g.outlet_id)))
-  ORDER BY e.user_id DESC LIMIT 101`, m.ID, m.id)
+  AND ($4::bigint=0 OR (e.status<>'disabled',e.user_id) < ($3::boolean,$4))
+ ORDER BY (e.status<>'disabled') DESC,e.user_id DESC LIMIT 101`, m.ID, m.id, enabled, before)
 	if err != nil {
 		return 0, nil, err
 	}
@@ -214,11 +228,18 @@ func (a *app) listEmployees(r *http.Request, tx *sql.Tx, m entityMembership, _ [
 	if err := rows.Err(); err != nil {
 		return 0, nil, err
 	}
-	more := len(result) > 100
-	if more {
-		result = result[:100]
+	reply := map[string]any{"employees": result, "truncated": false}
+	if len(result) > 100 {
+		last := result[99]
+		group := "a-"
+		if last.Status == "disabled" {
+			group = "d-"
+		}
+		reply["employees"] = result[:100]
+		reply["truncated"] = true
+		reply["next_cursor"] = group + strconv.FormatInt(last.ID, 10)
 	}
-	return 200, map[string]any{"employees": result, "truncated": more}, nil
+	return 200, reply, nil
 }
 
 func (a *app) inviteEmployee(r *http.Request, tx *sql.Tx, m entityMembership, body []byte) (int, any, error) {

@@ -8,7 +8,8 @@ const labels = { invited: 'Invitado', changing_password: 'Cambio pendiente', act
 type Employee = { id: number; username: string; role: keyof typeof roles; status: keyof typeof labels }
 type Invite = { id: number; organization: number; username: string; temporary_password: string; expires_at: string }
 const employees = ref<Employee[]>([])
-const truncated = ref(false)
+const cursors = ref([''])
+const nextCursor = ref('')
 const invite = ref<Invite | null>(null)
 const visible = ref(false)
 const username = ref('')
@@ -36,18 +37,21 @@ function reveal() {
   visible.value = true
   revealTimer = setTimeout(hide, 60000)
 }
-async function load(run: number) {
-  const result = await request<{ employees: Employee[]; truncated: boolean }>(path, { cache: 'no-store', signal: lifetime.signal })
+async function load(run: number, pages: string[]) {
+  const cursor = pages.at(-1)
+  const query = cursor ? '?before=' + encodeURIComponent(cursor) : ''
+  const result = await request<{ employees: Employee[]; next_cursor?: string }>(path + query, { cache: 'no-store', signal: lifetime.signal })
   if (run === generation) {
     employees.value = result.employees
-    truncated.value = result.truncated
+    nextCursor.value = result.next_cursor ?? ''
+    cursors.value = pages
   }
 }
 function valid(receipt: Invite) {
   return receipt.organization === props.organization && Number.isSafeInteger(receipt.id) && receipt.id > 0 &&
     /^[a-z2-7]{32}$/.test(receipt.temporary_password) && Number.isFinite(Date.parse(receipt.expires_at))
 }
-async function run(endpoint?: string, data?: unknown) {
+async function run(endpoint?: string, data?: unknown, pages = cursors.value) {
   if (busy.value) return
   hide()
   busy.value = true
@@ -61,13 +65,13 @@ async function run(endpoint?: string, data?: unknown) {
         if (!valid(result)) throw new Error('invalid invite receipt')
         invite.value = result
       }
-      confirming.value = null
       if (endpoint === path) {
         username.value = ''
         selected.value = []
       }
     }
-    await load(current)
+    confirming.value = null
+    await load(current, endpoint === path ? [''] : pages)
   } catch {
     if (current === generation) error.value = 'No pude comprobar el resultado. Actualizá la lista antes de volver a intentar.'
   } finally {
@@ -108,8 +112,7 @@ onBeforeUnmount(() => {
       </template>
     </section>
     <p v-if="error" class="error" role="alert">{{ error }}</p>
-    <button v-if="error || truncated" type="button" class="secondary" :disabled="busy" @click="run()">Actualizar empleados</button>
-    <p v-if="truncated">Se muestran los últimos 100 empleados de tu alcance.</p>
+    <button v-if="error" type="button" class="secondary" :disabled="busy" @click="run()">Actualizar empleados</button>
     <ul v-if="employees.length" class="gomar-feature-list">
       <li v-for="employee in employees" :key="employee.id">
         <strong>{{ employee.username }}</strong> · {{ roles[employee.role] }} · {{ labels[employee.status] }}
@@ -119,6 +122,17 @@ onBeforeUnmount(() => {
         </template>
       </li>
     </ul>
+    <p v-else-if="!busy">No hay empleados en esta página.</p>
+    <div v-if="cursors.length > 1 || nextCursor" class="gomar-feature-actions" aria-label="Páginas de empleados">
+      <button
+        type="button" class="secondary" :disabled="busy || cursors.length === 1"
+        @click="run(undefined, undefined, cursors.slice(0, -1))"
+      >Empleados anteriores</button>
+      <button
+        type="button" class="secondary" :disabled="busy || !nextCursor"
+        @click="run(undefined, undefined, [...cursors, nextCursor])"
+      >Más empleados</button>
+    </div>
     <section v-if="confirming" class="stack" aria-label="Confirmar cambio de acceso">
       <p>{{ confirming.action === 'reset' ? 'Esto cierra sus sesiones y reemplaza la contraseña anterior.' : 'Esto cierra sus sesiones y le impide ingresar.' }} Usuario: {{ confirming.employee.username }}.</p>
       <button type="button" class="secondary" :disabled="busy" @click="run(path + '/' + confirming.employee.id + '/' + confirming.action, {})">Confirmar {{ confirming.action === 'reset' ? 'reemplazo de contraseña' : 'desactivación' }}</button>
