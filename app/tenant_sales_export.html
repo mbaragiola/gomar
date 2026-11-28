@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="es-AR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <title>Exportar ventas de Caja · Gomar</title>
+  <style>
+    body { font: 1rem/1.5 system-ui, sans-serif; margin: 0; }
+    main { max-width: 40rem; margin: auto; padding: 1.5rem; }
+    form, label { display: grid; gap: .5rem; justify-items: start; }
+    button, input { font: inherit; padding: .35rem .6rem; }
+    form + form { margin-top: 1.25rem; }
+    label.confirmation { grid-template-columns: auto 1fr; align-items: baseline; }
+  </style>
+</head>
+<body>
+<main>
+  <a href="/">Volver a Gomar</a>
+  <h1>Exportar ventas de Caja</h1>
+  <p>{{.Entity}} · {{.Outlet}}</p>
+  {{if .Digest}}
+    <p>Archivo CSV del {{.From}} al {{.Through}}.</p>
+    <form method="post">
+      {{template "request" .}}
+      <button name="action" value="download">Descargar CSV</button>
+    </form>
+  {{end}}
+  {{if .Acknowledged}}
+    <p role="status">Confirmación de recepción registrada.</p>
+  {{else if .Digest}}
+    <form method="post">
+      {{template "request" .}}
+      <input type="hidden" name="digest" value="{{.Digest}}">
+      <label class="confirmation"><input type="checkbox" name="received" value="yes" required> Confirmo que descargué el archivo CSV.</label>
+      <button name="action" value="acknowledge">Confirmar recepción</button>
+    </form>
+  {{else}}
+    <p>Incluye fecha y hora de registro en UTC e importe en centavos de ARS. Elegí hasta 31 días de Buenos Aires. Cada archivo admite hasta 1.000 ventas.</p>
+    <form method="post">
+      <input type="hidden" name="csrfmiddlewaretoken" value="{{.CSRF}}">
+      <input type="hidden" name="request_id" value="{{.RequestID}}">
+      <label>Desde <input type="date" name="from" required></label>
+      <label>Hasta <input type="date" name="through" required></label>
+      <button name="action" value="prepare">Preparar CSV</button>
+    </form>
+  {{end}}
+</main>
+</body>
+</html>
+{{define "request"}}
+<input type="hidden" name="csrfmiddlewaretoken" value="{{.CSRF}}">
+<input type="hidden" name="request_id" value="{{.RequestID}}">
+<input type="hidden" name="from" value="{{.From}}">
+<input type="hidden" name="through" value="{{.Through}}">
+{{end}}

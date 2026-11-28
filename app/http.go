@@ -289,6 +289,7 @@ func (a *app) composeRoutes(observe func(method, pattern string)) http.Handler {
 	a.registerDelivery(addAPI)
 	a.registerStock(addAPI, a.enablePOS && a.enableStock)
 	a.registerMCP(addAPI)
+	a.registerTenantSalesExport(addAPI)
 	a.registerProviderLogin(addAPI)
 	a.registerMCPWikiProposals(addAPI)
 	a.registerMCPDocumentProposals(addAPI)

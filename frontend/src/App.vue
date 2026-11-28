@@ -1655,6 +1655,7 @@ onBeforeUnmount(() => {
         <nav class="staff-nav" aria-label="Tareas del local">
           <button type="button" :aria-current="staffView === 'documents' ? 'page' : undefined" @click="selectStaffView('documents')">Comprobantes</button>
           <button v-if="canRecordPayments" type="button" :aria-current="staffView === 'payables' ? 'page' : undefined" @click="selectStaffView('payables')">Cuentas a pagar</button>
+          <a v-if="hasOutlet && hasCapability('export_financial_reports')" :href="`/exportaciones/ventas/${selectedEntityId}/${selectedOutletId}`">Exportar ventas</a>
           <button v-if="canReconcile" type="button" :aria-current="staffView === 'reconciliation' ? 'page' : undefined" @click="selectStaffView('reconciliation')">Conciliación financiera</button>
           <button v-if="hasOutlet && canReadStock" type="button" :aria-current="staffView === 'stock' ? 'page' : undefined" @click="selectStaffView(staffView === 'stock' ? 'documents' : 'stock')">{{ staffView === 'stock' ? 'Cerrar stock del local' : 'Ver stock del local' }}</button>
           <button v-if="hasOutlet && canReadDelivery" type="button" :aria-current="staffView === 'delivery' ? 'page' : undefined" @click="selectStaffView(staffView === 'delivery' ? 'documents' : 'delivery')">{{ staffView === 'delivery' ? 'Cerrar bandeja de delivery' : 'Abrir bandeja de delivery' }}</button>

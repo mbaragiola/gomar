@@ -8,6 +8,8 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
+	"regexp"
 	"strings"
 	"sync"
 	"testing"
@@ -68,6 +70,9 @@ func TestPostgresEmployeeOnboarding(t *testing.T) {
 		}
 		r := httptest.NewRequest(method, origin+path, strings.NewReader(body)).WithContext(ctx)
 		r.Header.Set("Content-Type", "application/json")
+		if strings.HasPrefix(path, "/exportaciones/ventas/") {
+			r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		}
 		r.Header.Set("Origin", origin)
 		for _, c := range cookies {
 			r.AddCookie(c)
@@ -294,6 +299,37 @@ func TestPostgresEmployeeOnboarding(t *testing.T) {
 		FROM suppliers WHERE entity_id=1 AND cuit='00000000000'`); err != nil {
 		t.Fatal(err)
 	}
+	const exportPath = "/exportaciones/ventas/1/1"
+	call("GET", exportPath, "", auth, 403)
+	if _, err := db.ExecContext(ctx, "UPDATE memberships SET role='accounting' WHERE user_id=$1 AND entity_id=1", first.ID); err != nil {
+		t.Fatal(err)
+	}
+	exportPage := call("GET", exportPath, "", auth, 200)
+	exportID := regexp.MustCompile(`name="request_id" value="([^"]+)"`).FindStringSubmatch(exportPage.Body.String())
+	if exportID == nil {
+		t.Fatal("missing managed employee export reference")
+	}
+	exportFields := url.Values{"request_id": {exportID[1]}, "action": {"download"}, "from": {"2026-11-20"}, "through": {"2026-11-20"}}
+	call("POST", "/exportaciones/ventas/2/2", exportFields.Encode(), auth, 404)
+	call("POST", "/exportaciones/ventas/1/3", exportFields.Encode(), auth, 404)
+	file := call("POST", exportPath, exportFields.Encode(), auth, 200)
+	if file.Body.String() != "registrado_utc,importe_centavos_ars\n" {
+		t.Fatal("managed employee did not receive the scoped CSV")
+	}
+	// Loss of the grant must prevent the old request from returning bytes.
+	if _, err := db.ExecContext(ctx, `DELETE FROM outlet_grants WHERE outlet_id=1 AND membership_id=
+		(SELECT id FROM memberships WHERE user_id=$1 AND entity_id=1)`, first.ID); err != nil {
+		t.Fatal(err)
+	}
+	call("POST", exportPath, exportFields.Encode(), auth, 404)
+	if _, err := db.ExecContext(ctx, `INSERT INTO outlet_grants SELECT id,1 FROM memberships WHERE user_id=$1 AND entity_id=1`, first.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.ExecContext(ctx, "UPDATE memberships SET role='purchasing' WHERE user_id=$1 AND entity_id=1", first.ID); err != nil {
+		t.Fatal(err)
+	}
+	call("POST", exportPath, exportFields.Encode(), auth, 403)
+
 	const restore = "/removed-drafts/800001/restore"
 	const restoreBody = `{"motivo":"Fixture employee restore","expected_revision":2}`
 	call("POST", "/api/v1/entities/1/outlets/3"+restore, restoreBody, auth, 404)
@@ -486,6 +522,7 @@ func TestPostgresEmployeeOnboarding(t *testing.T) {
 		t.Fatal("revoked native employee request changed supplier data")
 	}
 	call("GET", "/api/v1/auth/me", "", auth, 401)
+	call("POST", exportPath, exportFields.Encode(), auth, 401)
 	call("POST", login, makeLogin(1, newPass), fresh(), 401)
 	if _, err := db.ExecContext(ctx, `UPDATE organization_employees SET temporary_expires_at=1 WHERE user_id=$1`, first.ID); err != nil {
 		t.Fatal(err)

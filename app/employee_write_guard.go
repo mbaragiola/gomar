@@ -36,7 +36,7 @@ func employeeBrowserScope(r *http.Request, u user) error {
 	}
 	const e = "/api/v1/entities/{entity}"
 	switch r.Method + " " + r.Pattern {
-	case "POST /api/v1/auth/logout",
+	case "POST /api/v1/auth/logout", "POST " + tenantSalesExportPagePath,
 		"POST " + e + "/suppliers", "PUT " + e + "/suppliers/{supplier}",
 		"POST " + e + "/documents", "PUT " + e + "/documents/{document}", "DELETE " + e + "/documents/{document}",
 		"POST " + e + "/documents/{document}/review", "POST " + e + "/documents/{document}/attachments",

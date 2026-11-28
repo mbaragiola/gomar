@@ -75,6 +75,7 @@ func (a *app) registerMCP(add func(string, string, http.HandlerFunc)) {
 	a.registerMCPBookingReads(add)
 	a.registerMCPDetailReads(add)
 	a.registerMCPFinanceStockReads(add)
+	add(mcpWorkspaceBase+"/sales-export-handoff", http.MethodGet, a.mcpRead(a.mcpTenantSalesExportHandoff))
 	a.registerMCPReservationQueue(add)
 }
 

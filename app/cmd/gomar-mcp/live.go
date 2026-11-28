@@ -45,6 +45,9 @@ func liveServer(client *mcpclient.Client) *mcp.Server {
 	addAccountingReadTools(server, client)
 	addBookingReadTools(server, client)
 	addPOSSaleTimeTool(server, client)
+	readTool(server, "gomar_open_sales_export", "Abre Exportar ventas de Caja en Gomar para una sucursal exacta. Requiere permiso de exportación y una conexión fijada a esa sucursal. Iniciá sesión en el mismo Gomar antes de abrir el enlace. Elegí las fechas, descargá el CSV y confirmá que lo recibiste en Gomar.", func(ctx context.Context, in outletArgs) (mcpclient.TenantSalesExportHandoff, error) {
+		return client.TenantSalesExport(ctx, in.EntityID, in.OutletID)
+	})
 	addDetailReadTools(server, client)
 	addFinanceStockReadTools(server, client)
 	addReservationQueueTools(server, client)
