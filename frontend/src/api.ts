@@ -3,12 +3,20 @@ export class ApiError extends Error {
     super(message)
   }
 }
+let captureSessionRejection: (() => (() => void) | undefined) | undefined
+
+export function observeSessionRejection(capture: () => (() => void) | undefined) {
+  captureSessionRejection = capture
+  return () => { if (captureSessionRejection === capture) captureSessionRejection = undefined }
+}
+
 function cookie(name: string): string {
   const value = document.cookie.split('; ').find((item) => item.startsWith(`${name}=`))
   return value ? decodeURIComponent(value.split('=').slice(1).join('=')) : ''
 }
 
 export async function request<T>(path: string, options: RequestInit = {}, captureError?: (body: unknown) => void): Promise<T> {
+  const rejected = captureSessionRejection?.()
   const headers = new Headers(options.headers)
   if (!(options.body instanceof FormData) && options.body && !headers.has('Content-Type')) {
     headers.set('Content-Type', 'application/json')
@@ -18,6 +26,7 @@ export async function request<T>(path: string, options: RequestInit = {}, captur
   }
   const response = await fetch(`/api/v1${path}`, { ...options, headers, credentials: 'same-origin' })
   if (!response.ok) {
+    if (response.status === 401) rejected?.()
     let message = 'No se pudo completar la operación.'
     try {
       const payload = await response.json() as { detail?: unknown } | null
@@ -34,7 +43,9 @@ export async function request<T>(path: string, options: RequestInit = {}, captur
 
 export async function download(path: string, filename: string, isCurrent: () => boolean): Promise<void> {
   if (!isCurrent()) return
+  const rejected = captureSessionRejection?.()
   const response = await fetch(`/api/v1${path}`, { credentials: 'same-origin' })
+  if (response.status === 401) rejected?.()
   if (!response.ok) throw new ApiError(response.status, 'No se pudo descargar el archivo.')
   if (!isCurrent()) return
   const blob = await response.blob()

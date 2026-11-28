@@ -1,7 +1,8 @@
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { lockOfflinePOS } from './pos/storage'
-import { ApiError, download, request } from './api'
+import { ApiError, download, observeSessionRejection, request } from './api'
+import { beginSignOut, completeSignOut, isPendingSignOut, pendingSignOut, withSignOutLock } from './session-revocation'
 import { draftAttachmentHandoffHref, draftHandoffPrefix, parseDraftAttachmentHandoff } from './document-attachment-handoff'
 import type { AttachmentHandoffDetail, DraftAttachmentHandoff } from './document-attachment-handoff'
 import ThemeSelect from './components/ThemeSelect.vue'
@@ -30,6 +31,7 @@ import type { Document, Entity, EntityManagement, IntakeOperation, OcrConfig, Oc
 
 const publicVenue = /^\/reservas\/([a-z0-9][a-z0-9-]{0,63})\/?$/.exec(window.location.pathname)?.[1]
 const authenticated = ref(false)
+const revokingSession = ref(false)
 const providerSignInBusy = ref(false)
 const employeeSignIn = ref(false)
 const signInOptions = ref<{ passwordEnabled: boolean; recoveryEnabled: boolean; employeeEnabled: boolean } | null>(null)
@@ -359,6 +361,11 @@ function showError(value: unknown) {
 }
 
 async function initialize() {
+  if (pendingSignOut.value) {
+    lockOfflinePOS()
+    loading.value = false
+    return
+  }
   const sessionToken = resetUserState()
   loading.value = true
   try {
@@ -406,17 +413,46 @@ async function signIn() {
   }
 }
 
-async function signOut() {
+function endLocalSession() {
   clearHandoffLocation()
   employeeSignIn.value = false
+  providerSignInBusy.value = false
   signInOptions.value = null
   lockOfflinePOS()
-  const sessionToken = resetUserState()
+  resetUserState()
+  loading.value = false
+}
+
+watch(pendingSignOut, attempt => {
+  if (attempt && !publicVenue) endLocalSession()
+}, { flush: 'sync' })
+
+async function retrySignOut() {
+  const attempt = pendingSignOut.value
+  if (!attempt || revokingSession.value) return
+  revokingSession.value = true
   try {
-    await request('/auth/logout', { method: 'POST' })
-  } catch (value) {
-    if (sessionIsCurrent(sessionToken)) showError(value)
+    await withSignOutLock(async () => {
+      if (!isPendingSignOut(attempt)) return
+      await request('/auth/csrf')
+      if (!isPendingSignOut(attempt)) return
+      try {
+        await request('/auth/logout', { method: 'POST' })
+      } catch (value) {
+        if (!(value instanceof ApiError) || value.status !== 401) return
+      }
+      completeSignOut(attempt)
+    })
+  } catch {
+    // Retain the pending marker until a protected request confirms closure.
+  } finally {
+    revokingSession.value = false
   }
+}
+
+function signOut() {
+  beginSignOut()
+  void retrySignOut()
 }
 
 async function loadEntities(sessionToken: number) {
@@ -1428,18 +1464,41 @@ async function downloadPaymentReceipt(payment: Payment) {
   }
 }
 
+let stopObservingSession: (() => void) | undefined
+
 onMounted(() => {
   if (publicVenue) return
   window.addEventListener('hashchange', syncAttachmentHandoff)
+  stopObservingSession = observeSessionRejection(() => {
+    if (!authenticated.value) return
+    const sessionToken = sessionGeneration
+    return () => {
+      if (!sessionIsCurrent(sessionToken) || !authenticated.value) return
+      endLocalSession()
+      error.value = 'Tu sesión venció. Volvé a ingresar.'
+    }
+  })
   return initialize()
 })
-onBeforeUnmount(() => window.removeEventListener('hashchange', syncAttachmentHandoff))
+onBeforeUnmount(() => {
+  window.removeEventListener('hashchange', syncAttachmentHandoff)
+  stopObservingSession?.()
+})
 </script>
 
 <template>
   <PublicReservations v-if="publicVenue" :venue="publicVenue" />
 
   <div v-else-if="loading" class="center-page" aria-live="polite">Cargando…</div>
+
+  <main v-else-if="pendingSignOut" class="login-page">
+    <section class="login-card">
+      <h1>Sesión bloqueada en este dispositivo</h1>
+      <p v-if="revokingSession" role="status">Confirmando el cierre con el servidor…</p>
+      <p v-else role="alert">No pudimos confirmar el cierre de sesión con el servidor.</p>
+      <button type="button" class="primary" :disabled="revokingSession" @click="retrySignOut">Reintentar el cierre</button>
+    </section>
+  </main>
 
   <main v-else-if="!authenticated" class="login-page">
     <section class="login-card">

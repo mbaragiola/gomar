@@ -1,6 +1,7 @@
 import { flushPromises, mount } from '@vue/test-utils'
 import { describe, expect, it, vi } from 'vitest'
 import App from '../src/App.vue'
+import { pendingSignOut, syncPendingSignOut } from '../src/session-revocation'
 
 function response(value: unknown, status = 200) {
   return Promise.resolve(new Response(JSON.stringify(value), {
@@ -452,6 +453,86 @@ describe('aplicación', () => {
     expect(deleteBody).toEqual({ motivo: 'Carga duplicada', expected_revision: 1 })
   })
 
+  it('mantiene la sesión bloqueada al volver a abrir la aplicación hasta confirmar el cierre', async () => {
+    let online = true
+    let revoked = false
+    const fetch = appFetch((url) => {
+      if (url.endsWith('/auth/providers')) return response({ providers: [], local_password_enabled: true })
+      if (url.endsWith('/auth/me') && revoked) return response({ detail: 'No autorizado' }, 401)
+      if (url.endsWith('/auth/logout')) {
+        if (!online) return Promise.reject(new TypeError('offline'))
+        if (!revoked) return response({ detail: 'CSRF inválido' }, 403)
+        return response({ detail: 'No autorizado' }, 401)
+      }
+      if (url.includes('/documents?')) return response([document])
+    })
+    vi.stubGlobal('fetch', fetch)
+    let wrapper = mount(App)
+    await flushPromises()
+    expect(wrapper.text()).toContain(document.referencia)
+    online = false
+    await wrapper.findAll('button').find(button => button.text() === 'Cerrar sesión')!.trigger('click')
+    await flushPromises()
+    expect(wrapper.text()).toContain('No pudimos confirmar el cierre de sesión')
+    expect(wrapper.text()).not.toContain(document.referencia)
+    expect(wrapper.find('form').exists()).toBe(false)
+    wrapper.unmount()
+
+    fetch.mockClear()
+    wrapper = mount(App)
+    await flushPromises()
+    expect(fetch.mock.calls).toEqual([])
+    expect(wrapper.text()).toContain('Sesión bloqueada en este dispositivo')
+    online = true
+    await wrapper.get('button').trigger('click')
+    await flushPromises()
+    expect(wrapper.text()).toContain('No pudimos confirmar el cierre de sesión')
+    revoked = true
+    await wrapper.get('button').trigger('click')
+    await flushPromises()
+    expect(wrapper.text()).toContain('Registro de compras')
+    expect(wrapper.text()).not.toContain(document.referencia)
+    wrapper.unmount()
+  })
+
+  it('bloquea una pestaña que recibe tarde un aviso de cierre ya confirmado', async () => {
+    vi.stubGlobal('fetch', appFetch((url) => {
+      if (url.endsWith('/auth/providers')) return response({ providers: [], local_password_enabled: true })
+      if (url.includes('/documents?')) return response([document])
+    }))
+    const wrapper = mount(App)
+    await flushPromises()
+    expect(wrapper.text()).toContain(document.referencia)
+    const key = 'gomar-session-revocation'
+    const previousLock = localStorage.getItem('gomar-pos-lock')
+    expect(localStorage.getItem(key)).toBeNull()
+    syncPendingSignOut(new StorageEvent('storage', { key, newValue: 'completed-attempt' }))
+    syncPendingSignOut(new StorageEvent('storage', { key, oldValue: 'completed-attempt' }))
+    await flushPromises()
+    expect(wrapper.text()).toContain('Registro de compras')
+    expect(wrapper.text()).not.toContain(document.referencia)
+    expect(localStorage.getItem('gomar-pos-lock')).not.toBe(previousLock)
+    expect(pendingSignOut.value).toBeNull()
+    wrapper.unmount()
+  })
+
+  it('limpia el contenido privado cuando el servidor rechaza la sesión actual', async () => {
+    vi.stubGlobal('fetch', appFetch((url) => {
+      if (url.endsWith('/auth/providers')) return response({ providers: [], local_password_enabled: true })
+      if (url.endsWith('/documents/1')) return response({ detail: 'No autorizado' }, 401)
+      if (url.includes('/documents?')) return response([document])
+    }))
+    const wrapper = mount(App)
+    await flushPromises()
+    expect(wrapper.text()).toContain(document.referencia)
+    await wrapper.get('.document-row').trigger('click')
+    await flushPromises()
+    expect(wrapper.text()).toContain('Tu sesión venció')
+    expect(wrapper.text()).not.toContain(document.referencia)
+    expect(wrapper.text()).not.toContain('Entidad Uno SA')
+    wrapper.unmount()
+  })
+
   it('borra todo el contexto privado al salir y no muestra un contexto B fallido', async () => {
     const documentB = {
       ...document,
@@ -574,11 +655,11 @@ describe('aplicación', () => {
     await flushPromises()
     expect(wrapper.text()).toContain('Entidad B segura')
 
-    delayedOutlets.resolve(new Response(JSON.stringify([{ id: 99, nombre: 'LOCAL A FILTRADO' }]), { status: 200 }))
+    delayedOutlets.resolve(new Response(JSON.stringify({ detail: 'Sesión A vencida' }), { status: 401 }))
     delayedSuppliers.resolve(new Response(JSON.stringify([{ id: 99, razon_social: 'PROVEEDOR A FILTRADO', cuit: '30799999990' }]), { status: 200 }))
     await flushPromises()
     expect(wrapper.text()).toContain('Local B seguro')
-    expect(wrapper.text()).not.toContain('LOCAL A FILTRADO')
+    expect(wrapper.text()).not.toContain('Sesión A vencida')
     expect(wrapper.text()).not.toContain('PROVEEDOR A FILTRADO')
     expect(wrapper.text()).not.toContain('Entidad A demorada')
   })
@@ -588,7 +669,10 @@ describe('aplicación', () => {
     const createObjectURL = vi.fn(() => 'blob:privado')
     const revokeObjectURL = vi.fn()
     const click = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => undefined)
-    vi.stubGlobal('URL', { createObjectURL, revokeObjectURL })
+    vi.stubGlobal('URL', class extends URL {
+      static createObjectURL = createObjectURL
+      static revokeObjectURL = revokeObjectURL
+    })
     const documentWithAttachment = {
       ...document,
       adjuntos: [{ id: 7, nombre: 'privado.pdf', tamano: 24 }],
