@@ -194,7 +194,7 @@ func setCookie(w http.ResponseWriter, r *http.Request, name, value string, age t
 
 func (a *app) startSession(w http.ResponseWriter, r *http.Request, u user) error {
 	ctx := r.Context()
-	tx, err := a.db.BeginTx(ctx, nil)
+	tx, err := a.db.BeginTx(ctx, &sql.TxOptions{Isolation: sql.LevelReadCommitted})
 	if err != nil {
 		return err
 	}
@@ -223,6 +223,9 @@ func (a *app) startSession(w http.ResponseWriter, r *http.Request, u user) error
 	}
 	if count, err := result.RowsAffected(); err != nil || count != 1 {
 		return errors.New("login account changed")
+	}
+	if err := requireSessionCapacity(ctx, tx, u.id, now.Unix(), false); err != nil {
+		return err
 	}
 	if _, err := tx.ExecContext(ctx, "INSERT INTO sessions(token_hash,user_id,password_digest,expires) VALUES ($1,$2,$3,$4)",
 		key[:], u.id, digest[:], now.Add(sessionAge).Unix()); err != nil {

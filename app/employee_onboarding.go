@@ -415,7 +415,7 @@ func (a *app) employeeLogin(w http.ResponseWriter, r *http.Request) error {
 	}
 	defer a.employeePasswords.leave()
 	ctx := r.Context()
-	tx, err := a.db.BeginTx(ctx, nil)
+	tx, err := a.db.BeginTx(ctx, &sql.TxOptions{Isolation: sql.LevelReadCommitted})
 	if err != nil {
 		return err
 	}
@@ -467,6 +467,9 @@ func (a *app) employeeLogin(w http.ResponseWriter, r *http.Request) error {
 	token := randomToken()
 	key := sha256.Sum256([]byte(token))
 	digest := sha256.Sum256([]byte(core))
+	if err := requireSessionCapacity(ctx, tx, id, now.Unix(), false); err != nil {
+		return err
+	}
 	if _, err = tx.ExecContext(ctx, `INSERT INTO sessions(token_hash,user_id,password_digest,expires,auth_method) VALUES($1,$2,$3,$4,'employee')`, key[:], id, digest[:], now.Add(sessionAge).Unix()); err != nil {
 		return err
 	}

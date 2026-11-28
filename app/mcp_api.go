@@ -98,12 +98,21 @@ func (a *app) issueMCPToken(w http.ResponseWriter, r *http.Request, u user) erro
 		return badInput
 	}
 	ctx := r.Context()
-	tx, err := a.db.BeginTx(ctx, nil)
+	tx, err := a.db.BeginTx(ctx, &sql.TxOptions{Isolation: sql.LevelReadCommitted})
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback()
 	m, err := scopedMembership(tx, u.id, input.Entity, mcpReadCapability)
+	if err != nil {
+		return err
+	}
+	if err := lockPostgresEntity(ctx, tx, m.ID); errors.Is(err, sql.ErrNoRows) {
+		return missingEntity
+	} else if err != nil {
+		return err
+	}
+	m, err = scopedMembership(tx, u.id, input.Entity, mcpReadCapability)
 	if err != nil {
 		return err
 	}
@@ -113,6 +122,9 @@ func (a *app) issueMCPToken(w http.ResponseWriter, r *http.Request, u user) erro
 		}
 	}
 	now := a.tokenTime()
+	if err := requireMCPReadKeyCapacity(ctx, tx, m.ID, u.id, now.Unix()); err != nil {
+		return err
+	}
 	expiry := now.Add(mcpTokenLifetime)
 	raw := make([]byte, 32)
 	rand.Read(raw)
