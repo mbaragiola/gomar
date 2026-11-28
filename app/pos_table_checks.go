@@ -213,6 +213,8 @@ func (a *app) savePOSTableCheck(r *http.Request, tx *sql.Tx, m entityMembership,
 	for _, line := range i.Items() {
 		ids = append(ids, line.ProductID)
 	}
+	// Saving an open order requires the current revision. Exact retries above
+	// return the original immutable check.
 	catalog, err := readPOSTableCurrentCatalog(ctx, tx, outlet, ids)
 	if err != nil {
 		return 0, nil, err
