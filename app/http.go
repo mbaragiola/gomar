@@ -341,6 +341,8 @@ func (a *app) composeRoutes(observe func(method, pattern string)) http.Handler {
 	addAPI("/api/v1/entities/{entity}/documents/{document}", "GET", a.scoped("read_business_data", documentDetail))
 	addAPI("/api/v1/entities/{entity}/outlets/{outlet}/documents/{document}/printed-reference-detail", "GET", a.protected(a.printedReferenceDocumentDetail))
 	addAPI("/api/v1/entities/{entity}/outlets/{outlet}/documents/{document}/draft-queue-detail", "GET", a.protected(a.draftQueueDocumentDetail))
+	addAPI("/api/v1/entities/{entity}/outlets/{outlet}/removed-drafts", "GET", a.scoped(draftCapability, listRemovedDrafts))
+	addAPI("/api/v1/entities/{entity}/outlets/{outlet}/removed-drafts/{document}/restore", "POST", a.protected(a.restoreRemovedDraft))
 	addAPI("/api/v1/entities/{entity}/outlets/{outlet}/documents/{document}/attachment-handoff", "GET", a.protected(a.draftAttachmentHandoff))
 	addAPI("/api/v1/entities/{entity}/documents/{document}", "PUT", a.protected(a.editDocument))
 	addAPI("/api/v1/entities/{entity}/documents/{document}", "DELETE", a.protected(a.deleteDocument))

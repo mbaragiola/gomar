@@ -62,6 +62,13 @@ func (args *documentPageArgs) UnmarshalJSON(data []byte) error {
 }
 
 func addAccountingReadTools(server *mcp.Server, client *mcpclient.Client) {
+	type removedDraftArgs struct {
+		outletArgs
+		BeforeID *int64 `json:"before_id,omitempty" jsonschema:"Cursor next_before_id de la página anterior"`
+	}
+	readTool(server, "gomar_list_removed_drafts", "Listá borradores dados de baja de una sucursal con permiso para gestionar borradores. Mostrá el enlace del borrador elegido para que una persona autorizada lo restaure en Gomar. No supongas cuál elegir ni restaures automáticamente. Usá next_before_id para otra página.", func(ctx context.Context, in removedDraftArgs) (mcpclient.RemovedDraftPage, error) {
+		return client.RemovedDrafts(ctx, in.EntityID, in.OutletID, in.BeforeID)
+	})
 	readTool(server, "gomar_list_documents", "Listá hasta 30 comprobantes de una sucursal autorizada, sin adjuntos ni CUIT. Los importes están en centavos; un crédito se distingue por el tipo de comprobante. Podés filtrar por referencia impresa exacta: tipo, letra (vacía si no tiene), punto de venta y número. Distintos emisores pueden compartirla: no elijas el primer resultado ni cambies de sucursal. Como alternativa a la referencia, usá status=draft para listar solo borradores no eliminados; no lo combines con la referencia. No revisa los documentos. Si hay next_id, repetí el mismo filtro en la página siguiente.", func(ctx context.Context, in documentPageArgs) (mcpclient.DocumentList, error) {
 		return client.DocumentsFiltered(ctx, in.EntityID, in.OutletID, in.AfterID, in.Reference, in.Status)
 	})

@@ -12,6 +12,7 @@ import (
 
 func (a *app) registerMCPAccountingReads(add func(string, string, http.HandlerFunc)) {
 	add(mcpWorkspaceBase+"/documents", http.MethodGet, a.mcpRead(mcpAccountingDocuments))
+	add(mcpWorkspaceBase+"/removed-drafts", http.MethodGet, a.mcpRead(mcpRemovedDrafts))
 	add(mcpWorkspaceBase+"/document-totals", http.MethodGet, a.mcpRead(mcpDocumentTotals))
 	add(mcpWorkspaceBase+"/suppliers", http.MethodGet, a.mcpRead(a.mcpAccountingSuppliers))
 	add(mcpWorkspaceBase+"/payments-summary", http.MethodGet, a.mcpRead(mcpPaymentStatusCounts))

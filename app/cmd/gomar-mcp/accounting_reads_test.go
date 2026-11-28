@@ -32,6 +32,8 @@ func TestAccountingReadToolsUseScopedGETAndTypedOutput(t *testing.T) {
 				t.Error("document cursor was not passed correctly")
 			}
 			response = `{"documents":[{"id":4,"type":"credit_note","status":"reviewed","supplier_id":1,"issue_date":"2026-11-01","currency":"ARS","total_minor":25,"attachment":"private sentinel"}]}`
+		case "/removed-drafts":
+			response = `{"items":[{"id":2,"revision":3,"document_type":"invoice","letter":"B","point_of_sale":1,"number":76,"removed_at":"2026-11-27T18:00:00Z","handoff_url":"/#restaurar-borrador=14:16:2","issuer_cuit":"private sentinel"}]}`
 		case "/document-totals":
 			if r.URL.RawQuery != "" {
 				t.Error("totals passed a query")
@@ -70,7 +72,7 @@ func TestAccountingReadToolsUseScopedGETAndTypedOutput(t *testing.T) {
 	}
 	defer session.Close()
 	meta, err := session.ListTools(ctx, nil)
-	if err != nil || len(meta.Tools) != 5 {
+	if err != nil || len(meta.Tools) != 6 {
 		t.Fatal(meta, err)
 	}
 	for _, tool := range meta.Tools {
@@ -79,8 +81,9 @@ func TestAccountingReadToolsUseScopedGETAndTypedOutput(t *testing.T) {
 		}
 	}
 	for name, field := range map[string]string{
-		"gomar_document_totals": `"total_minor":"10000000000000000000"`,
-		"gomar_list_documents":  `"type":"credit_note"`, "gomar_list_suppliers": `"name":"Synthetic supplier","revision":7`,
+		"gomar_list_removed_drafts": `"handoff_url":"/#restaurar-borrador=14:16:2"`,
+		"gomar_document_totals":     `"total_minor":"10000000000000000000"`,
+		"gomar_list_documents":      `"type":"credit_note"`, "gomar_list_suppliers": `"name":"Synthetic supplier","revision":7`,
 		"gomar_payment_status_summary": `"posted":3`, "gomar_reconciliation_status_summary": `"review":1`,
 	} {
 		args := map[string]any{"entity_id": 14, "outlet_id": 16}
