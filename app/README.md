@@ -87,6 +87,21 @@ Temporary source files count toward 100 MiB or 32 files per entity and
 1 GiB or 512 files per server database. Each file remains charged until
 its removal and reference clear complete. Gomar rejects new uploads
 above either limit. These caps cover tracked temporary sources only.
+## Session and read-key retention
+
+Gomar denies credentials at expiry. On startup and once a minute, the
+server removes up to 100 expired records from each of the ordinary
+browser-session, recovery-session and MCP read-key tables. Failed batches
+retry on a later pass. Each batch commits with a count by UTC day and
+credential type. Gomar keeps these counts for 90 days and stores no
+account, key, hash or session identifier in the maintenance audit.
+
+An account can hold 24 unexpired browser sessions or eight separate
+platform recovery sessions in the applicable realm. Each membership can
+hold 32 unexpired MCP read keys for its entity, up to 128 read keys
+across the entity. Signing out or revoking an older key frees a slot.
+Existing sessions and keys keep their original expiry. MCP proposal
+credentials use their own policy.
 
 ## Synthetic private-file restore rehearsal
 

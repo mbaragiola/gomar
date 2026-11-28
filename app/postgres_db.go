@@ -68,6 +68,7 @@ var postgresMigrationNames = []string{
 	"044_hosted_discovery_read.sql",
 	"045_tenant_catalog_events.sql",
 	"046_staged_intake_maintenance.sql",
+	"047_credential_maintenance.sql",
 }
 
 func postgresConfig(dsn string) (*pgx.ConnConfig, error) {

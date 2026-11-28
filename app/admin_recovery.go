@@ -124,7 +124,7 @@ func (a *app) startAdminSession(w http.ResponseWriter, r *http.Request, u user) 
 		return unauthenticated
 	}
 	ctx := r.Context()
-	tx, err := a.db.BeginTx(ctx, nil)
+	tx, err := a.db.BeginTx(ctx, &sql.TxOptions{Isolation: sql.LevelReadCommitted})
 	if err != nil {
 		return err
 	}
@@ -145,8 +145,7 @@ func (a *app) startAdminSession(w http.ResponseWriter, r *http.Request, u user) 
 			return err
 		}
 	}
-	// Keep recovery rows bounded even if a browser never signs out.
-	if _, err = tx.ExecContext(ctx, `DELETE FROM admin_recovery_sessions WHERE expires<=$1`, now.Unix()); err != nil {
+	if err := requireSessionCapacity(ctx, tx, u.id, now.Unix(), true); err != nil {
 		return err
 	}
 	raw := randomToken()

@@ -232,7 +232,7 @@ func (a *app) finishProviderLogin(w http.ResponseWriter, r *http.Request, flow s
 
 func (a *app) startVerifiedProviderSession(w http.ResponseWriter, r *http.Request, id verifiedProviderIdentity) error {
 	ctx := r.Context()
-	tx, err := a.db.BeginTx(ctx, nil)
+	tx, err := a.db.BeginTx(ctx, &sql.TxOptions{Isolation: sql.LevelReadCommitted})
 	if err != nil {
 		return err
 	}
@@ -252,6 +252,9 @@ func (a *app) startVerifiedProviderSession(w http.ResponseWriter, r *http.Reques
 		}
 	}
 	if _, err = tx.ExecContext(ctx, `UPDATE users SET last_login=$1 WHERE id=$2`, now.Unix(), u.id); err != nil {
+		return err
+	}
+	if err := requireSessionCapacity(ctx, tx, u.id, now.Unix(), false); err != nil {
 		return err
 	}
 	if _, err = tx.ExecContext(ctx, `INSERT INTO sessions(token_hash,user_id,password_digest,expires,auth_method) VALUES($1,$2,$3,$4,'provider')`,
