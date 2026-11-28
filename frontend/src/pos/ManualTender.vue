@@ -13,7 +13,7 @@ const props = defineProps<{
   cartEmpty: boolean
   formatMoney: (amount: number) => string
 }>()
-const emit = defineEmits<{ hasHistory: []; finalized: [] }>()
+const emit = defineEmits<{ activeTender: [active: boolean]; finalized: [] }>()
 const reasons = { entrada_incorrecta: 'Registro por error', medio_incorrecto: 'Medio incorrecto', importe_incorrecto: 'Importe incorrecto' } as const
 type Reason = keyof typeof reasons
 interface Entry {
@@ -80,7 +80,7 @@ function readStatus(value: Status) {
   }
   if (total !== value.registrado_centavos) throw new Error('unexpected tender balance')
   status.value = value
-  if (value.registros.length) emit('hasHistory')
+  emit('activeTender', value.registrado_centavos > 0)
 }
 
 async function load() {
@@ -120,7 +120,7 @@ async function save(kind: 'record' | 'void') {
     })
     if (!permitted()) return
     if (!validID(receipt.id_registro) || receipt.id_cuenta !== props.check) throw new Error('unexpected tender receipt')
-    emit('hasHistory')
+    emit('activeTender', true)
     retry = undefined
     amount.value = method.value = correcting.value = reason.value = ''
     await load()

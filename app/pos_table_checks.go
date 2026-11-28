@@ -83,10 +83,10 @@ func (a *app) readPOSTableCheck(r *http.Request, tx *sql.Tx, m entityMembership,
 
 func loadPOSTableCheck(ctx context.Context, tx *sql.Tx, outlet, number, id int64) (posTableCheck, error) {
 	row := posTableCheck{ID: strconv.FormatInt(id, 10), State: "sin_cobro", Table: number, Items: []posSaleItem{}}
-	var retired, finalized, hasTender bool
-	err := tx.QueryRowContext(ctx, `SELECT c.total_minor,r.check_id IS NOT NULL, EXISTS(SELECT 1 FROM pos_table_finalizations f WHERE f.check_id=c.id), EXISTS (SELECT 1 FROM pos_table_tender_events e WHERE e.outlet_id=c.outlet_id AND e.check_id=c.id)
+	var retired, finalized, hasActiveTender bool
+	err := tx.QueryRowContext(ctx, `SELECT c.total_minor,r.check_id IS NOT NULL, EXISTS(SELECT 1 FROM pos_table_finalizations f WHERE f.check_id=c.id), `+posActiveTender+`
  FROM pos_table_checks c LEFT JOIN pos_table_check_retirements r ON r.check_id=c.id
- WHERE c.outlet_id=$1 AND c.table_number=$2 AND c.id=$3`, outlet, number, id).Scan(&row.Total, &retired, &finalized, &hasTender)
+ WHERE c.outlet_id=$1 AND c.table_number=$2 AND c.id=$3`, outlet, number, id).Scan(&row.Total, &retired, &finalized, &hasActiveTender)
 	if err != nil {
 		return posTableCheck{}, err
 	}
@@ -94,7 +94,7 @@ func loadPOSTableCheck(ctx context.Context, tx *sql.Tx, outlet, number, id int64
 		row.State = "finalizada"
 	} else if retired {
 		row.State = "retirada"
-	} else if hasTender {
+	} else if hasActiveTender {
 		row.State = "con_registros"
 	}
 	items, err := tx.QueryContext(ctx, `SELECT i.product_id,i.revision,i.quantity,v.name,v.price_minor

@@ -140,11 +140,11 @@ onUnmounted(() => {
         :key="loaded.id_cuenta" :scope="scope" :table="loaded.mesa" :check="loaded.id_cuenta"
         :total="loaded.total_centavos" :allowed="allowed" :format-money="formatMoney"
         :allow-finalization="allowFinalization" :cart-empty="cartEmpty"
-        @has-history="loaded.estado = 'con_registros'"
+        @active-tender="loaded.estado = $event ? 'con_registros' : 'sin_cobro'"
         @finalized="loaded.estado = 'finalizada'"
       />
       <p v-if="loaded.estado === 'finalizada'" role="status">La mesa quedó libre. Esta acción no emite una factura.</p>
-      <p v-if="loaded.estado === 'con_registros'">No se puede retirar una cuenta con registros de pago.</p>
+      <p v-if="loaded.estado === 'con_registros'">No se puede retirar una cuenta con registros de pago vigentes.</p>
       <template v-if="loaded.estado === 'sin_cobro'">
         <button v-if="!retiring" type="button" :disabled="busy" @click="retiring = true">Retirar cuenta sin cobro</button>
         <fieldset v-else>
