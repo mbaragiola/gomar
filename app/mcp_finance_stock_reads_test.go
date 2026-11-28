@@ -20,14 +20,21 @@ func TestPostgresMCPFinanceStockDetailsKeepBranchSettlementAndPrivacy(t *testing
 	}
 	const fixture = `
  INSERT INTO entities(id,name,cuit,active) VALUES(1,'Synthetic','00000000001',TRUE),(2,'Other','00000000002',TRUE);
+ INSERT INTO users(id,username,password,active,staff,superuser) VALUES
+ (2,'internal-local-account','',FALSE,FALSE,FALSE),(3,'internal-foreign-account','',FALSE,FALSE,FALSE);
  INSERT INTO outlets(id,entity_id,name,active) VALUES(1,1,'Centro',TRUE),(2,1,'Norte',TRUE),(3,2,'Centro',TRUE);
- INSERT INTO memberships(id,user_id,entity_id,role,active) VALUES(1,1,1,'administration',TRUE);
+ INSERT INTO memberships(id,user_id,entity_id,role,active) VALUES(1,1,1,'administration',TRUE),(2,2,1,'purchasing',FALSE),(3,3,2,'purchasing',FALSE);
+ INSERT INTO organization_employees(user_id,entity_id,handle,status)
+ VALUES(2,1,'local-audit-handle','disabled'),(3,2,'foreign-audit-handle','disabled');
  INSERT INTO outlet_grants VALUES(1,1),(1,2);
  INSERT INTO suppliers(id,entity_id,name,cuit,active) VALUES(1,1,'private-supplier-sentinel','00000000003',TRUE);
  INSERT INTO documents(id,entity_id,outlet_id,supplier_id,issuer_cuit,document_type,letter,point_of_sale,number,issue_date,
  currency,total_minor,description,status,revision,created_at,updated_at)
  SELECT id,1,CASE WHEN id=3 THEN 2 ELSE 1 END,1,'00000000003','invoice','A',1,id,'2026-11-01','ARS',1000,'private-document-sentinel','reviewed',1,
  '2026-11-01T00:00:00Z','2026-11-01T00:00:00Z' FROM generate_series(1,34) id;
+ INSERT INTO document_audit(document_id,actor_id,action,occurred_at,reason) VALUES
+ (1,1,'create','2026-11-01T00:00:00Z',''),(1,2,'update','2026-11-01T01:00:00Z',''),
+ (1,3,'update','2026-11-01T02:00:00Z','');
  INSERT INTO ap_payables(id,entity_id,outlet_id,supplier_id,source_document_id,currency,original_minor,balance_minor,supplier_name_snapshot,
  supplier_cuit_snapshot,document_reference_snapshot,issue_date_snapshot,due_date_snapshot,posted_by_id,posted_at)
  SELECT id,1,CASE WHEN id=3 THEN 2 ELSE 1 END,1,id,'ARS',1000,CASE WHEN id IN(1,2,4) THEN 700 ELSE 1000 END,
@@ -45,7 +52,7 @@ func TestPostgresMCPFinanceStockDetailsKeepBranchSettlementAndPrivacy(t *testing
  INSERT INTO ap_allocations(payment_id,payable_id,amount_minor,created_at) VALUES
  (1,1,300,'2026-11-03T03:00:00Z'),(2,2,300,'2026-11-03T03:00:00Z'),(3,3,300,'2026-11-03T03:00:00Z');
  INSERT INTO ap_ledger(payable_id,payment_id,kind,delta_minor,balance_minor,actor_id,reason,occurred_at)
- VALUES(4,2,'payment',-300,700,1,'private-ledger-sentinel','2026-11-03T03:00:00Z');
+ VALUES(1,NULL,'post',1000,1000,2,'','2026-11-01T00:00:00Z'),(4,2,'payment',-300,700,1,'private-ledger-sentinel','2026-11-03T03:00:00Z');
  INSERT INTO pos_products(id,outlet_id,current_revision) VALUES(1,1,1),(2,2,1);
  INSERT INTO pos_product_versions(product_id,outlet_id,revision,name,price_minor,active)
  VALUES(1,1,1,'Stock sample',50,TRUE),(2,2,1,'Other stock',50,TRUE);
@@ -110,13 +117,32 @@ func TestPostgresMCPFinanceStockDetailsKeepBranchSettlementAndPrivacy(t *testing
 				t.Fatal(err)
 			}
 		}
-		for _, secret := range []string{"private-", "00000000003", "actor", "supplier", "method", "reason", "receipt", "allocations", "payment_id", "order", "reversal_of", "nombre"} {
+		for _, secret := range []string{"private-", "audit-handle", "internal-local-account", "00000000003", "actor", "supplier", "method", "reason", "receipt", "allocations", "payment_id", "order", "reversal_of", "nombre"} {
 			if strings.Contains(output, secret) {
 				t.Fatalf("%s leaked field/value %s", path, secret)
 			}
 		}
 		return output
 	}
+	const entity = "/api/v1/entities/1"
+	document := ask("GET", entity+"/documents/1", "", "", true, 200)
+	if !strings.Contains(document, `"actor":"local-audit-handle"`) ||
+		!strings.Contains(document, `"actor":"finance-stock-fixture"`) ||
+		strings.Contains(document, "internal-local-account") || strings.Contains(document, "foreign-audit-handle") {
+		t.Fatalf("unexpected document audit actors: %s", document)
+	}
+	payable := ask("GET", entity+"/payables/1", "", "", true, 200)
+	if !strings.Contains(payable, `"actor":"local-audit-handle"`) || strings.Contains(payable, "internal-local-account") {
+		t.Fatalf("unexpected payable ledger actor: %s", payable)
+	}
+	ask("GET", "/api/v1/entities/2/documents/1", "", "", true, 404)
+	actor, err := scanAdminAudit(db.QueryRowContext(ctx, selectAdminAudit+" WHERE a.actor_id=2 AND a.document_id=1"))
+	if err != nil || actor.Actor != "local-audit-handle" {
+		t.Fatalf("platform audit actor = %q, %v", actor.Actor, err)
+	}
+	read("/documents/1", narrow, 200, nil)
+	read("/payable-records/1/movements", narrow, 200, nil)
+	read("/payable-records/3/movements", narrow, 404, nil)
 	var pay mcpclient.PayableRecord
 	read("/payable-records/1", narrow, 200, &pay)
 	if pay.Status != "partial" || pay.PostedDate != "2026-11-01" || pay.TotalMinor != 1000 || pay.BalanceMinor != 700 {

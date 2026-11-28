@@ -411,9 +411,10 @@ func readVisibleDocumentDetail(tx *sql.Tx, item documentListItem) (documentView,
 	if err != nil {
 		return documentView{}, err
 	}
-	rows, err := tx.Query(`SELECT a.action,u.username,a.occurred_at,a.reason
+	rows, err := tx.Query(`SELECT a.action,COALESCE(e.handle,u.username),a.occurred_at,a.reason
 		FROM document_audit a JOIN users u ON u.id=a.actor_id
-		WHERE a.document_id=$1 ORDER BY a.occurred_at,a.id`, item.ID)
+		LEFT JOIN organization_employees e ON e.user_id=u.id AND e.entity_id=$2
+		WHERE a.document_id=$1 ORDER BY a.occurred_at,a.id`, item.ID, item.Entity)
 	if err != nil {
 		return documentView{}, err
 	}
