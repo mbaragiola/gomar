@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	_ "embed"
 	"html/template"
 	"net/http"
@@ -232,6 +233,14 @@ func (a *app) adminLogin(w http.ResponseWriter, r *http.Request, current user) {
 	}
 	page := adminPage{Title: "Iniciar sesión", Login: true, Next: next}
 	if r.Method == http.MethodPost {
+		if !a.adminSignIn.enter(1) {
+			failure(w, employeeAuthBusy)
+			return
+		}
+		defer a.adminSignIn.leave()
+		ctx, cancel := context.WithTimeout(r.Context(), signInRequestTimeout)
+		defer cancel()
+		r = r.WithContext(ctx)
 		page.Username = strings.TrimSpace(r.PostForm.Get("username"))
 		u, err := a.authenticate(r.Context(), page.Username, r.PostForm.Get("password"))
 		if err != nil {

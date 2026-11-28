@@ -29,6 +29,11 @@ type app struct {
 	providerEmployee    bool
 	employeeOnboarding  bool
 	employeePasswords   employeeAuthBudget
+	employeeChanges     employeeAuthBudget
+	employeeChangePool  signInWork
+	classicSignIn       signInWork
+	providerSignIn      signInWork
+	adminSignIn         signInWork
 	mcpClock            func() time.Time
 	posClock            func() time.Time
 
@@ -193,6 +198,14 @@ func (a *app) apiLogin(w http.ResponseWriter, r *http.Request) {
 		failure(w, badCSRF)
 		return
 	}
+	if !a.classicSignIn.enter(2) {
+		failure(w, employeeAuthBusy)
+		return
+	}
+	defer a.classicSignIn.leave()
+	ctx, cancel := context.WithTimeout(r.Context(), signInRequestTimeout)
+	defer cancel()
+	r = r.WithContext(ctx)
 	u, err := a.authenticate(r.Context(), *input.Username, *input.Password)
 	if err == nil && u.id == 0 {
 		err = problem{401, incorrectLogin}

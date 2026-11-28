@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"fmt"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -19,13 +20,13 @@ type employeeAuthAttempt struct {
 type employeeAuthBudget struct {
 	sync.Mutex
 	attempts map[[32]byte]employeeAuthAttempt
-	inFlight int
+	inFlight map[int64]bool
 }
 
-func (b *employeeAuthBudget) enter(key [32]byte, now time.Time) bool {
+func (b *employeeAuthBudget) enter(organization int64, key [32]byte, now time.Time) bool {
 	b.Lock()
 	defer b.Unlock()
-	if b.inFlight >= employeeAuthWorkers {
+	if len(b.inFlight) >= employeeAuthWorkers || b.inFlight[organization] {
 		return false
 	}
 	// Memory and concurrent expensive password work both have hard bounds.
@@ -56,17 +57,38 @@ func (b *employeeAuthBudget) enter(key [32]byte, now time.Time) bool {
 	}
 	a.count++
 	b.attempts[key] = a
-	b.inFlight++
+	if b.inFlight == nil {
+		b.inFlight = make(map[int64]bool)
+	}
+	b.inFlight[organization] = true
 	return true
 }
-func (b *employeeAuthBudget) leave() {
+func (b *employeeAuthBudget) leave(organization int64) {
 	b.Lock()
-	b.inFlight--
+	delete(b.inFlight, organization)
 	b.Unlock()
 }
 
 func employeeLoginBudgetKey(org int64, username string) [32]byte {
 	return sha256.Sum256([]byte(fmt.Sprintf("login/%d/%s", org, username)))
 }
+
+const signInRequestTimeout = 15 * time.Second
+
+type signInWork struct{ inFlight atomic.Int32 }
+
+func (w *signInWork) enter(limit int32) bool {
+	for {
+		current := w.inFlight.Load()
+		if current >= limit {
+			return false
+		}
+		if w.inFlight.CompareAndSwap(current, current+1) {
+			return true
+		}
+	}
+}
+
+func (w *signInWork) leave() { w.inFlight.Add(-1) }
 
 var employeeAuthBusy = problem{429, "Hay demasiados intentos. Esperá unos minutos y volvé a intentar."}

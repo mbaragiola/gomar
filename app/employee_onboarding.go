@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"crypto/sha256"
 	"database/sql"
 	"encoding/json"
@@ -410,11 +411,12 @@ func (a *app) employeeLogin(w http.ResponseWriter, r *http.Request) error {
 	if cookieValue(r, "sessionid") != "" {
 		return problem{409, "Cerrá la sesión actual antes de ingresar."}
 	}
-	if !a.employeePasswords.enter(employeeLoginBudgetKey(input.Organization, input.Username), time.Now()) {
+	if !a.employeePasswords.enter(input.Organization, employeeLoginBudgetKey(input.Organization, input.Username), time.Now()) {
 		return employeeAuthBusy
 	}
-	defer a.employeePasswords.leave()
-	ctx := r.Context()
+	defer a.employeePasswords.leave(input.Organization)
+	ctx, cancel := context.WithTimeout(r.Context(), signInRequestTimeout)
+	defer cancel()
 	tx, err := a.db.BeginTx(ctx, &sql.TxOptions{Isolation: sql.LevelReadCommitted})
 	if err != nil {
 		return err
@@ -500,12 +502,31 @@ func (a *app) employeeChangePassword(w http.ResponseWriter, r *http.Request) err
 		return problem{422, "Usá una contraseña de al menos 12 caracteres."}
 	}
 	key := sha256.Sum256([]byte(token))
-	budget := sha256.Sum256([]byte("change/" + token))
-	if !a.employeePasswords.enter(budget, time.Now()) {
+	if !a.employeeChangePool.enter(2) {
 		return employeeAuthBusy
 	}
-	defer a.employeePasswords.leave()
-	ctx := r.Context()
+	defer a.employeeChangePool.leave()
+	ctx, cancel := context.WithTimeout(r.Context(), signInRequestTimeout)
+	defer cancel()
+
+	// Find the organization before allowing password work. The transaction
+	// below rechecks the ticket and membership under the existing row lock.
+	var organization int64
+	err := a.db.QueryRowContext(ctx, `SELECT entity_id FROM organization_employees
+		WHERE change_hash=$1 AND status='changing_password' AND change_expires_at>$2`,
+		key[:], time.Now().Unix()).Scan(&organization)
+	if errors.Is(err, sql.ErrNoRows) {
+		return unauthenticated
+	}
+	if err != nil {
+		return err
+	}
+	budget := sha256.Sum256([]byte("change/" + token))
+	if !a.employeeChanges.enter(organization, budget, time.Now()) {
+		return employeeAuthBusy
+	}
+	defer a.employeeChanges.leave(organization)
+
 	tx, err := a.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
@@ -517,8 +538,8 @@ func (a *app) employeeChangePassword(w http.ResponseWriter, r *http.Request) err
 	err = tx.QueryRowContext(ctx, `SELECT u.id,c.handle,c.change_expires_at,c.change_previous_hash FROM organization_employees c
   JOIN users u ON u.id=c.user_id JOIN memberships m ON (m.user_id,m.entity_id)=(c.user_id,c.entity_id)
   JOIN entities e ON e.id=c.entity_id
-  WHERE c.change_hash=$1 AND c.status='changing_password' AND m.active AND e.active AND NOT u.active AND NOT u.staff AND NOT u.superuser
-  FOR UPDATE OF u,c`, key[:]).Scan(&id, &handle, &expires, &previousHash)
+  WHERE c.change_hash=$1 AND c.entity_id=$2 AND c.status='changing_password' AND m.active AND e.active AND NOT u.active AND NOT u.staff AND NOT u.superuser
+  FOR UPDATE OF u,c`, key[:], organization).Scan(&id, &handle, &expires, &previousHash)
 	if errors.Is(err, sql.ErrNoRows) {
 		return unauthenticated
 	}

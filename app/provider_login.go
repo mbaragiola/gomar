@@ -70,7 +70,14 @@ func (a *app) providerLoginRoute(next func(http.ResponseWriter, *http.Request) e
 			failure(w, badCSRF)
 			return
 		}
-		if err := next(w, r); err != nil {
+		if !a.providerSignIn.enter(2) {
+			failure(w, employeeAuthBusy)
+			return
+		}
+		defer a.providerSignIn.leave()
+		ctx, cancel := context.WithTimeout(r.Context(), signInRequestTimeout)
+		defer cancel()
+		if err := next(w, r.WithContext(ctx)); err != nil {
 			failure(w, err)
 		}
 	}

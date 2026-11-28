@@ -6,6 +6,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -122,7 +123,8 @@ func TestPostgresAdminRecoveryAndProviderOnlyRealm(t *testing.T) {
 	rehearsal := (&app{db: db, host: "example.com", adminRecovery: true, enableMCP: true}).routes()
 	expect(request(rehearsal, "GET", "/api/v1/auth/me", "", "", "", classicCookies), 200)
 	expect(request(rehearsal, "GET", "/admin/", "", "", "", classicCookies), 302)
-	a := &app{db: db, host: "example.com", adminRecovery: true, providerOnly: true, enableMCP: true}
+	a := &app{db: db, host: "example.com", adminRecovery: true, providerOnly: true, enableMCP: true,
+		providerAuth: &hostedProviderAuth{host: "example.com", origin: origin}}
 	router := a.routes()
 	expect(request(router, "POST", "/api/v1/auth/login", "application/json", loginBody, origin, classicCookies), 403)
 	expect(request(router, "GET", "/api/v1/auth/me", "", "", "", classicCookies), 401)
@@ -163,8 +165,46 @@ func TestPostgresAdminRecoveryAndProviderOnlyRealm(t *testing.T) {
 			}
 		}
 	}
+	// Hold two ordinary provider requests while exercising real recovery sign-in.
+	started, release, providerDone := make(chan struct{}, 2), make(chan struct{}), make(chan int, 2)
+	finishProviderWork := sync.OnceFunc(func() { close(release) })
+	defer finishProviderWork()
+	held := a.providerLoginRoute(func(w http.ResponseWriter, r *http.Request) error {
+		started <- struct{}{}
+		select {
+		case <-release:
+		case <-r.Context().Done():
+			return r.Context().Err()
+		}
+		w.WriteHeader(200)
+		return nil
+	})
+	for range 2 {
+		go func() {
+			providerDone <- request(held, "POST", "/synthetic-provider", "", "", origin, nil).Code
+		}()
+	}
+	for range 2 {
+		select {
+		case <-started:
+		case <-ctx.Done():
+			t.Fatal("provider fixtures did not start")
+		}
+	}
+	expect(request(held, "POST", "/synthetic-provider", "", "", origin, nil), 429)
 	w = request(router, "POST", "/admin/login/", formType, form("root-fixture", password, c.Value), origin, adminCookies)
 	expect(w, 302)
+	finishProviderWork()
+	for range 2 {
+		select {
+		case status := <-providerDone:
+			if status != 200 {
+				t.Fatalf("provider work changed status after release: %d", status)
+			}
+		case <-ctx.Done():
+			t.Fatal("provider fixtures did not finish")
+		}
+	}
 	update(adminCookies, w)
 	raw := adminCookies[adminRecoveryCookie]
 	if raw == nil || !raw.Secure || !raw.HttpOnly || raw.Path != "/admin/" || raw.SameSite != http.SameSiteStrictMode ||

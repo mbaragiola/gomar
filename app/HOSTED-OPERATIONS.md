@@ -60,6 +60,20 @@ must serve that hostname on the client origin used for sign-in. Keep recovery
 routes within the operator network. For customer ingress, deny `/admin` and
 `/admin/*` at the public boundary and verify the denial externally.
 
+The app admits two employee sign-ins at a time, with one request per
+organization. First password changes have two separate slots and look up the
+ticket's organization before starting password work. Each organization can
+use one. Provider requests have two shared slots before identity verification. The protected recovery realm has its own single slot. Sites that
+enable classic password sign-in have two separate slots for it. Excess work
+receives HTTP 429. Admitted sign-ins carry a 15-second context deadline for
+database and provider work.
+
+Keep public ingress connection and request budgets separate from the private
+recovery ingress. In a disposable check, use two fictional organizations,
+start simultaneous sign-ins, and verify that the second organization and the
+operator can still sign in. Include successful sign-ins after excess requests
+have returned.
+
 The following Caddy example binds a rehearsal to loopback. Supply a test
 certificate trusted by the rehearsal client and matching the hostname.
 [Caddy reverse proxy reference](https://caddyserver.com/docs/caddyfile/directives/reverse_proxy).
