@@ -278,7 +278,80 @@ func checkNativeDormantInstall(t *testing.T, ctx context.Context, db *sql.DB, a,
 		plannedOwner != ownerID || role != "administration" || legalName != draft.LegalName || cuit != pendingCUIT {
 		t.Fatal("pending mapping did not preserve the intended owner and exact outlets")
 	}
-	revoke(receipt)
+	const checkPath = "/api/v1/dormant-install-fixture/check"
+	checkGuard := func(expected nativeOwnerTarget, plan string, expectedPeer nativeInstallPeer, verifier nativeInstallVerifier, cookies []*http.Cookie, want int) {
+		t.Helper()
+		handler := a.providerLoginRoute(func(w http.ResponseWriter, r *http.Request) error {
+			if err := a.checkDormantNativeInstall(r, expected, receipt.Ref, plan, expectedPeer, verifier); err != nil {
+				return err
+			}
+			w.WriteHeader(204)
+			return nil
+		})
+		expect(call(handler, checkPath, struct{}{}, cookies, nil), want)
+	}
+	expect(call(a.routes(), checkPath, struct{}{}, owner, nil), 404)
+	paid.Store(true)
+	startCalls := calls.Load()
+	checkGuard(receipt.Target, first.Ref, peer, privatePeer(receipt), foreign, 404)
+	checkGuard(receipt.Target, first.Ref, peer, privatePeer(receipt), sameOwnerDifferentSession, 404)
+	checkGuard(receipt.Target, "pending-"+newProviderRandom(), peer, privatePeer(receipt), owner, 404)
+	checkGuard(receipt.Target, first.Ref, nativeInstallPeer{"other-issuer", peer.Recipient}, privatePeer(receipt), owner, 404)
+	if calls.Load() != startCalls {
+		t.Fatal("guard sent an unauthorized observation")
+	}
+	checkGuard(receipt.Target, first.Ref, peer, nil, owner, 404)
+	var proof nativeInstallObservation
+	capture := func(ctx context.Context, request nativeInstallRequest) (nativeInstallObservation, error) {
+		var err error
+		proof, err = privatePeer(receipt)(ctx, request)
+		return proof, err
+	}
+	checkGuard(receipt.Target, first.Ref, peer, capture, owner, 204)
+	checkGuard(receipt.Target, first.Ref, peer, func(context.Context, nativeInstallRequest) (nativeInstallObservation, error) {
+		return proof, nil
+	}, owner, 404)
+	checkGuard(receipt.Target, first.Ref, peer, func(ctx context.Context, request nativeInstallRequest) (nativeInstallObservation, error) {
+		fresh, err := privatePeer(receipt)(ctx, request)
+		fresh.CheckedAt = fresh.CheckedAt.Add(-time.Minute)
+		return fresh, err
+	}, owner, 404)
+	checkGuard(receipt.Target, first.Ref, peer, func(ctx context.Context, request nativeInstallRequest) (nativeInstallObservation, error) {
+		fresh, err := privatePeer(receipt)(ctx, request)
+		fresh.Binding.Claimant = "wrong-claimant"
+		return fresh, err
+	}, owner, 404)
+	blocked, err := db.BeginTx(ctx, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer blocked.Rollback()
+	checkGuard(receipt.Target, first.Ref, peer, func(ctx context.Context, request nativeInstallRequest) (nativeInstallObservation, error) {
+		// Enter only after the native preflight released its locks.
+		if _, err := blocked.ExecContext(ctx, "SELECT install_ref FROM gomar.native_owner_pending_installs WHERE install_ref=$1 FOR UPDATE", first.Ref); err != nil {
+			t.Fatal(err)
+		}
+		fresh, err := privatePeer(receipt)(ctx, request)
+		fresh.ExpiresAt = fresh.CheckedAt.Add(250 * time.Millisecond)
+		return fresh, err
+	}, owner, 404)
+	if err := blocked.Rollback(); err != nil {
+		t.Fatal(err)
+	}
+	checkGuard(receipt.Target, first.Ref, peer, func(ctx context.Context, request nativeInstallRequest) (nativeInstallObservation, error) {
+		fresh, err := privatePeer(receipt)(ctx, request)
+		mustExec(`INSERT INTO gomar.entities(id,name,cuit,active) VALUES(912,'Another fixture entity',$1,true)`, pendingCUIT)
+		return fresh, err
+	}, owner, 404)
+	mustExec("DELETE FROM gomar.entities WHERE id=912")
+	counts(1, 2, 2)
+	checkGuard(receipt.Target, first.Ref, peer, func(ctx context.Context, request nativeInstallRequest) (nativeInstallObservation, error) {
+		fresh, err := privatePeer(receipt)(ctx, request)
+		revoke(receipt)
+		return fresh, err
+	}, owner, 404)
+	paid.Store(false)
+	checkGuard(receipt.Target, first.Ref, peer, privatePeer(receipt), owner, 404)
 	if history := decode(call(mount(peer, nil), installPath, input, sameOwnerDifferentSession, nil)); history != first {
 		t.Fatal("exact history changed after local and synthetic private reversal")
 	}
