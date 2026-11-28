@@ -5,6 +5,8 @@ import (
 	"bytes"
 	"compress/gzip"
 	_ "embed"
+	"errors"
+	"io"
 	"strings"
 	"sync"
 	"unicode"
@@ -37,6 +39,22 @@ func trimPythonSpace(value string) string {
 	return strings.TrimFunc(value, func(r rune) bool {
 		return unicode.IsSpace(r) || (r >= 0x1c && r <= 0x1f)
 	})
+}
+
+func readLocalAdminPassword(input io.Reader, username string) (string, error) {
+	line, err := bufio.NewReader(io.LimitReader(input, 4096)).ReadSlice('\n')
+	if err != nil {
+		return "", errors.New("provide one password line of at most 4096 bytes including its newline")
+	}
+	password := strings.TrimSuffix(strings.TrimSuffix(string(line), "\n"), "\r")
+	problems := validatePasswordField(password)
+	if len(problems) == 0 {
+		problems = validateNewAdminPassword(password, username)
+	}
+	if len(problems) != 0 {
+		return "", errors.New(strings.Join(problems, " "))
+	}
+	return password, nil
 }
 
 func validateNewAdminPassword(password, username string) []string {

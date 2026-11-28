@@ -1,7 +1,6 @@
 package main
 
 import (
-	"bufio"
 	"context"
 	"flag"
 	"fmt"
@@ -185,13 +184,17 @@ func main() {
 		return
 	}
 	if *admin != "" {
-		password, err := bufio.NewReaderSize(os.Stdin, 4096).ReadSlice('\n')
-		if err != nil || len(strings.TrimSpace(*admin)) == 0 || len(strings.TrimRight(string(password), "\r\n")) < 8 {
-			log.Fatal("provide a username and a password of at least eight bytes followed by a newline")
+		username := strings.TrimSpace(*admin)
+		if username == "" {
+			log.Fatal("provide a local administrator username")
 		}
-		encoded := encodePassword(strings.TrimRight(string(password), "\r\n"))
+		password, err := readLocalAdminPassword(os.Stdin, username)
+		if err != nil {
+			log.Fatal(err)
+		}
+		encoded := encodePassword(password)
 		if _, err := db.ExecContext(context.Background(), `INSERT INTO users(username,password,active,staff,superuser)
-			VALUES ($1, $2, TRUE, TRUE, TRUE)`, *admin, encoded); err != nil {
+			VALUES ($1, $2, TRUE, TRUE, TRUE)`, username, encoded); err != nil {
 			log.Fatal("could not create local administrator")
 		}
 		return

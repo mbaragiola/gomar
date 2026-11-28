@@ -134,8 +134,10 @@ bin/gomar-server -state "$state" -create-admin local-admin
 bin/gomar-server -state "$state"
 ```
 
-The admin command reads the password from standard input. Use the same
-directory and database on subsequent runs. The default address is
+The admin command trims surrounding whitespace from the username and reads one
+newline-terminated password from standard input. It preserves password spaces
+and applies the same policy as the administrator password-change form. Use the
+same directory and database on subsequent runs. The default address is
 `http://127.0.0.1:8080`; you can select another loopback address with
 `-listen`. See `bin/gomar-server -help` for optional modules.
 
