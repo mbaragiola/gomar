@@ -236,9 +236,11 @@ func (c *Client) get(ctx context.Context, path string, query url.Values, dst any
 	switch resp.StatusCode {
 	case http.StatusOK:
 	case http.StatusUnauthorized:
-		return errors.New("la credencial de Gomar no es válida o venció")
+		return callError{"credential_invalid", "la credencial de Gomar no es válida o venció"}
 	case http.StatusForbidden, http.StatusNotFound:
-		return errors.New("la consulta no está disponible con tus permisos de Gomar")
+		return callError{"scope_unavailable", "la consulta no está disponible con tus permisos de Gomar; verificá la empresa y sucursal autorizadas"}
+	case http.StatusTooManyRequests, http.StatusServiceUnavailable:
+		return callError{"temporarily_unavailable", "Gomar está ocupado o no disponible; esperá antes de reintentar"}
 	default:
 		return fmt.Errorf("Gomar no pudo responder (HTTP %d)", resp.StatusCode)
 	}

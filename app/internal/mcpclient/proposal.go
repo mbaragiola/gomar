@@ -109,33 +109,33 @@ func (c *ProposalClient) postProposal(ctx context.Context, entity, outlet int64,
 	switch resp.StatusCode {
 	case http.StatusCreated, http.StatusOK:
 	case http.StatusUnauthorized:
-		return out, errors.New("la clave de propuestas no es válida o venció")
+		return out, callError{"credential_invalid", "la clave de propuestas no es válida o venció"}
 	case http.StatusForbidden, http.StatusNotFound:
-		return out, errors.New("la propuesta no está disponible con tus permisos de Gomar")
+		return out, callError{"scope_unavailable", "la propuesta no está disponible con tus permisos de Gomar"}
 	case http.StatusConflict:
 		switch path {
 		case "/wiki-edit-proposals":
-			return out, errors.New("la página o la propuesta cambió; volvé a leer la página y usá un request_id nuevo si cambia el contenido")
+			return out, callError{"proposal_conflict", "la página o la propuesta cambió; volvé a leer la página y usá un request_id nuevo si cambia el contenido"}
 		case "/stock-receipt-proposals":
-			return out, errors.New("revisá que el producto siga activo y con stock habilitado en esta sucursal; usá un request_id nuevo si cambia el contenido")
+			return out, callError{"proposal_conflict", "revisá que el producto siga activo y con stock habilitado en esta sucursal; usá un request_id nuevo si cambia el contenido"}
 		case "/pos-rename-proposals", "/pos-price-proposals", "/pos-availability-proposals":
-			return out, errors.New("revisá la revisión y los datos actuales del producto; usá un request_id nuevo si cambia el contenido")
+			return out, callError{"proposal_conflict", "revisá la revisión y los datos actuales del producto; usá un request_id nuevo si cambia el contenido"}
 		case "/document-review-proposals":
-			return out, errors.New("volvé a leer el borrador y su revisión antes de proponer la revisión; usá un request_id nuevo si cambia el contenido")
+			return out, callError{"proposal_conflict", "volvé a leer el borrador y su revisión antes de proponer la revisión; usá un request_id nuevo si cambia el contenido"}
 		case "/document-edit-proposals":
-			return out, errors.New("volvé a leer el borrador y su revisión antes de proponer el cambio; usá un request_id nuevo si cambia el contenido")
+			return out, callError{"proposal_conflict", "volvé a leer el borrador y su revisión antes de proponer el cambio; usá un request_id nuevo si cambia el contenido"}
 		case "/stock-waste-proposals", "/stock-physical-count-proposals":
-			return out, errors.New("revisá el saldo y los movimientos actuales del producto en esta sucursal; usá un request_id nuevo si cambia el contenido")
+			return out, callError{"proposal_conflict", "revisá el saldo y los movimientos actuales del producto en esta sucursal; usá un request_id nuevo si cambia el contenido"}
 		case "/reservation-confirm-proposals", "/reservation-cancel-proposals":
-			return out, errors.New("revisá el estado y la disponibilidad de la reserva; usá un request_id nuevo si cambia el contenido")
+			return out, callError{"proposal_conflict", "revisá el estado y la disponibilidad de la reserva; usá un request_id nuevo si cambia el contenido"}
 		case "/supplier-legal-name-proposals":
-			return out, errors.New("volvé a consultar el proveedor y su revisión; usá un request_id nuevo si cambia el contenido")
+			return out, callError{"proposal_conflict", "volvé a consultar el proveedor y su revisión; usá un request_id nuevo si cambia el contenido"}
 		}
-		return out, errors.New("el request_id ya se usó con otro contenido")
+		return out, callError{"proposal_conflict", "el request_id ya se usó con otro contenido"}
 	case http.StatusUnprocessableEntity:
 		return out, errors.New("Gomar rechazó los campos de la propuesta")
 	case http.StatusTooManyRequests:
-		return out, errors.New("alcanzaste el límite de propuestas de Gomar")
+		return out, callError{"temporarily_unavailable", "alcanzaste el límite de propuestas de Gomar; esperá antes de reintentar"}
 	default:
 		return out, errors.New("Gomar no pudo guardar la propuesta")
 	}

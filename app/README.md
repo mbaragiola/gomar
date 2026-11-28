@@ -243,6 +243,18 @@ examples to adapt, the [read tools](MCP-WORKSPACE.md) for what each query
 returns, and the [coverage matrix](MCP-COVERAGE.md) for opt-in proposals, workflows that stay
 in the app, and verification levels.
 
+The packaged server sends a short workflow guide at connection time. It
+covers scope discovery, business meanings, ambiguous receipt lines, and
+pending proposal approval. Clients decide how to use the guide. Gomar
+continues to enforce scope and approval on the server.
+
+To investigate a local connection, add `--diagnostics` to the stdio server
+arguments. It writes one JSON event per tool call to stderr with a local
+correlation ID, duration, outcome, and the registered tool name and known
+failure code when available. Diagnostic events omit request arguments,
+tool output, credentials, and conversations. The client controls whether
+local stderr is retained. Standard stdout remains the MCP protocol.
+
 ### Open a draft's private attachments in Gomar
 
 In Comprobantes, open a draft and use **Enlace interno a los adjuntos del
